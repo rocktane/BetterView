@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 enum Preferences {
     private static let diskCacheKey = "diskCacheGigabytes"
     fileprivate static let handlersKey = "previousHandlers"
+    fileprivate static let infoVisibleKey = "infoVisible"
+    fileprivate static let deleteFollowsDirectionKey = "deleteFollowsDirection"
 
     static var diskCacheGigabytes: Int {
         get {
@@ -15,6 +17,13 @@ enum Preferences {
     }
 
     static var diskCacheBytes: Int { diskCacheGigabytes * 1_000_000_000 }
+
+    static var infoVisible: Bool {
+        get { UserDefaults.standard.object(forKey: infoVisibleKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: infoVisibleKey) }
+    }
+
+    static var deleteFollowsDirection: Bool { UserDefaults.standard.bool(forKey: deleteFollowsDirectionKey) }
 }
 
 /// Default-app state per format. The state shown is always read back from the system.
@@ -89,14 +98,74 @@ final class FileAssociations: ObservableObject {
     }
 }
 
+/// Waits for one key press for the settings window, ahead of the menus: a key already used
+/// by a menu can be chosen too.
+@MainActor
+final class KeyRecorder: ObservableObject {
+    @Published private(set) var action: ShortcutAction?
+    private var monitor: Any?
+
+    func start(_ action: ShortcutAction, onKey: @escaping (KeyBinding) -> Void) {
+        stop()
+        self.action = action
+        let window = NSApp.keyWindow
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let binding = KeyBinding(event: event)
+            // In another window, this key was meant for something else.
+            let elsewhere = event.window !== window
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if elsewhere {
+                    self.stop()
+                } else if let binding {
+                    self.stop()
+                    onKey(binding)
+                }
+            }
+            return elsewhere ? event : nil
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        action = nil
+    }
+}
+
 struct SettingsView: View {
     @StateObject private var associations = FileAssociations()
+    @StateObject private var recorder = KeyRecorder()
+    @ObservedObject var shortcuts: ShortcutStore
     @State private var cacheGigabytes = Preferences.diskCacheGigabytes
+    @State private var shortcutNotice: String?
+    @AppStorage(Preferences.deleteFollowsDirectionKey) private var deleteFollowsDirection = false
+    @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
+    let onInfoVisibleChange: (Bool) -> Void
     let onCacheSizeChange: (Int) -> Void
     let onClearCache: () -> Void
 
     var body: some View {
         Form {
+            Section("Affichage") {
+                Toggle("Afficher les informations sur la photo", isOn: $infoVisible)
+                    .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
+                Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
+            }
+            Section {
+                ForEach(ShortcutAction.allCases) { shortcutRow($0) }
+                Button("Rétablir les raccourcis par défaut") {
+                    recorder.stop()
+                    shortcutNotice = nil
+                    shortcuts.reset()
+                }
+            } header: {
+                Text("Raccourcis")
+            } footer: {
+                if let shortcutNotice {
+                    Text(shortcutNotice).foregroundStyle(.secondary)
+                }
+            }
             Section("Ouvrir par défaut avec BetterView") {
                 ForEach(RawFormat.all) { format in
                     Toggle(isOn: Binding(
@@ -125,19 +194,11 @@ struct SettingsView: View {
                 }
                 Button("Vider le cache", action: onClearCache)
             }
-            Section("Raccourcis") {
-                shortcut("← →", "Précédente, suivante")
-                shortcut("⌫ ou X", "Mettre à la corbeille")
-                shortcut("⌘Z", "Annuler la suppression")
-                shortcut("Z, double-clic", "100 % ou ajusté")
-                shortcut("F", "Plein écran")
-                shortcut("I", "Informations")
-                shortcut("↖ ↘", "Première, dernière")
-            }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 680)
+        .frame(width: 500, height: 720)
         .onAppear { associations.refresh() }
+        .onDisappear { recorder.stop() }
         .alert("Réglage non appliqué", isPresented: Binding(
             get: { associations.lastError != nil },
             set: { if !$0 { associations.lastError = nil } }
@@ -148,11 +209,47 @@ struct SettingsView: View {
         }
     }
 
-    private func shortcut(_ keys: String, _ action: String) -> some View {
-        HStack {
-            Text(action)
+    private func shortcutRow(_ action: ShortcutAction) -> some View {
+        HStack(spacing: 6) {
+            Text(action.title)
             Spacer()
-            Text(keys).foregroundStyle(.secondary).monospaced()
+            ForEach(shortcuts.map.keys(for: action), id: \.self) { binding in
+                HStack(spacing: 3) {
+                    Text(binding.label).monospaced()
+                    Button {
+                        shortcutNotice = nil
+                        shortcuts.remove(binding)
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Retirer ce raccourci")
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+            }
+            if recorder.action == action {
+                Button("Touche…") { recorder.stop() }
+                    .help("Appuie sur la touche voulue, ou clique ici pour annuler")
+            } else {
+                Button {
+                    shortcutNotice = nil
+                    recorder.start(action) { record($0, for: action) }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Ajouter un raccourci")
+            }
+        }
+    }
+
+    private func record(_ binding: KeyBinding, for action: ShortcutAction) {
+        if binding.isReserved {
+            shortcutNotice = "\(binding.label) est réservé par le menu de l'app."
+        } else if let previous = shortcuts.assign(binding, to: action) {
+            shortcutNotice = "\(binding.label) a été retiré de « \(previous.title) »."
         }
     }
 }

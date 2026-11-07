@@ -6,7 +6,7 @@ Visionneuse RAW macOS native, mono-usage : trier des photos Sony A7C le plus vit
 
 - Ouvrir un ARW (double-clic Finder) ou un dossier, passer d'une photo à l'autre sans latence perceptible.
 - Supprimer en une touche.
-- Réglages : devenir l'app par défaut pour les formats RAW courants, quelques raccourcis.
+- Réglages : devenir l'app par défaut pour les formats RAW courants, raccourcis configurables.
 - Hors périmètre : édition, catalogue, notation, filmstrip, métadonnées avancées, export, sync, sandbox, Mac App Store.
 - Utilisateur unique, usage personnel. Machine : M1 Pro 8 cœurs, 16 Go, écran 3024×1964, macOS 27.
 
@@ -127,6 +127,14 @@ Pression mémoire (`DispatchSource.makeMemoryPressureSource`), qui agit sur **l'
 
 ### Affichage
 
+**Forme de la fenêtre** (`WindowShape`, `ViewerController.applyWindowShape`) : la fenêtre prend le ratio de la photo, ce qui supprime les bordures sans rien recadrer. Un rendu lui donne toujours sa forme exacte ; un aperçu, dont la taille vient d'un en-tête légèrement différent, ne la change que si le ratio s'écarte de plus de 1 %. Elle ne change pas pendant un zoom, pour comparer la mise au point sans que rien ne bouge. L'image couvre toujours la vue (le plus grand des deux rapports), donc un arrondi ne peut pas ouvrir de bande. Le tier S reste ajusté à l'écran : une photo portrait est affichée à sa pleine définition de rendu.
+
+**Fenêtre seule** : aucun plein écran, natif ou non, et donc aucune touche pour y aller. La barre de titre est invisible. Glisser la photo déplace la fenêtre, sauf en zoom où cela déplace l'image. La fenêtre conserve sa hauteur d'une orientation à l'autre, seule sa largeur change, et les contraintes du bandeau restent sous les priorités de la fenêtre, pour que le texte ne lui impose pas de largeur minimale.
+
+**Survol** : boutons, trois lignes en bas à gauche (nom ; ISO, vitesse, ouverture, focale ; date), position en bas à droite et marqueur « Aperçu » ne s'affichent que si le pointeur est sur la photo. L'état est relu à chaque changement de forme, car une fenêtre qui change sous un pointeur immobile n'envoie aucun événement. Le message d'erreur de décodage reste toujours visible : il porte le nom du fichier qu'une suppression viserait.
+
+**Informations** : `MetadataStore` lit l'EXIF hors main, un fichier à la fois, le plus récent d'abord, et anticipe sur les photos voisines. Pour les `.arw`, lecture directe des 64 premiers Ko (`PhotoMetadata.parse`), sans charger le plugin RAW d'ImageIO ; repli sur ImageIO sinon. Vérifié sur 133 fichiers réels par `--verify-previews` : valeurs identiques à ImageIO. La date reste celle de l'appareil, l'EXIF n'ayant pas de fuseau.
+
 `ViewerView` : NSView layer-hosting, un seul `CALayer` image, `contents` assigné dans une `CATransaction` sans action. `contentsGravity` et géométrie calculés sur les dimensions logiques natives, ce qui permet de permuter P/S/F sans saut de géométrie. Zoom : transformation de layer, F remplace S à son arrivée. Grossissement > 100 % en `nearest`. Le zoom et sa position sont conservés entre photos pour comparer la mise au point. IOSurface étiquetée en P3 : `IOSurfaceSetValue(surface, kIOSurfaceColorSpace, CGColorSpaceCopyPropertyList(p3))`, vérifiée visuellement en M0.
 
 ### PhotoList et dossier
@@ -146,7 +154,7 @@ Photo disparue → retirée, on passe à la suivante.
 Chaque suppression crée d'abord un `TrashOp { photo, indexOrigine, état: pending|done(trashURL)|failed, undoDemandé }`, sur le main.
 
 1. Touche Supprimer (`keyDown` non répété : **`isARepeat` ignoré**, pour que maintenir la touche ne vide pas le dossier), acceptée seulement si la photo est visible (principe 4).
-2. Tombstone posé, retrait optimiste de la liste, affichage synchrone de la suivante dans le sens de navigation. Aucune confirmation : c'est réversible. La photo n'étant plus dans la liste, une double suppression est impossible.
+2. Tombstone posé, retrait optimiste de la liste, affichage synchrone de la photo suivante du dossier (ou dans le sens de navigation, selon le réglage ; la précédente si c'était la dernière). Aucune confirmation : c'est réversible. La photo n'étant plus dans la liste, une double suppression est impossible.
 3. File série (FIFO) : la révision sur disque est revérifiée. Différente de `key` (fichier remplacé entre-temps) → **pas de suppression**, photo réinsérée, alerte. Sinon `FileManager.trashItem`, l'URL en corbeille est conservée dans l'opération.
 4. Échec : réinsertion à sa place triée, alerte. Volume sans corbeille (SMB) : alerte proposant une suppression **définitive**, confirmée à chaque fois, et qui n'entre jamais dans la pile d'annulation.
 5. ⌘Z prend la dernière opération. Si `pending`, marque `undoDemandé` : l'annulation s'exécute à la fin du trash (succès → restauration, échec → déjà réinsérée). Si `done`, met le déplacement retour dans la même file. `moveItem` ne remplace jamais : si le chemin d'origine est occupé, erreur explicite. Réinsertion et navigation dessus.
@@ -161,20 +169,7 @@ Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en 
 - Réglages : une case par format, `NSWorkspace.setDefaultApplication(at:toOpen:completion:)`, appels sérialisés par type, erreurs affichées (le système peut demander un consentement ou refuser). L'état affiché est relu via `urlForApplication(toOpen:)` après chaque changement, jamais stocké. Le bundle précédent est mémorisé ; il n'est restauré à la désactivation que si BetterView est toujours le gestionnaire effectif et que cette app existe encore.
 - Non sandboxé (requis : un double-clic ne donne accès qu'au fichier en sandbox, pas à ses voisins). Hardened runtime. Signature locale, script d'installation vers `/Applications`.
 
-Raccourcis, en dur, visibles dans le menu :
-
-| Touche | Action |
-|---|---|
-| ← → | Précédente, suivante |
-| ⌫ ou X | Mettre à la corbeille |
-| ⌘Z | Annuler |
-| Z ou double-clic | 100 % / ajusté, centré sur le curseur |
-| Pincement, défilement | Zoom, déplacement |
-| F | Plein écran |
-| I | Nom, EXIF de base, tier |
-| Début, Fin | Première, dernière |
-| ⌘O | Ouvrir |
-| ⌘, | Réglages |
+Raccourcis : `ShortcutMap` associe chaque action à ses touches, enregistrées dans `UserDefaults` ; une touche n'appartient qu'à une action, et l'attribuer ailleurs la retire de la première. Les lettres sont stockées par caractère (valable en AZERTY), les touches spéciales par code. La vue répond à toutes les touches, le menu affiche la première. ⌘Q, ⌘W, ⌘O et ⌘, sont réservés. Une touche sans modificateur n'entre jamais dans le menu pour la suppression : elle agirait aussi depuis la fenêtre de réglages. La liste par défaut est dans le README.
 
 ## 7. Objectifs vérifiables
 
@@ -260,5 +255,7 @@ Résultats de `--bench` (Release, M1 Pro 16 Go, 133 ARW sur SSD interne, cache d
 | Saut vers une photo sans cache, jusqu'à S | p95 < 450 ms | p95 626 ms ; l'aperçu s'affiche entre-temps | **Non atteint**, objectif révisé |
 | Empreinte au repos (3 s) | 2,1 Go | 1,6 Go pour 1,44 Go de frames | Atteint |
 | Pic d'empreinte, pendant les rendus | non fixé | 4,2 Go, transitoire | À surveiller |
+
+Fenêtre à la forme de la photo, avec une immersion plein écran depuis retirée (mesures à refaire), même machine, même dossier, version précédente puis version actuelle (`--bench`, un passage chacun) : navigation à 1 photo/s p99 1,0 → 3,0 ms (le changement de forme de la fenêtre, objectif de 8 ms tenu), touche maintenue p99 2,0 → 1,9 ms, suppression p99 1,0 → 1,3 ms, lancement 358 → 218 ms. Zoom immédiat p50 452 → 742 ms sur 6 mesures seulement : écart non expliqué, à reconfirmer.
 
 Non mesuré : latence jusqu'à l'image réellement présentée à l'écran (seul le commit l'est), lecture à froid, carte SD, volume SMB, écran 6K.

@@ -18,8 +18,17 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The file name the view is really showing, whose deletion is therefore legitimate.
     private(set) var visiblePhoto: PhotoKey?
     private(set) var shownTier: Tier?
-    private var infoVisible = false
+    private var infoVisible = Preferences.infoVisible
     private var titlePending = false
+    private let metadata = MetadataStore()
+
+    /// The shape the window currently has, and the size it keeps across shapes.
+    private var shapedAspect: CGFloat?
+    private var chosenHeight: CGFloat = 750
+    private var applyingShape = false
+    /// The centre shapes are placed around. Reading it back from the frame would add a
+    /// rounding error at every change of orientation, and the window would creep sideways.
+    private var shapeCenter: CGPoint?
 
     /// Benchmark hooks.
     var onDisplayed: ((PhotoKey, Tier?) -> Void)?
@@ -40,15 +49,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
         super.init()
 
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        setWindowButtonsVisible(false)
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(white: 0.07, alpha: 1)
+        window.backgroundColor = .black
         window.contentView = view
         window.delegate = self
         window.title = "BetterView"
         window.setFrameAutosaveName("Viewer")
+        // Only the window with the photo's shape exists: no full-screen mode.
+        window.collectionBehavior = .fullScreenNone
+        window.minSize = NSSize(width: 200, height: 200)
         window.isReleasedWhenClosed = false
         window.initialFirstResponder = view
         if !window.setFrameUsingName("Viewer") { window.center() }
+        chosenHeight = window.frame.height
 
         view.onCommand = { [weak self] in self?.handle($0) }
         session.onEvent = { [weak self] in self?.handle($0) }
@@ -56,6 +71,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         pipeline.onFailed = { [weak self] in self?.frameFailed($0) }
         pipeline.onStale = { [weak self] _ in self?.session.requestScan() }
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
+        metadata.onLoaded = { [weak self] photo in
+            guard let self, photo == self.session.list.current else { return }
+            self.updateInfo()
+        }
 
         updateTarget()
         pipeline.disk.load()
@@ -96,6 +115,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func screensChanged() {
         updateTarget()
+        shapedAspect = nil
         display()
         replan()
     }
@@ -104,28 +124,34 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func handle(_ command: ViewerCommand) {
         switch command {
-        case .next(let isRepeat): step(1, repeating: isRepeat)
-        case .previous(let isRepeat): step(-1, repeating: isRepeat)
-        case .first: jump(to: 0, direction: 1)
-        case .last: jump(to: session.list.count - 1, direction: -1)
-        case .delete: deleteCurrent()
-        case .toggleZoom: toggleZoom()
-        case .toggleFullScreen: window.toggleFullScreen(nil)
-        case .toggleInfo: toggleInfo()
-        case .exitZoom:
-            if view.isZoomed {
-                view.exitZoom()
-            } else if window.styleMask.contains(.fullScreen) {
-                window.toggleFullScreen(nil)
-            }
+        case .perform(let action, let isRepeat): perform(action, repeating: isRepeat)
         case .keyReleased:
             guard repeating else { return }
             repeating = false
             replan()
+        case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
         case .zoomChanged:
             display()
             replan()
+        }
+    }
+
+    func perform(_ action: ShortcutAction, repeating isRepeat: Bool = false) {
+        switch action {
+        case .next: step(1, repeating: isRepeat)
+        case .previous: step(-1, repeating: isRepeat)
+        case .jumpForward: step(10, repeating: isRepeat)
+        case .jumpBackward: step(-10, repeating: isRepeat)
+        case .first: jump(to: 0, direction: 1)
+        case .last: jump(to: session.list.count - 1, direction: -1)
+        case .delete: deleteCurrent()
+        case .undo: undo()
+        case .toggleZoom: toggleZoom()
+        case .toggleInfo: setInfoVisible(!infoVisible)
+        case .revealInFinder: revealInFinder()
+        case .exit:
+            view.exitZoom()
         }
     }
 
@@ -155,6 +181,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
+        // The next photo in the folder, unless the user asked to keep the direction of travel.
+        if !Preferences.deleteFollowsDirection { direction = 1 }
         session.trashCurrent(direction: direction)
     }
 
@@ -162,9 +190,45 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if !session.undo() { NSSound.beep() }
     }
 
-    private func toggleInfo() {
-        infoVisible.toggle()
+    func setInfoVisible(_ visible: Bool) {
+        infoVisible = visible
+        Preferences.infoVisible = visible
         updateInfo()
+    }
+
+    private func revealInFinder() {
+        guard let current = session.list.current else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([current.url])
+    }
+
+    // MARK: Window shape
+
+    private func setWindowButtonsVisible(_ visible: Bool) {
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(kind)?.isHidden = !visible
+        }
+    }
+
+    /// Gives the window the photo's shape. A zoomed view keeps its window, so that comparing
+    /// focus across photos does not move anything; leaving the zoom applies the shape.
+    ///
+    /// A preview's size comes from the file header, slightly off the rendered one, so it keeps
+    /// a window that is nearly right: the window does not shake while a key is held. A
+    /// rendered frame always gets its exact shape, so no photo stays cropped.
+    private func applyWindowShape(aspect: CGFloat, approximate: Bool) {
+        if approximate, let shapedAspect, WindowShape.sameShape(shapedAspect, aspect) { return }
+        if view.isZoomed { return }
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        shapedAspect = aspect
+        let center = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
+        shapeCenter = center
+        let frame = WindowShape.frame(aspect: aspect, height: chosenHeight, center: center, visible: screen.visibleFrame)
+        // Also after a launch, when the restored frame may already have this size.
+        window.contentAspectRatio = frame.size
+        guard frame.size != window.frame.size else { return }
+        applyingShape = true
+        window.setFrame(frame, display: false)
+        applyingShape = false
     }
 
     // MARK: Navigation
@@ -218,10 +282,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
             visiblePhoto = nil
             shownTier = nil
             view.showMessage(session.tombstones.isEmpty ? "Aucune photo" : "Aucune photo restante")
+            updateInfo()
             onDisplayed?(PhotoKey(path: "", device: 0, inode: 0, size: 0, mtimeSeconds: 0, mtimeNanoseconds: 0), nil)
             return
         }
         if let frame = pipeline.cache.best(current, zoomed: view.isZoomed) {
+            applyWindowShape(aspect: frame.nativeSize.width / frame.nativeSize.height, approximate: frame.key.tier == .preview)
             view.show(frame)
             visiblePhoto = current
             shownTier = frame.key.tier
@@ -268,27 +334,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The name and position are known at once; the shooting information follows, read ahead
+    /// for the next photos so it is normally there on arrival.
     private func updateInfo() {
-        guard infoVisible, let current = session.list.current else {
-            view.setInfo(nil)
+        guard infoVisible, let current = session.list.current, let index = session.list.index else {
+            view.hideInfo()
             return
         }
-        let name = current.name
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let summary = Decoders.summary(current)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, self.infoVisible, self.session.list.current == current else { return }
-                    let tier = switch self.shownTier {
-                    case .preview: "aperçu"
-                    case .screen: "écran"
-                    case .full: "100 %"
-                    case nil: "-"
-                    }
-                    self.view.setInfo("\(name)  ·  \(summary)  ·  \(tier)")
-                }
-            }
+        let known = metadata.metadata(for: current)
+        view.setInfo(name: current.name, settings: known?.settingsText ?? "", date: known?.dateText ?? "", position: "\(index + 1) / \(session.list.count)")
+        let photos = session.list.photos
+        let around = [0, direction, 2 * direction, -direction, 3 * direction].compactMap { offset -> PhotoKey? in
+            let at = index + offset
+            return photos.indices.contains(at) ? photos[at] : nil
         }
+        metadata.request(around)
     }
 
     // MARK: Session events
@@ -342,5 +402,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         session.requestScan()
+        view.refreshHover()
+    }
+
+    /// A size the user chose stays for the next photos, whatever their orientation.
+    func windowDidResize(_ notification: Notification) {
+        guard !applyingShape else { return }
+        chosenHeight = window.frame.height
+        shapeCenter = nil
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard !applyingShape else { return }
+        shapeCenter = nil
     }
 }

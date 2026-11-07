@@ -2,11 +2,9 @@ import AppKit
 import QuartzCore
 
 enum ViewerCommand {
-    case next(repeating: Bool), previous(repeating: Bool), first, last
-    case delete
-    case toggleZoom, toggleFullScreen, toggleInfo
-    case exitZoom
+    case perform(ShortcutAction, repeating: Bool)
     case keyReleased
+    case hoverChanged(Bool)
     case openDropped([URL])
     case zoomChanged
 }
@@ -14,6 +12,7 @@ enum ViewerCommand {
 /// Shows one IOSurface in a layer and handles geometry and input. No app logic here.
 final class ViewerView: NSView {
     var onCommand: (ViewerCommand) -> Void = { _ in }
+    var shortcuts = ShortcutMap.defaults
 
     /// nil is fit-to-window. Otherwise 1.0 means one image pixel per screen pixel.
     private(set) var zoom: CGFloat?
@@ -26,7 +25,17 @@ final class ViewerView: NSView {
     private let imageLayer = CALayer()
     private let messageLabel = ViewerView.label(size: 15, weight: .medium)
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
-    private let infoLabel = ViewerView.label(size: 12, weight: .regular)
+    private let infoPanel = ViewerView.panel()
+    private let infoNameLabel = ViewerView.label(size: 15, weight: .semibold)
+    private let infoSettingsLabel = ViewerView.label(size: 13, weight: .regular)
+    private let infoDateLabel = ViewerView.label(size: 13, weight: .regular)
+    private let positionPanel = ViewerView.panel()
+    private let positionLabel = ViewerView.label(size: 17, weight: .semibold)
+    private var hoverTracking: NSTrackingArea?
+    /// Everything written over the photo only shows while the pointer is on it.
+    private(set) var isHovered = false
+    private var hasInfo = false
+    private var badgeText: String?
 
     var isZoomed: Bool { zoom != nil }
 
@@ -45,6 +54,16 @@ final class ViewerView: NSView {
             return shadow
         }()
         return label
+    }
+
+    private static func panel() -> NSView {
+        let panel = NSView()
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.wantsLayer = true
+        panel.layer?.backgroundColor = NSColor(white: 0, alpha: 0.45).cgColor
+        panel.layer?.cornerRadius = 8
+        panel.isHidden = true
+        return panel
     }
 
     override init(frame: NSRect) {
@@ -66,14 +85,48 @@ final class ViewerView: NSView {
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.addSublayer(imageLayer)
 
-        for label in [messageLabel, badgeLabel, infoLabel] { addSubview(label) }
+        for label in [messageLabel, badgeLabel] { addSubview(label) }
+        addSubview(infoPanel)
+        addSubview(positionPanel)
+        positionLabel.isHidden = false
+        positionLabel.setContentCompressionResistancePriority(.dragThatCannotResizeWindow - 5, for: .horizontal)
+        positionPanel.addSubview(positionLabel)
+        for label in [infoNameLabel, infoSettingsLabel, infoDateLabel] {
+            label.isHidden = false
+            label.lineBreakMode = .byTruncatingTail
+            // The panel follows its text. Below the window's own priorities, or the text would
+            // force a minimum width on the window and the photo would no longer fit it.
+            label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+            label.setContentCompressionResistancePriority(.dragThatCannotResizeWindow - 10, for: .horizontal)
+            infoPanel.addSubview(label)
+        }
+        let shrinkToText = infoPanel.widthAnchor.constraint(equalToConstant: 0)
+        shrinkToText.priority = .defaultLow
         NSLayoutConstraint.activate([
+            shrinkToText,
             messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             badgeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            badgeLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            infoLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            infoLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            badgeLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
+            positionPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            positionPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            positionLabel.topAnchor.constraint(equalTo: positionPanel.topAnchor, constant: 6),
+            positionLabel.bottomAnchor.constraint(equalTo: positionPanel.bottomAnchor, constant: -6),
+            positionLabel.leadingAnchor.constraint(equalTo: positionPanel.leadingAnchor, constant: 10),
+            positionLabel.trailingAnchor.constraint(equalTo: positionPanel.trailingAnchor, constant: -10),
+            infoNameLabel.topAnchor.constraint(equalTo: infoPanel.topAnchor, constant: 6),
+            infoNameLabel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor, constant: 10),
+            infoNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: infoPanel.trailingAnchor, constant: -10),
+            infoSettingsLabel.topAnchor.constraint(equalTo: infoNameLabel.bottomAnchor, constant: 2),
+            infoSettingsLabel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor, constant: 10),
+            infoSettingsLabel.trailingAnchor.constraint(lessThanOrEqualTo: infoPanel.trailingAnchor, constant: -10),
+            infoDateLabel.topAnchor.constraint(equalTo: infoSettingsLabel.bottomAnchor, constant: 2),
+            infoDateLabel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor, constant: 10),
+            infoDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: infoPanel.trailingAnchor, constant: -10),
+            infoDateLabel.bottomAnchor.constraint(equalTo: infoPanel.bottomAnchor, constant: -6),
         ])
         registerForDraggedTypes([.fileURL])
     }
@@ -98,7 +151,8 @@ final class ViewerView: NSView {
             CATransaction.flush()
         }
         setLabel(messageLabel, nil)
-        setLabel(badgeLabel, frame.key.tier == .preview ? "Aperçu" : nil)
+        badgeText = frame.key.tier == .preview ? "Aperçu" : nil
+        applyOverlayVisibility()
     }
 
     /// Shows no pixels at all: a photo must never appear under another photo's name.
@@ -110,10 +164,31 @@ final class ViewerView: NSView {
         CATransaction.commit()
         CATransaction.flush()
         setLabel(messageLabel, text)
-        setLabel(badgeLabel, nil)
+        badgeText = nil
+        applyOverlayVisibility()
     }
 
-    func setInfo(_ text: String?) { setLabel(infoLabel, text) }
+    /// The lines keep their place while the shooting information is loading.
+    func setInfo(name: String, settings: String, date: String, position: String) {
+        hasInfo = true
+        if infoNameLabel.stringValue != name { infoNameLabel.stringValue = name }
+        if infoSettingsLabel.stringValue != settings { infoSettingsLabel.stringValue = settings }
+        if infoDateLabel.stringValue != date { infoDateLabel.stringValue = date }
+        if positionLabel.stringValue != position { positionLabel.stringValue = position }
+        applyOverlayVisibility()
+    }
+
+    func hideInfo() {
+        hasInfo = false
+        applyOverlayVisibility()
+    }
+
+    private func applyOverlayVisibility() {
+        let showInfo = hasInfo && isHovered
+        if infoPanel.isHidden == showInfo { infoPanel.isHidden = !showInfo }
+        if positionPanel.isHidden == showInfo { positionPanel.isHidden = !showInfo }
+        setLabel(badgeLabel, isHovered ? badgeText : nil)
+    }
 
     private func setLabel(_ label: NSTextField, _ text: String?) {
         let hidden = text == nil
@@ -133,9 +208,11 @@ final class ViewerView: NSView {
 
     private var pointsPerPixel: CGFloat { 1 / (window?.backingScaleFactor ?? 2) }
 
+    /// The window has the photo's shape, so this is the whole photo. Taking the larger of the
+    /// two ratios means a rounding difference between the two shapes can never open a bar.
     private var fitScale: CGFloat {
         guard nativeSize.width > 0, nativeSize.height > 0 else { return 1 }
-        return min(bounds.width / nativeSize.width, bounds.height / nativeSize.height)
+        return max(bounds.width / nativeSize.width, bounds.height / nativeSize.height)
     }
 
     /// Fit zoom in the same unit as `zoom`.
@@ -160,6 +237,33 @@ final class ViewerView: NSView {
         let halfY = min(0.5, bounds.height / 2 / max(size.height, 1))
         center.x = min(max(center.x, halfX), 1 - halfX)
         center.y = min(max(center.y, halfY), 1 - halfY)
+    }
+
+    // MARK: Hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        addTrackingArea(area)
+        hoverTracking = area
+        // The window can change shape under a pointer that does not move, which sends no event.
+        refreshHover()
+    }
+
+    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
+
+    /// Asks where the pointer really is. Over another window in front, it is not on the photo.
+    func refreshHover() {
+        guard let window else { return }
+        let inWindow = window.mouseLocationOutsideOfEventStream
+        let inside = bounds.contains(convert(inWindow, from: nil))
+            && NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
+        guard inside != isHovered else { return }
+        isHovered = inside
+        applyOverlayVisibility()
+        onCommand(.hoverChanged(inside))
     }
 
     // MARK: Zoom and pan
@@ -240,6 +344,9 @@ final class ViewerView: NSView {
         window?.makeFirstResponder(self)
         if event.clickCount == 2 {
             toggleZoom(at: convert(event.locationInWindow, from: nil))
+        } else if zoom == nil {
+            // Dragging the photo moves the window; once zoomed, it moves the image instead.
+            window?.performDrag(with: event)
         }
     }
 
@@ -260,39 +367,12 @@ final class ViewerView: NSView {
         onCommand(.keyReleased)
     }
 
-    /// Letters go through the typed character so they work on any layout (AZERTY included);
-    /// arrows and delete go through key codes.
     private func handle(_ event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        guard modifiers.isEmpty else { return false }
-        switch event.keyCode {
-        case 123, 126: onCommand(.previous(repeating: event.isARepeat)); return true
-        case 124, 125: onCommand(.next(repeating: event.isARepeat)); return true
-        case 115: onCommand(.first); return true
-        case 119: onCommand(.last); return true
-        case 51, 117:
-            // Holding the key must never wipe a folder.
-            if !event.isARepeat { onCommand(.delete) }
-            return true
-        case 53: onCommand(.exitZoom); return true
-        default: break
+        guard let binding = KeyBinding(event: event), let action = shortcuts.action(for: binding) else { return false }
+        if action.repeats || !event.isARepeat {
+            onCommand(.perform(action, repeating: event.isARepeat))
         }
-        switch event.charactersIgnoringModifiers?.lowercased() {
-        case "x":
-            if !event.isARepeat { onCommand(.delete) }
-            return true
-        case "z":
-            if !event.isARepeat { onCommand(.toggleZoom) }
-            return true
-        case "f":
-            if !event.isARepeat { onCommand(.toggleFullScreen) }
-            return true
-        case "i":
-            if !event.isARepeat { onCommand(.toggleInfo) }
-            return true
-        default:
-            return false
-        }
+        return true
     }
 
     // MARK: Drag and drop
