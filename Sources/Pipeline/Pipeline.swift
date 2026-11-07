@@ -294,7 +294,10 @@ final class Pipeline {
         onNeedsReplan()
         // Replanning shrank the protected set: what it no longer covers can now go.
         if level != .normal {
-            cache.retainOnly(.screen, keep: cache.protected)
+            // A wanted photo without a preview has nothing to fall back on: it keeps its frame.
+            let irreplaceable = cache.protected.filter { $0.tier == .preview && failed.contains($0) }
+                .map { FrameKey(photo: $0.photo, tier: .screen) }
+            cache.retainOnly(.screen, keep: cache.protected.union(irreplaceable))
             cache.retainOnly(.preview, keep: cache.protected)
             cache.retainOnly(.full, keep: cache.protected)
             // A preview is only planned when its sharper frame is absent, which is only true now.

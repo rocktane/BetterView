@@ -405,4 +405,42 @@ final class ComparisonMemoryTests: XCTestCase {
         }
         XCTAssertTrue(attempted.contains(list[1]), "the emptied slot gets its preview planned")
     }
+
+    /// No preview to fall back on, and rendering is not an option under critical pressure.
+    func testAPhotoWithoutAPreviewKeepsItsFrameUnderPressure() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("BVMemory-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pipeline = Pipeline(
+            budgets: .init(preview: 1 << 30, screen: 1 << 30, full: 1 << 30),
+            disk: DiskCache(directory: directory.appendingPathComponent("cache"), budget: 1 << 30)
+        )
+        pipeline.setTarget(CGSize(width: 64, height: 64))
+        var list: [PhotoKey] = []
+        for name in ["a.arw", "b.arw"] {
+            let url = directory.appendingPathComponent(name)
+            try Data("not a photo".utf8).write(to: url)
+            list.append(try XCTUnwrap(PhotoKey.read(path: url.path)))
+        }
+        let plan = {
+            var input = PlanInput(count: 2, current: 0)
+            input.comparison = ComparisonPlan(shown: [0, 1], waiting: [])
+            input.memory = pipeline.memoryLevel
+            pipeline.plan(photos: list, input: input)
+        }
+        pipeline.onNeedsReplan = plan
+        plan()
+        let preview = FrameKey(photo: list[1], tier: .preview)
+        let deadline = Date().addingTimeInterval(5)
+        while !pipeline.hasFailed(preview), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertTrue(pipeline.hasFailed(preview))
+
+        let surface = try XCTUnwrap(PixelFormat.makeSurface(width: 8, height: 8))
+        let screen = FrameKey(photo: list[1], tier: .screen)
+        pipeline.cache.insert(Frame(key: screen, surface: surface, nativeSize: CGSize(width: 8, height: 8)))
+        pipeline.setMemoryLevel(.critical)
+        XCTAssertTrue(pipeline.cache.contains(screen))
+    }
 }
