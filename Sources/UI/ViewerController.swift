@@ -223,8 +223,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let center = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
         shapeCenter = center
         let frame = WindowShape.frame(aspect: aspect, height: chosenHeight, center: center, visible: screen.visibleFrame)
-        guard frame.size != window.frame.size else { return }
+        // Also after a launch, when the restored frame may already have this size.
         window.contentAspectRatio = frame.size
+        guard frame.size != window.frame.size else { return }
         applyingShape = true
         window.setFrame(frame, display: false)
         applyingShape = false
