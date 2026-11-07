@@ -98,21 +98,4 @@ enum Decoders {
             return Frame(key: FrameKey(photo: photo, tier: tier), surface: surface, nativeSize: native)
         }
     }
-
-    /// One line of shooting information, read on demand.
-    static func summary(_ photo: PhotoKey) -> String {
-        guard let source = CGImageSourceCreateWithURL(photo.url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        else { return "" }
-        let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
-        var parts: [String] = []
-        if let t = exif[kCGImagePropertyExifExposureTime] as? Double, t > 0 {
-            parts.append(t >= 1 ? String(format: "%.1f s", t) : "1/\(Int((1 / t).rounded())) s")
-        }
-        if let f = exif[kCGImagePropertyExifFNumber] as? Double { parts.append(String(format: "f/%.1f", f)) }
-        if let iso = (exif[kCGImagePropertyExifISOSpeedRatings] as? [Int])?.first { parts.append("ISO \(iso)") }
-        if let focal = exif[kCGImagePropertyExifFocalLength] as? Double { parts.append(String(format: "%.0f mm", focal)) }
-        if let date = exif[kCGImagePropertyExifDateTimeOriginal] as? String { parts.append(date) }
-        return parts.joined(separator: "  ·  ")
-    }
 }

@@ -4,6 +4,8 @@ Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite po
 
 - Passage d'une photo à l'autre en moins d'une milliseconde quand la photo est préparée.
 - Suppression en une touche, vers la corbeille, annulable avec ⌘Z.
+- Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo. Elle se déplace en glissant la photo.
+- Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs.
 - Aucune dépendance, aucun catalogue : un dossier, des photos.
 
 ## Installation
@@ -18,21 +20,23 @@ L'app est copiée dans `/Applications`. Pour en faire l'app par défaut d'un for
 
 ## Raccourcis
 
+Ils se changent dans les Réglages (⌘,), avec plusieurs touches possibles par action. Valeurs par défaut :
+
 | Touche | Action |
 |---|---|
-| ← → (ou ↑ ↓) | Précédente, suivante |
-| ⌫ ou X | Mettre à la corbeille |
-| ⌘Z | Annuler la suppression |
-| Z ou double-clic | 100 % ou ajusté |
-| Pincement, défilement, glisser | Zoom, déplacement |
-| Échap | Quitter le zoom ou le plein écran |
-| F | Plein écran |
-| I | Informations |
+| ← → (ou ↑ ↓), Espace | Précédente, suivante |
+| Page préc., Page suiv. | Reculer, avancer de 10 photos |
 | Début, Fin | Première, dernière |
-| ⌘O | Ouvrir |
-| ⌘, | Réglages |
+| ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille, puis afficher la photo suivante |
+| ⌘Z | Annuler la suppression |
+| Z | 100 % ou ajusté |
+| I | Informations |
+| R | Afficher dans le Finder |
+| Échap | Quitter le zoom |
 
-Maintenir ⌫ ne supprime qu'une seule photo. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
+Non modifiables : double-clic (100 % ou ajusté), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W et ⌘Q.
+
+Maintenir une touche de suppression ne supprime qu'une seule photo. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
 
 ## Développement
 
