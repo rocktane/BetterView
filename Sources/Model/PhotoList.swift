@@ -42,6 +42,15 @@ struct PhotoList: Sendable {
         return removed
     }
 
+    /// Removes any listed photo. The current one keeps its place, unless it is the one removed.
+    mutating func remove(_ photo: PhotoKey) -> Bool {
+        guard let at = photos.firstIndex(of: photo), let i = index else { return false }
+        if at == i { return removeCurrent(direction: 1) != nil }
+        photos.remove(at: at)
+        if at < i { index = i - 1 }
+        return true
+    }
+
     /// Inserts at the sorted position, replacing a same-path entry. Keeps the current
     /// photo unless `select` is set.
     mutating func insert(_ photo: PhotoKey, select: Bool) {

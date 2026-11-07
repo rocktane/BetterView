@@ -7,7 +7,8 @@ Visionneuse RAW macOS native, mono-usage : trier des photos Sony A7C le plus vit
 - Ouvrir un ARW (double-clic Finder) ou un dossier, passer d'une photo à l'autre sans latence perceptible.
 - Supprimer en une touche.
 - Réglages : devenir l'app par défaut pour les formats RAW courants, raccourcis configurables.
-- Hors périmètre : édition, catalogue, notation, filmstrip, métadonnées avancées, export, sync, sandbox, Mac App Store.
+- Bande d'aperçu et comparaison de photos proches, pour garder la meilleure.
+- Hors périmètre : édition, catalogue, notation, métadonnées avancées, export, sync, sandbox, Mac App Store.
 - Utilisateur unique, usage personnel. Machine : M1 Pro 8 cœurs, 16 Go, écran 3024×1964, macOS 27.
 
 ## 2. Mesures réelles (24 Mpx A7C, ARW compressés 25 Mo, SSD interne, cache de pages chaud)
@@ -137,6 +138,30 @@ Pression mémoire (`DispatchSource.makeMemoryPressureSource`), qui agit sur **l'
 
 `ViewerView` : NSView layer-hosting, un seul `CALayer` image, `contents` assigné dans une `CATransaction` sans action. `contentsGravity` et géométrie calculés sur les dimensions logiques natives, ce qui permet de permuter P/S/F sans saut de géométrie. Zoom : transformation de layer, F remplace S à son arrivée. Grossissement > 100 % en `nearest`. Le zoom et sa position sont conservés entre photos pour comparer la mise au point. IOSurface étiquetée en P3 : `IOSurfaceSetValue(surface, kIOSurfaceColorSpace, CGColorSpaceCopyPropertyList(p3))`, vérifiée visuellement en M0.
 
+### Bande d'aperçu
+
+La fenêtre change de largeur à chaque photo : la bande vit donc dans son propre `NSPanel` (`StripPanel`), flottant et sans activation. Il ne devient jamais fenêtre clé, donc le clavier reste à la visionneuse, et il se masque quand l'app passe en arrière-plan. La bande disparaît pendant un zoom, pour ne pas couvrir ce qu'on inspecte.
+
+**Aimants** (`StripMagnet`, pur et testé) : le bord du Dock se déduit de l'écart entre `frame` et `visibleFrame` (bas si le Dock est masqué) ; le centre est celui de `visibleFrame`, sur chaque axe indépendamment. La position proposée suit toujours le pointeur : s'éloigner au-delà de la portée (36 pt pour le Dock, 24 pt pour le centre) suffit à décrocher. C'est `StripPlacement` qui est mémorisé, avec les aimants qui retiennent la bande, et non la seule position : une bande retenue suit le Dock et les changements d'écran.
+
+**Vignettes** (`ThumbnailStore`) : 200 px, en priorité basse, sur leur propre file, 2 à la fois, et ce qui attend est remplacé à chaque navigation. Elles ne viennent pas du pipeline : P est évincé dès que S existe, et garder des frames pour la bande retiendrait de la mémoire hors budget. Environ 35 Mo au maximum.
+
+**Mise à jour** : après l'image, au plus une fois par tour de boucle, en affectant des pointeurs à des layers. Chaque cellule garde sa place quelle que soit l'orientation, donc rien ne se décale à l'arrivée d'une vignette.
+
+**Rafales** (`PhotoGroups`) : photos consécutives prises à 2 s d'écart au plus, d'après l'heure EXIF déjà lue par `MetadataStore`. Elles sont cherchées à ±12 photos de la courante, ce qui borne une rafale à 25 photos. Une rafale qui dépasse ce rayon n'est donc vue qu'en partie. Aucune analyse d'image : c'est prévisible, mais deux cadrages proches pris à 10 s d'écart ne sont pas regroupés (Maj+clic couvre ce cas).
+
+### Comparaison
+
+Un mode de la même fenêtre : `ComparisonView` remplace la vue de contenu, la fenêtre prend presque tout l'écran, puis retrouve son cadre exact en sortant. Le nom d'autosave est retiré pendant ce temps, pour que ce grand cadre ne revienne pas au lancement suivant.
+
+`ComparisonModel` (pur, testé) tient 4 emplacements et une file d'attente. Une photo retirée est remplacée sur place par la suivante en attente. À 4 ou 3 photos la grille reste en 2×2 avec une case vide, pour que rien ne bouge ; à 2 elles se partagent l'espace. Quand il n'en reste qu'une, retour à la vue normale, sur cette photo.
+
+**Sécurité** (principe 4) : la suppression n'agit que sur un emplacement qui montre vraiment sa photo. « Garder celle-ci » exige que toutes les photos affichées soient visibles, et ne touche jamais la file d'attente, que personne n'a encore vue. Un fichier modifié sur le disque n'est pas supprimé, comme ailleurs.
+
+**Annulation** : `LibrarySession.trash(_:)` donne le même groupe aux opérations d'un même geste, et ⌘Z restaure tout le groupe. Chaque photo restaurée retrouve son emplacement dans la comparaison. Volume sans corbeille : une alerte par photo, comme pour une suppression seule.
+
+**Pipeline** : `PlanInput.comparison` remplace la fenêtre autour de la photo courante. Toutes les photos affichées sont une demande visible, et leur S est préparé pour les 4 suivantes en attente. En zoom, F de chacune, la photo choisie d'abord. Un seul rendu F à la fois (section 11), soit environ 1,3 s pour 4 photos au premier zoom, pendant lesquelles chaque emplacement affiche S et un marqueur. Le budget F est doublé pendant la comparaison pour que 4 photos tiennent, puis rétabli. Sous pression mémoire, seule la photo choisie reste nette.
+
 ### PhotoList et dossier
 
 État main : tableau trié par `localizedStandardCompare` du nom, de `Photo { url, key }`. Extensions acceptées : celles de la section Réglages. Un seul fichier ouvert → affichage **immédiat** avec une liste provisoire `[fichier]`, sans attendre le scan ; plusieurs fichiers sélectionnés → ces fichiers seulement.
@@ -257,5 +282,7 @@ Résultats de `--bench` (Release, M1 Pro 16 Go, 133 ARW sur SSD interne, cache d
 | Pic d'empreinte, pendant les rendus | non fixé | 4,2 Go, transitoire | À surveiller |
 
 Fenêtre à la forme de la photo, avec une immersion plein écran depuis retirée (mesures à refaire), même machine, même dossier, version précédente puis version actuelle (`--bench`, un passage chacun) : navigation à 1 photo/s p99 1,0 → 3,0 ms (le changement de forme de la fenêtre, objectif de 8 ms tenu), touche maintenue p99 2,0 → 1,9 ms, suppression p99 1,0 → 1,3 ms, lancement 358 → 218 ms. Zoom immédiat p50 452 → 742 ms sur 6 mesures seulement : écart non expliqué, à reconfirmer.
+
+Bande d'aperçu affichée, même machine, même dossier, `main` puis cette version (`--bench`, un passage chacun, donc comparaison indicative) : navigation à 1 photo/s p99 9,7 → 5,0 ms, touche maintenue p99 2,5 → 2,1 ms, suppression p99 2,2 → 2,5 ms, empreinte au repos 1,67 → 1,60 Go. Aucune dégradation visible ; l'écart à 1 photo/s reste dans le bruit d'un passage unique.
 
 Non mesuré : latence jusqu'à l'image réellement présentée à l'écran (seul le commit l'est), lecture à froid, carte SD, volume SMB, écran 6K.

@@ -5,6 +5,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case next, previous, jumpForward, jumpBackward, first, last
     case delete, undo
     case toggleZoom, toggleInfo, revealInFinder, exit
+    case toggleStrip, compare, keepSelected
 
     var id: String { rawValue }
 
@@ -21,9 +22,15 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .toggleZoom: "100 % ou ajusté"
         case .toggleInfo: "Informations"
         case .revealInFinder: "Afficher dans le Finder"
-        case .exit: "Quitter le zoom"
+        case .exit: "Quitter le zoom ou la comparaison"
+        case .toggleStrip: "Bande d'aperçu"
+        case .compare: "Comparer les photos"
+        case .keepSelected: "Comparaison : garder la photo choisie"
         }
     }
+
+    /// Never given a plain key in the menu: it would also fire while typing in the settings window.
+    var isDestructive: Bool { self == .delete || self == .keepSelected }
 
     /// Holding the key repeats these. Holding a delete key must never wipe a folder.
     var repeats: Bool {
@@ -47,6 +54,9 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .toggleInfo: [.character("i")]
         case .revealInFinder: [.character("r")]
         case .exit: [.code(53)]
+        case .toggleStrip: [.character("b")]
+        case .compare: [.character("c")]
+        case .keepSelected: [.code(36), .code(76)]
         }
     }
 }
@@ -174,10 +184,10 @@ struct ShortcutMap: Equatable, Sendable {
 
     func keys(for action: ShortcutAction) -> [KeyBinding] { bindings[action] ?? [] }
 
-    /// The key shown in the menu. The delete command only takes a key with a modifier: a
+    /// The key shown in the menu. A destructive command only takes a key with a modifier: a
     /// plain key in the menu would also fire while typing in the settings window.
     func menuBinding(for action: ShortcutAction) -> KeyBinding? {
-        action == .delete ? keys(for: action).first(where: \.hasModifiers) : keys(for: action).first
+        action.isDestructive ? keys(for: action).first(where: \.hasModifiers) : keys(for: action).first
     }
 
     /// Assigns the key to `action`, taking it away from any other. Returns that other action.
