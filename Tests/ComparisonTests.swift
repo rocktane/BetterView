@@ -98,6 +98,43 @@ final class ComparisonModelTests: XCTestCase {
         XCTAssertEqual(model.waiting, original.waiting)
     }
 
+    /// Undo during a deletion restores in deletion order, not in reverse.
+    func testUndoingAKeepGivesTheSameResultInAnyOrder() throws {
+        let original = try XCTUnwrap(ComparisonModel(photos: photos("a", "b", "c", "d", "e", "f", "g", "h"), focusing: photo("b")))
+        var model = original
+        let others = model.shownOthers
+        model.remove(others)
+        for removed in others { XCTAssertTrue(model.restore(removed)) }
+        XCTAssertEqual(model.slots, original.slots)
+        XCTAssertEqual(model.waiting, photos("e", "f", "g", "h"))
+    }
+
+    func testAFailedDeletionComesBackToItsSlot() throws {
+        var model = try XCTUnwrap(ComparisonModel(photos: photos("a", "b", "c", "d", "e"), focusing: photo("a")))
+        model.remove(photos("a"))
+        XCTAssertEqual(model.slots[0], photo("e"))
+        // The session puts it back in the list when the trash refuses it.
+        model.reconcile(with: photos("a", "b", "c", "d", "e"))
+        XCTAssertEqual(model.slots, [photo("a"), photo("b"), photo("c"), photo("d")])
+        XCTAssertEqual(model.waiting, photos("e"))
+    }
+
+    func testAFileChangedDuringItsDeletionComesBackWithItsNewRevision() throws {
+        var model = try XCTUnwrap(ComparisonModel(photos: photos("a", "b", "c"), focusing: nil))
+        model.remove(photos("a"))
+        model.reconcile(with: [photo("a", revision: 1), photo("b"), photo("c")])
+        XCTAssertEqual(model.slots[0], photo("a", revision: 1))
+        XCTAssertEqual(model.members[0], photo("a", revision: 1))
+    }
+
+    func testARemovedPhotoStaysOutWhileTheListDoesNotHaveIt() throws {
+        var model = try XCTUnwrap(ComparisonModel(photos: photos("a", "b", "c"), focusing: nil))
+        model.remove(photos("a"))
+        model.reconcile(with: photos("b", "c"))
+        XCTAssertEqual(model.shown, photos("b", "c"))
+        XCTAssertEqual(model.remaining, 2)
+    }
+
     func testRestoringAPhotoItDidNotRemoveChangesNothing() throws {
         var model = try XCTUnwrap(ComparisonModel(photos: photos("a", "b"), focusing: nil))
         XCTAssertFalse(model.restore(photo("z")))

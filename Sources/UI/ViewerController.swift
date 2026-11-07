@@ -96,6 +96,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
         pipeline.onFailed = { [weak self] in self?.frameFailed($0) }
         pipeline.onStale = { [weak self] _ in self?.session.requestScan() }
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
+        pipeline.onEvicted = { [weak self] in
+            if self?.comparison != nil { self?.displayComparison() }
+        }
         metadata.onLoaded = { [weak self] photo in
             guard let self else { return }
             if self.comparison != nil {
@@ -645,7 +648,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 if frame.key.tier == .preview {
                     comparisonView.setBadge("Aperçu", slot: slot)
                 } else if let zoomed {
-                    comparisonView.setBadge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : "Rendu 100 %…", slot: slot)
+                    // Under memory pressure, only the focused photo is rendered at 100 %.
+                    let coming = pipeline.memoryLevel == .normal || slot == model.focus
+                    comparisonView.setBadge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), slot: slot)
                 } else {
                     comparisonView.setBadge(nil, slot: slot)
                 }
@@ -769,6 +774,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparison?.remove(photos)
         guard session.trash(photos) else {
             NSSound.beep()
+            comparisonListChanged()
             session.requestScan()
             return
         }
@@ -801,10 +807,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
             display()
             replan()
             scheduleTimers()
-        case .restored(let photo):
+        case .restored:
             navigationToken += 1
             if comparison != nil {
-                comparison?.restore(photo)
+                // Its list event already brought the photo back; the session then selected it.
                 focusChanged()
                 return
             }

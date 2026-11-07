@@ -87,9 +87,9 @@ struct ComparisonModel: Equatable, Sendable {
         refocus()
     }
 
-    /// Puts a photo back where it was after its deletion is undone. Whatever took the slot in
-    /// the meantime moves to an empty one, or back to the front of the waiting line. Returns
-    /// false for a photo this comparison did not remove.
+    /// Puts a photo back where it was. Whatever took the slot in the meantime moves to an empty
+    /// one, or back to its place in the waiting line, so the result does not depend on the
+    /// order of the restorations. Returns false for a photo this comparison did not remove.
     @discardableResult
     mutating func restore(_ photo: PhotoKey) -> Bool {
         guard let home = homes.removeValue(forKey: photo.path) else { return false }
@@ -98,7 +98,10 @@ struct ComparisonModel: Equatable, Sendable {
             if let empty = slots.firstIndex(of: nil) {
                 slots[empty] = occupant
             } else {
-                waiting.insert(occupant, at: 0)
+                waiting.append(occupant)
+                var order: [String: Int] = [:]
+                for (at, member) in members.enumerated() { order[member.path] = at }
+                waiting.sort { (order[$0.path] ?? 0) < (order[$1.path] ?? 0) }
             }
         }
         slots[home] = photo
@@ -107,10 +110,14 @@ struct ComparisonModel: Equatable, Sendable {
     }
 
     /// Follows the folder: a photo replaced on disk gets its new revision, and one that
-    /// disappeared leaves. Photos this comparison removed are not expected in `list`.
+    /// disappeared leaves. A removed photo back in the list returns to its slot, whatever
+    /// brought it back: an undo, a failed deletion, or a file that had changed and was kept.
     mutating func reconcile(with list: [PhotoKey]) {
         var current: [String: PhotoKey] = [:]
         for photo in list { current[photo.path] = photo }
+        for path in homes.keys.sorted() {
+            if let back = current[path] { restore(back) }
+        }
         for at in members.indices {
             if let updated = current[members[at].path] { members[at] = updated }
         }

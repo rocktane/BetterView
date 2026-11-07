@@ -44,6 +44,8 @@ final class Pipeline {
     var onFailed: (FrameKey) -> Void = { _ in }
     var onStale: (PhotoKey) -> Void = { _ in }
     var onNeedsReplan: () -> Void = {}
+    /// Frames left the cache under memory pressure: a view still holding them keeps them alive.
+    var onEvicted: () -> Void = {}
 
     private(set) var target = CGSize.zero
     private(set) var memoryLevel = MemoryLevel.normal
@@ -295,6 +297,7 @@ final class Pipeline {
             cache.retainOnly(.screen, keep: cache.protected)
             cache.retainOnly(.preview, keep: cache.protected)
             cache.retainOnly(.full, keep: cache.protected)
+            onEvicted()
         }
     }
 
