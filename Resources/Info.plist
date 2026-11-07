@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>fr</string>
+  <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>BetterView</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.photography</string>
+  <key>LSMinimumSystemVersion</key><string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Sony ARW</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.sony.arw-raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Canon CR2</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.canon.cr2-raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Canon CR3</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.canon.cr3-raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Nikon NEF</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.nikon.raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Nikon NRW</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.nikon.nrw-raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Fujifilm RAF</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.fuji.raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Adobe DNG</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.adobe.raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Olympus ORF</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.olympus.raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Panasonic RW2</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.panasonic.rw2-raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Pentax PEF</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.pentax.raw-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Samsung SRW</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>com.samsung.raw-image</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>

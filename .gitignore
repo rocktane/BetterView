@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Build
+build/
+.build/
+DerivedData/
+*.app
+*.dSYM
+*.dSYM.zip
+*.xcarchive
+*.xcresult
+
+# Xcode: the project is generated from project.yml by xcodegen
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+.swiftpm/
+
+# Photos used for testing must never reach the repository
+*.[aA][rR][wW]
+*.[cC][rR][23]
+*.[nN][eE][fF]
+*.[nN][rR][wW]
+*.[rR][aA][fF]
+*.[dD][nN][gG]
+*.[oO][rR][fF]
+*.[rR][wW]2
+*.[pP][eE][fF]
+*.[sS][rR][wW]
+
+# Local tools
+.claude/
+.env
+.env.*
