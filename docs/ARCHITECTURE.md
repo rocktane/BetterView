@@ -127,7 +127,7 @@ Pression mémoire (`DispatchSource.makeMemoryPressureSource`), qui agit sur **l'
 
 ### Affichage
 
-**Forme de la fenêtre** (`WindowShape`, `ViewerController.applyWindowShape`) : la fenêtre prend le ratio de la photo, ce qui supprime les bordures sans rien recadrer. Elle ne change que si le ratio diffère de plus de 1 % (l'en-tête et le rendu d'une même photo diffèrent légèrement), et pas pendant un zoom, pour comparer la mise au point sans que rien ne bouge. L'image couvre toujours la vue (le plus grand des deux rapports), donc un arrondi ne peut pas ouvrir de bande. Le tier S reste ajusté à l'écran : une photo portrait est affichée à sa pleine définition de rendu.
+**Forme de la fenêtre** (`WindowShape`, `ViewerController.applyWindowShape`) : la fenêtre prend le ratio de la photo, ce qui supprime les bordures sans rien recadrer. Un rendu lui donne toujours sa forme exacte ; un aperçu, dont la taille vient d'un en-tête légèrement différent, ne la change que si le ratio s'écarte de plus de 1 %. Elle ne change pas pendant un zoom, pour comparer la mise au point sans que rien ne bouge. L'image couvre toujours la vue (le plus grand des deux rapports), donc un arrondi ne peut pas ouvrir de bande. Le tier S reste ajusté à l'écran : une photo portrait est affichée à sa pleine définition de rendu.
 
 **Fenêtre seule** : aucun plein écran, natif ou non, et donc aucune touche pour y aller. La barre de titre est invisible. Glisser la photo déplace la fenêtre, sauf en zoom où cela déplace l'image. La fenêtre conserve sa hauteur d'une orientation à l'autre, seule sa largeur change, et les contraintes du bandeau restent sous les priorités de la fenêtre, pour que le texte ne lui impose pas de largeur minimale.
 

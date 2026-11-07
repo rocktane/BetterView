@@ -2,8 +2,8 @@ import CoreGraphics
 
 /// Window frames that take the exact shape of the photo, which is what leaves no bars around it.
 enum WindowShape {
-    /// Aspects closer than this keep the current frame: the header's size and the rendered
-    /// size of one photo differ slightly, and that must not move the window.
+    /// A preview this close to the current shape keeps the frame: the header's size and the
+    /// rendered size of one photo differ slightly, and that must not move the window.
     static let aspectTolerance: CGFloat = 0.01
 
     static func sameShape(_ a: CGFloat, _ b: CGFloat) -> Bool {

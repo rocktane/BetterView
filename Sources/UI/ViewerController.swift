@@ -208,13 +208,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Gives the window the photo's shape. A zoomed view keeps its window, so that comparing
     /// focus across photos does not move anything; leaving the zoom applies the shape.
-    private func applyWindowShape(aspect: CGFloat) {
-        if let shapedAspect, WindowShape.sameShape(shapedAspect, aspect) { return }
+    ///
+    /// A preview's size comes from the file header, slightly off the rendered one, so it keeps
+    /// a window that is nearly right: the window does not shake while a key is held. A
+    /// rendered frame always gets its exact shape, so no photo stays cropped.
+    private func applyWindowShape(aspect: CGFloat, approximate: Bool) {
+        if approximate, let shapedAspect, WindowShape.sameShape(shapedAspect, aspect) { return }
         if view.isZoomed { return }
         guard let screen = window.screen ?? NSScreen.main else { return }
         shapedAspect = aspect
         let center = CGPoint(x: window.frame.midX, y: window.frame.midY)
         let frame = WindowShape.frame(aspect: aspect, height: chosenHeight, center: center, visible: screen.visibleFrame)
+        guard frame.size != window.frame.size else { return }
         window.contentAspectRatio = frame.size
         applyingShape = true
         window.setFrame(frame, display: false)
@@ -277,7 +282,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         if let frame = pipeline.cache.best(current, zoomed: view.isZoomed) {
-            applyWindowShape(aspect: frame.nativeSize.width / frame.nativeSize.height)
+            applyWindowShape(aspect: frame.nativeSize.width / frame.nativeSize.height, approximate: frame.key.tier == .preview)
             view.show(frame)
             visiblePhoto = current
             shownTier = frame.key.tier
