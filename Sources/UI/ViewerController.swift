@@ -26,6 +26,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var shapedAspect: CGFloat?
     private var chosenHeight: CGFloat = 750
     private var applyingShape = false
+    /// The centre shapes are placed around. Reading it back from the frame would add a
+    /// rounding error at every change of orientation, and the window would creep sideways.
+    private var shapeCenter: CGPoint?
 
     /// Benchmark hooks.
     var onDisplayed: ((PhotoKey, Tier?) -> Void)?
@@ -217,7 +220,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if view.isZoomed { return }
         guard let screen = window.screen ?? NSScreen.main else { return }
         shapedAspect = aspect
-        let center = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        let center = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
+        shapeCenter = center
         let frame = WindowShape.frame(aspect: aspect, height: chosenHeight, center: center, visible: screen.visibleFrame)
         guard frame.size != window.frame.size else { return }
         window.contentAspectRatio = frame.size
@@ -404,5 +408,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) {
         guard !applyingShape else { return }
         chosenHeight = window.frame.height
+        shapeCenter = nil
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        guard !applyingShape else { return }
+        shapeCenter = nil
     }
 }
