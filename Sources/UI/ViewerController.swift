@@ -846,7 +846,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         alert.addButton(withTitle: "Supprimer définitivement").hasDestructiveAction = true
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
-                if response == .alertSecondButtonReturn { self?.session.deletePermanently(photo) }
+                guard response == .alertSecondButtonReturn else { return }
+                // Recorded like a trash, so a failure brings the photo back to its slot.
+                self?.comparison?.remove([photo])
+                self?.session.deletePermanently(photo)
             }
         }
     }

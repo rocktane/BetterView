@@ -127,6 +127,18 @@ final class ComparisonModelTests: XCTestCase {
         XCTAssertEqual(model.members[0], photo("a", revision: 1))
     }
 
+    /// Trash refused, then the permanent deletion the user confirmed fails too.
+    func testAFailedPermanentDeletionAlsoComesBack() throws {
+        var model = try XCTUnwrap(ComparisonModel(photos: photos("a", "b", "c", "d", "e"), focusing: photo("a")))
+        model.remove(photos("a"))
+        model.reconcile(with: photos("a", "b", "c", "d", "e"))
+        model.remove(photos("a"))
+        model.reconcile(with: photos("b", "c", "d", "e"))
+        XCTAssertEqual(model.slots[0], photo("e"))
+        model.reconcile(with: photos("a", "b", "c", "d", "e"))
+        XCTAssertEqual(model.slots, [photo("a"), photo("b"), photo("c"), photo("d")])
+    }
+
     func testARemovedPhotoStaysOutWhileTheListDoesNotHaveIt() throws {
         var model = try XCTUnwrap(ComparisonModel(photos: photos("a", "b", "c"), focusing: nil))
         model.remove(photos("a"))
@@ -351,5 +363,46 @@ final class ComparisonShortcutTests: XCTestCase {
         var map = ShortcutMap.defaults
         map.assign(.code(36, modifiers: .command), to: .keepSelected)
         XCTAssertEqual(map.menuBinding(for: .keepSelected), .code(36, modifiers: .command))
+    }
+}
+
+@MainActor
+final class ComparisonMemoryTests: XCTestCase {
+    /// A settled comparison has screen frames and no previews, since a screen frame drops its
+    /// preview. Critical pressure takes the screen frames of the others: they must get a
+    /// preview, or those slots would stay empty until the next action.
+    func testCriticalPressureRequestsPreviewsForTheSlotsItEmptied() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("BVMemory-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pipeline = Pipeline(
+            budgets: .init(preview: 1 << 30, screen: 1 << 30, full: 1 << 30),
+            disk: DiskCache(directory: directory, budget: 1 << 30)
+        )
+        let list = photos("a", "b")
+        for photo in list {
+            let surface = try XCTUnwrap(PixelFormat.makeSurface(width: 8, height: 8))
+            pipeline.cache.insert(Frame(key: FrameKey(photo: photo, tier: .screen), surface: surface, nativeSize: CGSize(width: 8, height: 8)))
+        }
+        pipeline.onNeedsReplan = {
+            var input = PlanInput(count: 2, current: 0)
+            input.comparison = ComparisonPlan(shown: [0, 1], waiting: [])
+            input.memory = pipeline.memoryLevel
+            pipeline.plan(photos: list, input: input)
+        }
+        // These files do not exist, so a job that really starts ends up reported as stale.
+        var attempted: [PhotoKey] = []
+        pipeline.onStale = { attempted.append($0) }
+        var emptiedWhenNotified = false
+        pipeline.onEvicted = { emptiedWhenNotified = !pipeline.cache.contains(FrameKey(photo: list[1], tier: .screen)) }
+
+        pipeline.setMemoryLevel(.critical)
+
+        XCTAssertTrue(emptiedWhenNotified)
+        XCTAssertTrue(pipeline.cache.contains(FrameKey(photo: list[0], tier: .screen)), "the focused photo stays sharp")
+        let deadline = Date().addingTimeInterval(5)
+        while !attempted.contains(list[1]), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertTrue(attempted.contains(list[1]), "the emptied slot gets its preview planned")
     }
 }

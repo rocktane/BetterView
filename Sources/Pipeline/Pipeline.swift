@@ -297,6 +297,8 @@ final class Pipeline {
             cache.retainOnly(.screen, keep: cache.protected)
             cache.retainOnly(.preview, keep: cache.protected)
             cache.retainOnly(.full, keep: cache.protected)
+            // A preview is only planned when its sharper frame is absent, which is only true now.
+            onNeedsReplan()
             onEvicted()
         }
     }
