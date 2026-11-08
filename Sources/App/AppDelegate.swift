@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func next(_ sender: Any?) { viewer.step(1) }
     @objc private func previous(_ sender: Any?) { viewer.step(-1) }
     @objc private func zoom(_ sender: Any?) { viewer.toggleZoom() }
+    @objc private func zoomToFocus(_ sender: Any?) { viewer.zoomToFocus() }
     @objc private func fullScreen(_ sender: Any?) { viewer.window.toggleFullScreen(nil) }
 
     // MARK: Menu
@@ -119,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Précédente", #selector(previous), String(UnicodeScalar(NSLeftArrowFunctionKey)!), []),
             .separator(),
             item("100 % / Ajusté", #selector(zoom), "z", []),
+            item("100 % sur le point AF enregistré", #selector(zoomToFocus), "a", []),
             item("Plein écran", #selector(fullScreen), "f", []),
         ])
         return main

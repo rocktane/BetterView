@@ -19,6 +19,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private(set) var visiblePhoto: PhotoKey?
     private(set) var shownTier: Tier?
     private var infoVisible = false
+    /// Zoomed through the AF command: each photo opens on its own AF position, at the
+    /// current zoom, until the zoom ends.
+    private(set) var followsFocus = false
+    /// The photo last centred on its AF position, and whether that position was unknown.
+    private var focusCentred: PhotoKey?
+    private var focusAwaited = false
     private var titlePending = false
 
     /// Benchmark hooks.
@@ -56,6 +62,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         pipeline.onFailed = { [weak self] in self?.frameFailed($0) }
         pipeline.onStale = { [weak self] _ in self?.session.requestScan() }
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
+        pipeline.onFocus = { [weak self] in self?.focusArrived($0) }
 
         updateTarget()
         pipeline.disk.load()
@@ -110,6 +117,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .last: jump(to: session.list.count - 1, direction: -1)
         case .delete: deleteCurrent()
         case .toggleZoom: toggleZoom()
+        case .zoomToFocus: zoomToFocus()
         case .toggleFullScreen: window.toggleFullScreen(nil)
         case .toggleInfo: toggleInfo()
         case .exitZoom:
@@ -124,6 +132,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             replan()
         case .openDropped(let urls): open(urls)
         case .zoomChanged:
+            if !view.isZoomed { stopFollowingFocus() }
             display()
             replan()
         }
@@ -147,6 +156,63 @@ final class ViewerController: NSObject, NSWindowDelegate {
     func toggleZoom() {
         let point = view.window.map { view.convert($0.mouseLocationOutsideOfEventStream, from: nil) }
         view.toggleZoom(at: point.flatMap { view.bounds.contains($0) ? $0 : nil })
+    }
+
+    /// Same key to leave: like Z, the zoom toggles.
+    func zoomToFocus() {
+        if followsFocus && view.isZoomed {
+            view.exitZoom()
+            return
+        }
+        guard session.list.current != nil else {
+            NSSound.beep()
+            return
+        }
+        followsFocus = true
+        centreOnFocus(level: 1)
+    }
+
+    /// Centres the current photo on its AF position, or on the middle of the image when
+    /// there is none, and says so: the zoom must not pretend to know where the focus is.
+    private func centreOnFocus(level: CGFloat?) {
+        guard let current = session.list.current else { return }
+        focusCentred = current
+        let focus = pipeline.cameraFocus(current)
+        focusAwaited = focus == nil
+        let middle = CGPoint(x: 0.5, y: 0.5)
+        switch focus {
+        case .point(let point):
+            view.setFocusMarker(point.normalized, note: nil)
+            view.zoom(onNormalized: point.normalized, level: level)
+        case .manual:
+            view.setFocusMarker(nil, note: "Mise au point manuelle : centre")
+            view.zoom(onNormalized: middle, level: level)
+        case .absent:
+            view.setFocusMarker(nil, note: "Pas de point AF : centre")
+            view.zoom(onNormalized: middle, level: level)
+        case nil:
+            view.setFocusMarker(nil, note: nil)
+            view.zoom(onNormalized: middle, level: level)
+        }
+    }
+
+    private func stopFollowingFocus() {
+        guard followsFocus else { return }
+        followsFocus = false
+        focusCentred = nil
+        focusAwaited = false
+        view.setFocusMarker(nil, note: nil)
+    }
+
+    /// The header was read after the photo appeared: move to it, unless the user has
+    /// started looking around on their own.
+    private func focusArrived(_ photo: PhotoKey) {
+        guard followsFocus, focusAwaited, photo == session.list.current, photo == focusCentred else { return }
+        if view.movedByUser {
+            focusAwaited = false
+            return
+        }
+        centreOnFocus(level: nil)
     }
 
     func deleteCurrent() {
@@ -214,6 +280,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// Shows the current photo's best frame, or nothing: never another photo's pixels.
     func display() {
         scheduleTitleUpdate()
+        if followsFocus, view.isZoomed, let current = session.list.current, current != focusCentred {
+            centreOnFocus(level: nil)
+        }
         guard let current = session.list.current else {
             visiblePhoto = nil
             shownTier = nil

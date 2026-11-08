@@ -8,6 +8,8 @@ import IOKit.ps
 final class Pipeline {
     private enum Source: Sendable {
         case preview
+        /// Only the AF position, for a photo whose preview was never read.
+        case focus
         case disk(url: URL, nativeSize: CGSize)
         case render
     }
@@ -25,6 +27,8 @@ final class Pipeline {
         case stale
         case failed
         case diskMiss
+        /// The job had no frame to make.
+        case done
     }
 
     private struct EncodeJob {
@@ -44,6 +48,7 @@ final class Pipeline {
     var onFailed: (FrameKey) -> Void = { _ in }
     var onStale: (PhotoKey) -> Void = { _ in }
     var onNeedsReplan: () -> Void = {}
+    var onFocus: (PhotoKey) -> Void = { _ in }
 
     private(set) var target = CGSize.zero
     private(set) var memoryLevel = MemoryLevel.normal
@@ -59,6 +64,9 @@ final class Pipeline {
     private var fullRunning = 0
     private var encodeRunning = false
     private var memorySource: DispatchSourceMemoryPressure?
+    /// AF positions read with the previews. A few bytes each, kept for every photo seen.
+    private var focusPoints: [PhotoKey: CameraFocus] = [:]
+    private static let focusPointLimit = 100_000
 
     init(budgets: FrameCache.Budgets, disk: DiskCache) {
         cache = FrameCache(budgets: budgets)
@@ -73,6 +81,9 @@ final class Pipeline {
     }
 
     func hasFailed(_ key: FrameKey) -> Bool { failed.contains(key) }
+
+    /// nil until the preview job of this revision has read the file's header.
+    func cameraFocus(_ photo: PhotoKey) -> CameraFocus? { focusPoints[photo] }
 
     // MARK: Target size
 
@@ -114,7 +125,12 @@ final class Pipeline {
 
             switch item.tier {
             case .preview:
-                if cache.contains(FrameKey(photo: photo, tier: .screen)) { continue }
+                if cache.contains(FrameKey(photo: photo, tier: .screen)) {
+                    // The preview is not needed, but it is what reads the AF position. Rare:
+                    // the screen tier rarely arrives before the preview.
+                    if focusPoints[photo] == nil { fastQueue.append(job(key, .focus, item)) }
+                    continue
+                }
                 fastQueue.append(job(key, .preview, item))
             case .screen:
                 if let entry = disk.entry(photo) {
@@ -172,33 +188,39 @@ final class Pipeline {
         inFlight.insert(job.key)
         let qos: DispatchQoS.QoSClass = job.visible ? .userInteractive : (job.background ? .utility : .userInitiated)
         DispatchQueue.global(qos: qos).async { [weak self] in
-            let outcome = Self.run(job)
+            let (outcome, focus) = Self.run(job)
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.finish(job, outcome) }
+                MainActor.assumeIsolated { self?.finish(job, outcome, focus: focus) }
             }
         }
     }
 
     /// Checks the revision before and after decoding: pixels from a file replaced in
     /// between are rejected rather than cached under the old key.
-    private nonisolated static func run(_ job: Job) -> Outcome {
+    /// The AF position comes with the preview, from the same read.
+    private nonisolated static func run(_ job: Job) -> (Outcome, CameraFocus?) {
         let photo = job.key.photo
-        guard PhotoKey.read(path: photo.path) == photo else { return .stale }
+        guard PhotoKey.read(path: photo.path) == photo else { return (.stale, nil) }
         let frame: Frame?
+        var focus: CameraFocus?
         switch job.source {
         case .preview:
-            frame = Decoders.preview(photo)
+            (frame, focus) = Decoders.preview(photo)
+        case .focus:
+            focus = ARWPreview.read(photo.url, withPreview: false)?.focus ?? CameraFocus.absent
+            frame = nil
         case .disk(let url, let nativeSize):
-            guard let read = DiskCodec.read(url, key: job.key, nativeSize: nativeSize) else { return .diskMiss }
+            guard let read = DiskCodec.read(url, key: job.key, nativeSize: nativeSize) else { return (.diskMiss, nil) }
             frame = read
         case .render:
             frame = Decoders.render(photo, tier: job.key.tier, target: job.target)
         }
-        guard PhotoKey.read(path: photo.path) == photo else { return .stale }
-        return frame.map(Outcome.frame) ?? .failed
+        guard PhotoKey.read(path: photo.path) == photo else { return (.stale, nil) }
+        if case .focus = job.source { return (.done, focus) }
+        return (frame.map(Outcome.frame) ?? .failed, focus)
     }
 
-    private func finish(_ job: Job, _ outcome: Outcome) {
+    private func finish(_ job: Job, _ outcome: Outcome, focus: CameraFocus?) {
         inFlight.remove(job.key)
         if case .render = job.source {
             gpuRunning -= 1
@@ -207,6 +229,8 @@ final class Pipeline {
         } else {
             fastRunning -= 1
         }
+        // Before the frame: the view centres the photo on its AF position as it appears.
+        if let focus { record(focus, for: job.key.photo) }
 
         switch outcome {
         case .frame(let frame):
@@ -219,8 +243,17 @@ final class Pipeline {
         case .diskMiss:
             disk.invalidate(job.key.photo)
             onNeedsReplan()
+        case .done:
+            break
         }
         pump()
+    }
+
+    private func record(_ focus: CameraFocus, for photo: PhotoKey) {
+        guard focusPoints[photo] == nil else { return }
+        if focusPoints.count >= Self.focusPointLimit { focusPoints.removeAll() }
+        focusPoints[photo] = focus
+        onFocus(photo)
     }
 
     private func accept(_ frame: Frame, _ job: Job) {
