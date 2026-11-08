@@ -453,6 +453,7 @@ final class ComparisonMemoryTests: XCTestCase {
     }
 }
 
+@MainActor
 final class StripWindowTests: XCTestCase {
     func testTheSameNumberOfPhotosEvenAtTheEnds() {
         XCTAssertEqual(StripView.window(around: 50, count: 133, reach: 14), 36...64)
