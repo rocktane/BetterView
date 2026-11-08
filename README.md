@@ -49,7 +49,7 @@ La bande est une pellicule : chaque vignette a la forme de sa photo, la photo co
 
 Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à la corbeille, et la photo suivante du groupe prend sa place sans que les autres bougent. ↩ garde la photo choisie et met à la corbeille les autres photos affichées, jamais celles encore en attente. ⌘Z annule tout le geste d'un coup. Quand il ne reste qu'une photo, on revient à la vue normale, où ⌘Z reste possible.
 
-Maintenir une touche de suppression ne supprime qu'une seule photo. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
+Maintenir une touche de suppression ne supprime qu'une seule photo. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
 
 ## Développement
 

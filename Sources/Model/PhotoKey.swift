@@ -15,9 +15,19 @@ struct PhotoKey: Hashable, Sendable {
 
     /// Reads the current on-disk revision. Blocking: never call from the main thread.
     static func read(path: String) -> PhotoKey? {
+        readWithInfo(path: path)?.key
+    }
+
+    /// The revision and its protection from a single `stat`. Blocking: never on the main thread.
+    static func readWithProtection(path: String) -> (key: PhotoKey, protection: FileProtection)? {
+        guard let (key, info) = readWithInfo(path: path) else { return nil }
+        return (key, FileProtection(path: path, info: info))
+    }
+
+    private static func readWithInfo(path: String) -> (key: PhotoKey, info: stat)? {
         var info = stat()
         guard stat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
-        return PhotoKey(
+        let key = PhotoKey(
             path: path,
             device: Int64(info.st_dev),
             inode: UInt64(info.st_ino),
@@ -25,6 +35,7 @@ struct PhotoKey: Hashable, Sendable {
             mtimeSeconds: info.st_mtimespec.tv_sec,
             mtimeNanoseconds: info.st_mtimespec.tv_nsec
         )
+        return (key, info)
     }
 }
 

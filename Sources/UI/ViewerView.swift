@@ -38,6 +38,18 @@ final class ViewerView: NSView {
     private(set) var isHovered = false
     private var hasInfo = false
     private var badgeText: String?
+    private let bannerLabel = ViewerView.label(size: 13, weight: .semibold)
+    private let lockBadge: NSImageView = {
+        let image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Photo protégée")?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        let view = NSImageView(image: image ?? NSImage())
+        view.contentTintColor = NSColor(white: 1, alpha: 0.85)
+        view.toolTip = "Photo protégée : la suppression est refusée"
+        view.isHidden = true
+        return view
+    }()
+    private var isProtected = false
+    private var bannerToken = 0
 
     var isZoomed: Bool { zoom != nil }
 
@@ -87,7 +99,16 @@ final class ViewerView: NSView {
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.addSublayer(imageLayer)
 
-        for label in [messageLabel, badgeLabel] { addSubview(label) }
+        // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
+        let badges = NSStackView(views: [badgeLabel, lockBadge])
+        badges.orientation = .horizontal
+        badges.spacing = 6
+        badges.translatesAutoresizingMaskIntoConstraints = false
+        bannerLabel.wantsLayer = true
+        bannerLabel.drawsBackground = true
+        bannerLabel.backgroundColor = NSColor(white: 0, alpha: 0.55)
+        bannerLabel.layer?.cornerRadius = 4
+        for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
         addSubview(infoPanel)
         addSubview(positionPanel)
         positionLabel.isHidden = false
@@ -108,8 +129,10 @@ final class ViewerView: NSView {
             shrinkToText,
             messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            badgeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            badgeLabel.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            badges.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            badges.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            bannerLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            bannerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 44),
             infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
@@ -190,6 +213,29 @@ final class ViewerView: NSView {
         if infoPanel.isHidden == showInfo { infoPanel.isHidden = !showInfo }
         if positionPanel.isHidden == showInfo { positionPanel.isHidden = !showInfo }
         setLabel(badgeLabel, isHovered ? badgeText : nil)
+        let showLock = isProtected && isHovered
+        if lockBadge.isHidden == showLock { lockBadge.isHidden = !showLock }
+    }
+
+    /// A property flip, no I/O: called after the image is committed. Shown with the other
+    /// overlays, while the pointer is on the photo.
+    func setProtected(_ protected: Bool) {
+        guard protected != isProtected else { return }
+        isProtected = protected
+        applyOverlayVisibility()
+    }
+
+    /// A brief, non-modal message that does not stop the sorting rhythm.
+    func flash(_ text: String, duration: TimeInterval = 1.6) {
+        bannerToken += 1
+        let token = bannerToken
+        setLabel(bannerLabel, " \(text) ")
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.bannerToken == token else { return }
+                self.setLabel(self.bannerLabel, nil)
+            }
+        }
     }
 
     private func setLabel(_ label: NSTextField, _ text: String?) {

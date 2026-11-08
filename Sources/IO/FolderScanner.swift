@@ -1,11 +1,18 @@
 import Foundation
 
+/// One scan: the sorted photos, and the protection of those that have one, by path.
+struct ScanSnapshot: Sendable {
+    var photos: [PhotoKey] = []
+    var protection: [String: FileProtection] = [:]
+}
+
 enum FolderScanner {
     /// Lists, stats and sorts a folder. Blocking: runs off the main thread.
     @Sendable
-    static func scan(folder: URL, only allowed: Set<String>?) -> [PhotoKey] {
+    static func scan(folder: URL, only allowed: Set<String>?) -> ScanSnapshot {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
         var photos: [PhotoKey] = []
+        var protection: [String: FileProtection] = [:]
         photos.reserveCapacity(names.count)
         for name in names {
             guard !name.hasPrefix("."),
@@ -13,10 +20,12 @@ enum FolderScanner {
             else { continue }
             let path = folder.appendingPathComponent(name).path
             if let allowed, !allowed.contains(path) { continue }
-            if let key = PhotoKey.read(path: path) { photos.append(key) }
+            guard let (key, protected) = PhotoKey.readWithProtection(path: path) else { continue }
+            photos.append(key)
+            if !protected.isEmpty { protection[path] = protected }
         }
         photos.sort(by: PhotoList.ordered)
-        return photos
+        return ScanSnapshot(photos: photos, protection: protection)
     }
 }
 

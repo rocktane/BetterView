@@ -166,7 +166,7 @@ Un mode de la même fenêtre : `ComparisonView` remplace la vue de contenu, la f
 
 État main : tableau trié par `localizedStandardCompare` du nom, de `Photo { url, key }`. Extensions acceptées : celles de la section Réglages. Un seul fichier ouvert → affichage **immédiat** avec une liste provisoire `[fichier]`, sans attendre le scan ; plusieurs fichiers sélectionnés → ces fichiers seulement.
 
-`FolderScanner` tourne hors main (énumération, stat, tri) et publie un instantané portant le `sessionID` de la liste et le `opGeneration` lus à son lancement. Il est à exécution unique par session : un seul scan à la fois, une demande pendant un scan lève un drapeau `rescanPending`, et un nouveau scan part à la fin. Deux instantanés d'une même session ne peuvent donc pas arriver dans le désordre. Déclenché par `DispatchSource` vnode (avec anti-rebond) et au retour d'activation de la fenêtre (SMB n'envoie pas tout). Un instantané est **fusionné ainsi** :
+`FolderScanner` tourne hors main (énumération, stat, tri, état de protection) et publie un instantané portant le `sessionID` de la liste et le `opGeneration` lus à son lancement. Il est à exécution unique par session : un seul scan à la fois, une demande pendant un scan lève un drapeau `rescanPending`, et un nouveau scan part à la fin. Deux instantanés d'une même session ne peuvent donc pas arriver dans le désordre. Déclenché par `DispatchSource` vnode (avec anti-rebond) et au retour d'activation de la fenêtre (SMB n'envoie pas tout). Un instantané est **fusionné ainsi** :
 - `sessionID` différent de la liste active (autre dossier ouvert entre-temps) → jeté ;
 - génération antérieure à la dernière opération de fichier terminée → jeté et rescan relancé ;
 - les URL ayant une opération en cours (tombstones) sont retirées du résultat ;
@@ -180,11 +180,36 @@ Chaque suppression crée d'abord un `TrashOp { photo, indexOrigine, état: pendi
 
 1. Touche Supprimer (`keyDown` non répété : **`isARepeat` ignoré**, pour que maintenir la touche ne vide pas le dossier), acceptée seulement si la photo est visible (principe 4).
 2. Tombstone posé, retrait optimiste de la liste, affichage synchrone de la photo suivante du dossier (ou dans le sens de navigation, selon le réglage ; la précédente si c'était la dernière). Aucune confirmation : c'est réversible. La photo n'étant plus dans la liste, une double suppression est impossible.
-3. File série (FIFO) : la révision sur disque est revérifiée. Différente de `key` (fichier remplacé entre-temps) → **pas de suppression**, photo réinsérée, alerte. Sinon `FileManager.trashItem`, l'URL en corbeille est conservée dans l'opération.
-4. Échec : réinsertion à sa place triée, alerte. Volume sans corbeille (SMB) : alerte proposant une suppression **définitive**, confirmée à chaque fois, et qui n'entre jamais dans la pile d'annulation.
+3. File série (FIFO) : la révision sur disque est revérifiée. Différente de `key` (fichier remplacé entre-temps) → **pas de suppression**, photo réinsérée, alerte. La protection est revérifiée dans le même `stat` (voir « Photos protégées ») : protégée → pas d'appel à la corbeille. Sinon `FileManager.trashItem`, l'URL en corbeille est conservée dans l'opération.
+4. Échec : réinsertion à sa place triée, alerte avec une cause typée (`TrashFailure`). Seul « volume sans corbeille » (SMB) propose une suppression **définitive**, confirmée à chaque fois, et qui n'entre jamais dans la pile d'annulation. Les autres causes n'offrent rien d'autre que de conserver le fichier.
 5. ⌘Z prend la dernière opération. Si `pending`, marque `undoDemandé` : l'annulation s'exécute à la fin du trash (succès → restauration, échec → déjà réinsérée). Si `done`, met le déplacement retour dans la même file. `moveItem` ne remplace jamais : si le chemin d'origine est occupé, erreur explicite. Réinsertion et navigation dessus.
 6. Quitter attend la fin de la file (`applicationShouldTerminate` → `.terminateLater`).
 7. Le tombstone est levé à la fin de l'opération, ce qui incrémente `opGeneration`.
+
+#### Photos protégées
+
+`FileProtection`, lue hors main dans le même `stat` que la révision, au scan puis dans la file d'opérations :
+- `locked` : drapeaux `uchg`/`schg` (ou ajout seul `uappnd`/`sappnd`), qui font échouer unlink et rename (EPERM) ;
+- `readOnly` : pas de droit d'écriture pour l'utilisateur (`access(W_OK)` → EACCES). La corbeille accepterait ce fichier (mesuré), on y lit une intention de protection.
+
+L'état est **séparé de `PhotoKey`** : `chflags` et `chmod` ne changent que le ctime, pas le mtime (vérifié, et testé), donc ni les frames ni le cache disque ne sont invalidés. La session tient un dictionnaire `chemin → protection` remplacé à chaque instantané ; un changement qui ne touche que la protection émet `protectionChanged`, qui ne met à jour que le badge, sans replanifier. Le main ne lit jamais le disque pour ça.
+
+Affichage : badge cadenas discret en haut à droite (à côté de « Aperçu »), visible comme les autres surimpressions quand le pointeur est sur la photo, posé après le commit de l'image par un lookup dans ce dictionnaire. Touche Supprimer sur une photo protégée connue : refus immédiat par un bandeau bref non modal (1,6 s), sans bip (le bip reste réservé à « photo non visible »), sans file ni E/S. Comparaison : le badge de l'emplacement indique « Protégée », ⌫ sur une photo protégée est refusé par le toast de la comparaison, et ↩ ne met à la corbeille que les autres photos non protégées (les protégées restent affichées, le toast les compte). `LibrarySession.trash(_:)` et `trashCurrent` écartent aussi toute photo connue comme protégée. Une protection posée après le scan est attrapée par la file : refus `locked`/`fileNotWritable` sans appeler la corbeille, et le dictionnaire est mis à jour pour que le badge et le refus immédiat s'appliquent ensuite. Une protection reconnue n'est **jamais** contournée : ni `chflags`, ni `chmod`, ni suppression forcée ; la suppression définitive la revérifie aussi.
+
+Protection Sony (« Protéger » dans le boîtier) : la norme DCF la traduit par l'attribut lecture seule FAT/exFAT. **Non vérifié avec un vrai boîtier ni une vraie carte.** Vérifié sur des images disque FAT32 et exFAT montées par macOS 27 (pilotes FSKit, ceux d'une carte) : l'attribut lecture seule écrit directement dans l'entrée de répertoire apparaît comme `uchg` (le mode reste `rwx`, synthétique, et `chmod` n'y a aucun effet) ; inversement `chflags uchg` écrit cet attribut. Copie vers APFS : `uchg` survit à une copie Finder, `cp -p`, `ditto` et `FileManager.copyItem`, mais pas à `cp` simple. Import par Transfert d'images, Photos ou Imaging Edge : non vérifié.
+
+Classement des échecs (`TrashFailure.classify`), d'après une relecture du disque (`TrashProbe` : protection, volume `MNT_RDONLY`, droit d'écriture du dossier) avant le code d'erreur, car les codes sont ambigus (mesuré avec `trashItem` sur images disque) : fichier verrouillé et dossier sans droit d'écriture donnent tous deux Cocoa 513 ; un **volume en lecture seule donne 3328, comme un volume sans corbeille**.
+
+| Cause | Détection | Proposition |
+|---|---|---|
+| `locked` (protégée, verrouillée) | drapeaux | aucune |
+| `fileNotWritable` | `access` sur le fichier | aucune |
+| `readOnlyVolume` | `MNT_RDONLY`, EROFS, Cocoa 642 | aucune |
+| `folderNotWritable` | `access` sur le dossier | aucune |
+| `noTrash` | Cocoa 3328 sur volume inscriptible | suppression définitive confirmée |
+| `other` (erreur passagère, inconnue) | le reste | aucune |
+
+Le code 3328 d'un vrai partage SMB sans corbeille n'est pas vérifié : s'il différait, le fichier serait conservé (`other`), jamais supprimé.
 
 Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en v1 (une option multi-fichiers imposerait de gérer les réussites partielles).
 
