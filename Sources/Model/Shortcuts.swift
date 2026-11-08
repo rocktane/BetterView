@@ -1,66 +1,58 @@
 import AppKit
 
-/// Everything a key can trigger.
+/// Everything a key can trigger. The keyboard, the menus and the shortcuts settings all come
+/// from here. Adding a command: a case, its line in `spec`, and what it does in
+/// `ViewerController.perform` (the compiler asks for the last two).
 enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
-    case next, previous, jumpForward, jumpBackward, first, last
-    case delete, undo
-    case toggleZoom, zoomToFocus, toggleInfo, revealInFinder, exit
-    case toggleStrip, compare, keepSelected
+    case next, previous, jumpForward, jumpBackward
+    case delete, undo, revealInFinder
+    case toggleZoom, zoomToFocus, toggleInfo, toggleStrip, exit
+    case compare, keepSelected
 
-    var id: String { rawValue }
+    /// Groups of the shortcuts settings, in display order.
+    enum Group: String, CaseIterable, Sendable {
+        case navigation = "Navigation"
+        case sorting = "Tri"
+        case display = "Affichage"
+        case comparison = "Comparaison"
+    }
 
-    var title: String {
+    struct Spec: Sendable {
+        let title: String
+        let group: Group
+        let keys: [KeyBinding]
+        /// Holding the key repeats the command. Only navigation does: holding a delete key
+        /// must never wipe a folder, and a toggle must toggle once.
+        var repeats = false
+    }
+
+    /// One line per command. The raw value is stored with the user's keys: never rename a case.
+    var spec: Spec {
         switch self {
-        case .next: "Photo suivante"
-        case .previous: "Photo précédente"
-        case .jumpForward: "Avancer de 10 photos"
-        case .jumpBackward: "Reculer de 10 photos"
-        case .first: "Première photo"
-        case .last: "Dernière photo"
-        case .delete: "Mettre à la corbeille"
-        case .undo: "Annuler la suppression"
-        case .toggleZoom: "100 % ou ajusté"
-        case .zoomToFocus: "100 % sur le point AF enregistré"
-        case .toggleInfo: "Informations"
-        case .revealInFinder: "Afficher dans le Finder"
-        case .exit: "Quitter le zoom ou la comparaison"
-        case .toggleStrip: "Bande d'aperçu"
-        case .compare: "Comparer les photos"
-        case .keepSelected: "Comparaison : garder la photo choisie"
+        case .next: Spec(title: "Photo suivante", group: .navigation, keys: [.code(124), .code(125), .code(49)], repeats: true)
+        case .previous: Spec(title: "Photo précédente", group: .navigation, keys: [.code(123), .code(126)], repeats: true)
+        case .jumpForward: Spec(title: "Avancer de 10 photos", group: .navigation, keys: [.code(121)], repeats: true)
+        case .jumpBackward: Spec(title: "Reculer de 10 photos", group: .navigation, keys: [.code(116)], repeats: true)
+        case .delete: Spec(title: "Mettre à la corbeille", group: .sorting, keys: [.code(51), .code(117), .character("x"), .code(51, modifiers: .command)])
+        case .undo: Spec(title: "Annuler la suppression", group: .sorting, keys: [.character("z", modifiers: .command)])
+        case .revealInFinder: Spec(title: "Afficher dans le Finder", group: .sorting, keys: [.character("r")])
+        case .toggleZoom: Spec(title: "100 % ou ajusté", group: .display, keys: [.character("z")])
+        case .zoomToFocus: Spec(title: "100 % sur le point AF enregistré", group: .display, keys: [.character("a")])
+        case .toggleInfo: Spec(title: "Informations", group: .display, keys: [.character("i")])
+        case .toggleStrip: Spec(title: "Bande d'aperçu", group: .display, keys: [.character("b")])
+        case .exit: Spec(title: "Quitter le zoom ou la comparaison", group: .display, keys: [.code(53)])
+        case .compare: Spec(title: "Comparer les photos", group: .comparison, keys: [.character("c")])
+        case .keepSelected: Spec(title: "Comparaison : garder la photo choisie", group: .comparison, keys: [.code(36), .code(76)])
         }
     }
+
+    var id: String { rawValue }
+    var title: String { spec.title }
+    var repeats: Bool { spec.repeats }
+    var defaultBindings: [KeyBinding] { spec.keys }
 
     /// Never given a plain key in the menu: it would also fire while typing in the settings window.
     var isDestructive: Bool { self == .delete || self == .keepSelected }
-
-    /// Holding the key repeats these. Holding a delete key must never wipe a folder.
-    var repeats: Bool {
-        switch self {
-        case .next, .previous, .jumpForward, .jumpBackward: true
-        default: false
-        }
-    }
-
-    var defaultBindings: [KeyBinding] {
-        switch self {
-        case .next: [.code(124), .code(125), .code(49)]
-        case .previous: [.code(123), .code(126)]
-        case .jumpForward: [.code(121)]
-        case .jumpBackward: [.code(116)]
-        case .first: [.code(115)]
-        case .last: [.code(119)]
-        case .delete: [.code(51), .code(117), .character("x"), .code(51, modifiers: .command)]
-        case .undo: [.character("z", modifiers: .command)]
-        case .toggleZoom: [.character("z")]
-        case .zoomToFocus: [.character("a")]
-        case .toggleInfo: [.character("i")]
-        case .revealInFinder: [.character("r")]
-        case .exit: [.code(53)]
-        case .toggleStrip: [.character("b")]
-        case .compare: [.character("c")]
-        case .keepSelected: [.code(36), .code(76)]
-        }
-    }
 }
 
 /// One key with its modifiers. Letters are stored as the typed character so they work on any
@@ -186,6 +178,24 @@ struct ShortcutMap: Equatable, Sendable {
 
     func action(for binding: KeyBinding) -> ShortcutAction? { lookup[binding] }
 
+    enum Decision: Equatable {
+        /// Not a shortcut: the key goes on to the menu or the responder chain.
+        case pass
+        /// A shortcut held down whose command must act once per press.
+        case swallow
+        case perform(ShortcutAction, repeating: Bool)
+    }
+
+    /// The whole cost of a key press: one dictionary lookup. Every key path (viewer,
+    /// comparison, menu) goes through here, so the repeat rule holds whatever the key.
+    func decide(_ binding: KeyBinding?, isRepeat: Bool) -> Decision {
+        guard let binding, let action = lookup[binding] else { return .pass }
+        if isRepeat, !action.repeats { return .swallow }
+        return .perform(action, repeating: isRepeat)
+    }
+
+    func isCustomized(_ action: ShortcutAction) -> Bool { keys(for: action) != action.defaultBindings }
+
     func keys(for action: ShortcutAction) -> [KeyBinding] { bindings[action] ?? [] }
 
     /// The key shown in the menu. A destructive command only takes a key with a modifier: a
@@ -203,6 +213,24 @@ struct ShortcutMap: Equatable, Sendable {
         bindings[action, default: []].append(binding)
         lookup[binding] = action
         return previous
+    }
+
+    /// Gives `action` its default keys back. A default key another command took stays there;
+    /// those keys are returned so the settings can say so.
+    @discardableResult
+    mutating func reset(_ action: ShortcutAction) -> [(KeyBinding, ShortcutAction)] {
+        for binding in keys(for: action) { lookup[binding] = nil }
+        bindings[action] = nil
+        var kept: [(KeyBinding, ShortcutAction)] = []
+        for binding in action.defaultBindings where !binding.isReserved {
+            if let owner = lookup[binding] {
+                kept.append((binding, owner))
+            } else {
+                bindings[action, default: []].append(binding)
+                lookup[binding] = action
+            }
+        }
+        return kept
     }
 
     mutating func remove(_ binding: KeyBinding) {
@@ -244,8 +272,11 @@ final class ShortcutStore: ObservableObject {
     @Published private(set) var map: ShortcutMap
     var onChange: (ShortcutMap) -> Void = { _ in }
 
-    init() {
-        map = ShortcutMap.decoded(from: UserDefaults.standard.data(forKey: Self.defaultsKey))
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        map = ShortcutMap.decoded(from: defaults.data(forKey: Self.defaultsKey))
     }
 
     @discardableResult
@@ -265,8 +296,15 @@ final class ShortcutStore: ObservableObject {
         saved()
     }
 
+    @discardableResult
+    func reset(_ action: ShortcutAction) -> [(KeyBinding, ShortcutAction)] {
+        let kept = map.reset(action)
+        saved()
+        return kept
+    }
+
     private func saved() {
-        UserDefaults.standard.set(map.encoded(), forKey: Self.defaultsKey)
+        defaults.set(map.encoded(), forKey: Self.defaultsKey)
         onChange(map)
     }
 }

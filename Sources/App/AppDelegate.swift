@@ -67,19 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.makeKeyAndOrderFront(nil)
             return
         }
-        let disk = viewer.pipeline.disk
-        let viewer = viewer!
-        let root = SettingsView(
-            shortcuts: shortcuts,
-            onInfoVisibleChange: { viewer.setInfoVisible($0) },
-            onStripVisibleChange: { viewer.setStripVisible($0) },
-            onCacheSizeChange: { disk.setBudget($0 * 1_000_000_000) },
-            onClearCache: { disk.clear() }
-        )
-        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
-        window.title = "Réglages"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
+        let window = SettingsWindow.make(shortcuts: shortcuts, disk: viewer.pipeline.disk, viewer: viewer)
         window.center()
         window.makeKeyAndOrderFront(nil)
         settingsWindow = window
@@ -105,7 +93,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func performShortcut(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String, let action = ShortcutAction(rawValue: name) else { return }
-        if action.repeats || NSApp.currentEvent?.isARepeat != true { viewer.perform(action) }
+        // By key, the same decision as the viewer's: a held key acts once unless the command
+        // is navigation. By click, the command simply runs.
+        guard let event = NSApp.currentEvent, event.type == .keyDown else {
+            viewer.perform(action)
+            return
+        }
+        switch shortcuts.map.decide(KeyBinding(event: event), isRepeat: event.isARepeat) {
+        case .perform(let decided, let repeating) where decided == action:
+            viewer.perform(action, repeating: repeating)
+        case .swallow:
+            return
+        default:
+            // The menu matched a key the map resolves differently: apply the rule to the item.
+            if action.repeats || !event.isARepeat { viewer.perform(action, repeating: event.isARepeat) }
+        }
     }
 
     /// The view and the menu always answer to the keys chosen in the settings.
@@ -166,8 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.previous),
             action(.jumpForward),
             action(.jumpBackward),
-            action(.first),
-            action(.last),
             .separator(),
             action(.toggleZoom),
             action(.zoomToFocus),
@@ -178,5 +178,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.keepSelected),
         ])
         return main
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    /// Photo commands need the viewer in front: a key typed in the settings window never
+    /// reaches a photo, even one that is also a menu key.
+    /// Annuler la suppression stays available everywhere: it only puts a photo back, and the
+    /// history window is where one looks for it.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(performShortcut(_:)),
+              let name = item.representedObject as? String, let action = ShortcutAction(rawValue: name)
+        else { return true }
+        return action == .undo || viewer.window.isKeyWindow
     }
 }

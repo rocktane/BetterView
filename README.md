@@ -18,17 +18,16 @@ Il faut macOS 14 ou plus récent, Xcode et `xcodegen` (`brew install xcodegen`).
 scripts/install.sh
 ```
 
-L'app est copiée dans `/Applications`. Pour en faire l'app par défaut d'un format : Réglages (⌘,).
+L'app est copiée dans `/Applications`. Pour en faire l'app par défaut des RAW : Réglages (⌘,) > Général.
 
 ## Raccourcis
 
-Ils se changent dans les Réglages (⌘,), avec plusieurs touches possibles par action. Valeurs par défaut :
+Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la changer, + pour en ajouter une, survol puis × pour la retirer, ↺ pour rétablir une action. Une touche déjà prise est signalée, avec Remplacer ou Annuler. Valeurs par défaut :
 
 | Touche | Action |
 |---|---|
 | ← → (ou ↑ ↓), Espace | Précédente, suivante |
 | Page préc., Page suiv. | Reculer, avancer de 10 photos |
-| Début, Fin | Première, dernière |
 | ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille, puis afficher la photo suivante |
 | ⌘Z | Annuler la suppression |
 | Z | 100 % ou ajusté |
@@ -50,7 +49,7 @@ La bande est une pellicule : chaque vignette a la forme de sa photo, la photo co
 
 Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à la corbeille, et la photo suivante du groupe prend sa place sans que les autres bougent. ↩ garde la photo choisie et met à la corbeille les autres photos affichées, jamais celles encore en attente. ⌘Z annule tout le geste d'un coup. Quand il ne reste qu'une photo, on revient à la vue normale, où ⌘Z reste possible.
 
-Maintenir une touche de suppression ne supprime qu'une seule photo. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
+Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation : maintenir une touche de suppression ne supprime qu'une seule photo, quelle que soit la touche choisie. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
 
 A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repère : un petit cercle) ; tant que ce zoom reste actif, chaque photo s'ouvre sur sa propre position AF, au même grossissement. C'est l'endroit visé par l'autofocus, pas une garantie de netteté. Sans position enregistrée, le zoom se fait au centre et le dit.
 

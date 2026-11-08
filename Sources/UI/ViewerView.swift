@@ -478,11 +478,13 @@ final class ViewerView: NSView {
     }
 
     private func handle(_ event: NSEvent) -> Bool {
-        guard let binding = KeyBinding(event: event), let action = shortcuts.action(for: binding) else { return false }
-        if action.repeats || !event.isARepeat {
-            onCommand(.perform(action, repeating: event.isARepeat))
+        switch shortcuts.decide(KeyBinding(event: event), isRepeat: event.isARepeat) {
+        case .pass: return false
+        case .swallow: return true
+        case .perform(let action, let repeating):
+            onCommand(.perform(action, repeating: repeating))
+            return true
         }
-        return true
     }
 
     // MARK: Drag and drop

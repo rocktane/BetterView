@@ -501,10 +501,11 @@ final class ComparisonView: NSView {
     private static let digitKeys: [UInt16: Int] = [18: 0, 19: 1, 20: 2, 21: 3]
 
     private func handle(_ event: NSEvent) -> Bool {
-        if let binding = KeyBinding(event: event), let action = shortcuts.action(for: binding) {
-            if action.repeats || !event.isARepeat {
-                onCommand(.perform(action, repeating: event.isARepeat))
-            }
+        switch shortcuts.decide(KeyBinding(event: event), isRepeat: event.isARepeat) {
+        case .pass: break
+        case .swallow: return true
+        case .perform(let action, let repeating):
+            onCommand(.perform(action, repeating: repeating))
             return true
         }
         let modifiers = event.modifierFlags.intersection(KeyBinding.relevantModifiers)

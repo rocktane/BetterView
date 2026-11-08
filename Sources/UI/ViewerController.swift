@@ -203,8 +203,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .previous: step(-1, repeating: isRepeat)
         case .jumpForward: step(10, repeating: isRepeat)
         case .jumpBackward: step(-10, repeating: isRepeat)
-        case .first: jump(to: 0, direction: 1)
-        case .last: jump(to: session.list.count - 1, direction: -1)
         case .delete: deleteCurrent()
         case .undo: undo()
         case .toggleZoom: toggleZoom()
@@ -811,10 +809,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .previous, .jumpBackward:
             comparison?.moveFocus(by: -1)
             focusChanged()
-        case .first:
-            selectSlot(comparison?.slots.firstIndex { $0 != nil } ?? 0)
-        case .last:
-            selectSlot(comparison?.slots.lastIndex { $0 != nil } ?? 0)
         case .delete:
             trashFocusedInComparison()
         case .keepSelected:
