@@ -449,6 +449,7 @@ struct ShortcutsSettingsView: View {
             Section("App") {
                 fixedRow("Ouvrir…", "⌘O")
                 fixedRow("Réglages…", "⌘,")
+                fixedRow("Suppressions du dossier…", "⌘Y")
                 fixedRow("Fermer la fenêtre", "⌘W")
                 fixedRow("Quitter BetterView", "⌘Q")
             }

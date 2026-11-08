@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var viewer: ViewerController!
     private var settingsWindow: NSWindow?
+    private var historyWindow: HistoryWindowController?
     private let shortcuts = ShortcutStore()
     private var shortcutItems: [(action: ShortcutAction, item: NSMenuItem)] = []
     private var terminating = false
@@ -13,7 +14,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Runs alongside the first preview: no photo depends on the other finishing first.
         Decoders.warmUp()
-        viewer = ViewerController(diskDirectory: Benchmark.diskDirectory ?? DiskCache.defaultDirectory)
+        // The benchmark deletes clones into a fake Trash: they stay out of the real history.
+        let journal = Benchmark.diskDirectory == nil ? DeletionJournal(url: DeletionJournal.defaultURL) : nil
+        viewer = ViewerController(
+            session: LibrarySession(journal: journal),
+            diskDirectory: Benchmark.diskDirectory ?? DiskCache.defaultDirectory
+        )
         NSApp.mainMenu = buildMenu()
         applyShortcuts(shortcuts.map)
         shortcuts.onChange = { [weak self] in self?.applyShortcuts($0) }
@@ -65,6 +71,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         settingsWindow = window
+    }
+
+    @objc private func showHistory(_ sender: Any?) {
+        if historyWindow == nil {
+            let session = viewer.session
+            historyWindow = HistoryWindowController(session: session) {
+                session.folderPath ?? Self.lastOpenedFolder()
+            }
+        }
+        historyWindow?.show()
+    }
+
+    /// The folder of the most recent item in Open Recent, without touching the disk: a RAW is
+    /// a file, anything else was opened as a folder.
+    private static func lastOpenedFolder() -> String? {
+        guard let url = NSDocumentController.shared.recentDocumentURLs.first else { return nil }
+        let isPhoto = RawFormat.extensions.contains(url.pathExtension.lowercased())
+        return (isPhoto ? url.deletingLastPathComponent() : url).standardizedFileURL.path
     }
 
     @objc private func performShortcut(_ sender: NSMenuItem) {
@@ -137,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         submenu("Édition", [
             action(.undo),
+            item("Suppressions du dossier…", #selector(showHistory), "y"),
         ])
         submenu("Présentation", [
             action(.next),
@@ -159,8 +184,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuItemValidation {
     /// Photo commands need the viewer in front: a key typed in the settings window never
     /// reaches a photo, even one that is also a menu key.
+    /// Annuler la suppression stays available everywhere: it only puts a photo back, and the
+    /// history window is where one looks for it.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard item.action == #selector(performShortcut(_:)) else { return true }
-        return viewer.window.isKeyWindow
+        guard item.action == #selector(performShortcut(_:)),
+              let name = item.representedObject as? String, let action = ShortcutAction(rawValue: name)
+        else { return true }
+        return action == .undo || viewer.window.isKeyWindow
     }
 }

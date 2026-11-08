@@ -192,17 +192,24 @@ Photo disparue → retirée, on passe à la suivante.
 
 ### Suppression
 
-Chaque suppression crée d'abord un `TrashOp { photo, indexOrigine, état: pending|done(trashURL)|failed, undoDemandé }`, sur le main.
+Chaque suppression crée d'abord, sur le main, un `DeletionRecord { id, origine, révision source, date, phase, URL en corbeille, révision en corbeille }` et, tant que le déplacement n'est pas fini, un `TrashOp { photo, record, undoDemandé }`. La pile d'annulation ne contient que des identifiants d'enregistrements de ce lancement.
 
 1. Touche Supprimer (`keyDown` non répété : **`isARepeat` ignoré**, pour que maintenir la touche ne vide pas le dossier), acceptée seulement si la photo est visible (principe 4).
 2. Tombstone posé, retrait optimiste de la liste, affichage synchrone de la photo suivante du dossier (ou dans le sens de navigation, selon le réglage ; la précédente si c'était la dernière). Aucune confirmation : c'est réversible. La photo n'étant plus dans la liste, une double suppression est impossible.
-3. File série (FIFO) : la révision sur disque est revérifiée. Différente de `key` (fichier remplacé entre-temps) → **pas de suppression**, photo réinsérée, alerte. Sinon `FileManager.trashItem`, l'URL en corbeille est conservée dans l'opération.
-4. Échec : réinsertion à sa place triée, alerte. Volume sans corbeille (SMB) : alerte proposant une suppression **définitive**, confirmée à chaque fois, et qui n'entre jamais dans la pile d'annulation.
-5. ⌘Z prend la dernière opération. Si `pending`, marque `undoDemandé` : l'annulation s'exécute à la fin du trash (succès → restauration, échec → déjà réinsérée). Si `done`, met le déplacement retour dans la même file. `moveItem` ne remplace jamais : si le chemin d'origine est occupé, erreur explicite. Réinsertion et navigation dessus.
-6. Quitter attend la fin de la file (`applicationShouldTerminate` → `.terminateLater`).
-7. Le tombstone est levé à la fin de l'opération, ce qui incrémente `opGeneration`.
+3. File série (FIFO) : la révision sur disque est revérifiée. Différente de `key` (fichier remplacé entre-temps) → **pas de suppression**, photo réinsérée, alerte. Sinon `FileManager.trashItem` ; l'URL réellement renvoyée et la révision du fichier à cette URL sont conservées dans l'enregistrement.
+4. Échec : alerte, et réinsertion à sa place triée **seulement si la liste active couvre le fichier** (même dossier, et parmi les fichiers choisis si seuls certains ont été ouverts). Après l'ouverture d'un autre dossier, le fichier reste simplement dans le sien. Volume sans corbeille (SMB) : alerte proposant une suppression **définitive**, confirmée à chaque fois, qui n'entre jamais dans la pile d'annulation et apparaît dans l'historique comme « Supprimée définitivement ».
+5. ⌘Z prend le dernier geste (toutes les opérations de son groupe). Si `pending`, marque `undoDemandé` : la restauration part à la fin du trash. Sinon la restauration passe par la même file. La pile ne change qu'au résultat : une restauration refusée (nom d'origine occupé, accès refusé, autre erreur) reste annulable et ⌘Z la retente ; une source disparue ou remplacée en sort, puisque réessayer ne servirait à rien.
+6. **Restauration** (`LibrarySession.restore(id)`, unique moteur pour ⌘Z et pour l'historique) : sur la file, `lstat` de l'URL en corbeille. Absente → « plus dans la corbeille » ; `EACCES`/`EPERM` → « inaccessible », distinct d'absent ; autre fichier (appareil, inode, taille ou mtime différents) → refus sans rien déplacer. Puis le chemin d'origine doit être libre, et `moveItem` ne remplace jamais de toute façon. Le fichier restauré n'entre dans la liste, sélectionné, que si la liste active le couvre ; sinon il retourne dans son dossier sur disque sans toucher à la liste ouverte.
+7. Quitter attend la fin de la file (`applicationShouldTerminate` → `.terminateLater`).
+8. Le tombstone est levé à la fin de l'opération, ce qui incrémente `opGeneration`.
 
 Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en v1 (une option multi-fichiers imposerait de gérer les réussites partielles).
+
+**Journal** (`DeletionJournal`) : `~/Library/Application Support/BetterView/suppressions.jsonl`, une ligne JSON par changement de phase, la dernière ligne d'un identifiant l'emporte. Pas de catalogue ni de base. Les lignes sont écrites (avec `fsync`) sur la file des opérations de fichier, dans le même bloc que le déplacement qu'elles décrivent : l'intention (`trashing`, `restoring`, `deleting`) **avant** le déplacement, le résultat après. Une interruption entre les deux est tranchée au lancement suivant d'après le disque seulement : fichier toujours à l'origine → rien ne s'est passé (entrée retirée) ; restauration interrompue → fichier encore à l'URL en corbeille avec sa révision : en corbeille, ou de retour à l'origine : restaurée ; sinon l'entrée est « à vérifier ». Jamais de parcours de `~/.Trash` : seules les URL renvoyées par les déplacements servent. Le chargement passe en premier sur la file, avant toute écriture du lancement ; il garde les 1 000 entrées les plus récentes et compacte le fichier. Le mode `--bench` n'écrit pas de journal.
+
+**Historique** (Édition › Suppressions du dossier…, ⌘Y, réservé dans les raccourcis) : `DeletionHistory` sur le main reflète le journal ; `HistoryWindowController` (AppKit, `NSTableView`) montre les suppressions du dossier ouvert, ou du dernier ouvert (Ouvrir récent, sans E/S), les plus récentes en tête : aperçu, nom, date, et soit **Restaurer**, soit l'état en un mot (Restaurée, Plus dans la corbeille, Supprimée définitivement, À vérifier). Restaurer une entrée n'annule pas les suppressions suivantes. À l'ouverture de la fenêtre, l'URL en corbeille des entrées affichées est relue hors main (`lstat`) ; un refus s'explique dans une alerte et le bouton reste disponible. Fenêtre fermée, elle ne fait rien : aucun travail sur le chemin de navigation.
+
+**Aperçus de l'historique** (`HistoryThumbnails`) : lus à la demande, pour les lignes à l'écran seulement, depuis l'URL en corbeille (ou l'origine si restaurée), par `Decoders.thumbnail(at:maxPixels:)` (JPEG découpé par `ARWPreview`, repli ImageIO sans décodage RAW), 360 px. Une seule lecture à la fois en qualité `utility`, sous les travaux du visualiseur ; une ligne qui quitte l'écran annule la sienne ; révision vérifiée avant et après la lecture. Petites `CGImage` seulement (aucune IOSurface), 200 au plus, vidées à la fermeture. Le cache disque S ne sert pas : il est invalidé à la suppression et ses clés dépendent du chemin source. Un aperçu absent n'empêche jamais la restauration.
 
 ## 6. Réglages et intégration système
 
@@ -216,7 +223,7 @@ Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en 
 - **Général > Affichage** : informations, bande d'aperçu, sens de navigation après une suppression.
 - **Général > Formats RAW** : un interrupteur « Ouvrir les RAW avec BetterView » et une ligne de résumé (« 10 formats sur 11. ARW s'ouvre avec… »), puis le détail repliable en grille de cases, une par format. `NSWorkspace.setDefaultApplication(at:toOpen:completion:)` est appelé **un format à la fois**, y compris pour l'interrupteur global ; les erreurs sont regroupées en une alerte (le système peut demander un consentement ou refuser). L'état affiché est relu via `urlForApplication(toOpen:)` à l'ouverture, au retour au premier plan et après chaque changement, jamais stocké. Le bundle précédent est mémorisé ; il n'est restauré à la désactivation que si BetterView est toujours le gestionnaire effectif et que cette app existe encore.
 - **Général > Cache disque** : taille maximale, espace utilisé (mesuré sur la file du cache, hors main), « Vider le cache… » avec confirmation.
-- **Raccourcis** : liste groupée dérivée de `ShortcutAction`, plus les raccourcis fixes du menu de l'app.
+- **Raccourcis** : liste groupée dérivée de `ShortcutAction`, plus les raccourcis fixes du menu de l'app (⌘O, ⌘,, ⌘Y, ⌘W, ⌘Q).
 
 ### Raccourcis
 
@@ -234,7 +241,7 @@ La valeur brute du `case` est enregistrée avec les touches de l'utilisateur : n
 
 **Répétition** : `ShortcutMap.decide` est le seul point de décision, pour la visionneuse, la comparaison et le menu. `NSEvent.isARepeat` sur une commande sans `repeats` est absorbé, quelle que soit la touche : maintenir une touche de suppression ne supprime qu'une photo, une bascule ne bascule qu'une fois. Seule la navigation se répète.
 
-**Menus** : la vue répond à toutes les touches d'une commande, le menu en affiche une. Une touche sans modificateur n'entre jamais dans le menu pour une commande destructive. Les éléments de menu des commandes photo sont grisés quand la visionneuse n'a pas le clavier : une touche tapée dans les réglages n'atteint jamais une photo. ⌘Q, ⌘W, ⌘O et ⌘, sont réservés au menu de l'app.
+**Menus** : la vue répond à toutes les touches d'une commande, le menu en affiche une. Une touche sans modificateur n'entre jamais dans le menu pour une commande destructive. Les éléments de menu des commandes photo sont grisés quand la visionneuse n'a pas le clavier : une touche tapée dans les réglages n'atteint jamais une photo. Seul « Annuler la suppression » reste actif partout (il ne fait que restaurer, y compris depuis l'historique). ⌘Q, ⌘W, ⌘O, ⌘, et ⌘Y (historique) sont réservés au menu de l'app.
 
 **Conflits** : dans les réglages, une touche déjà prise est signalée (« déjà utilisée par… ») ; « Remplacer » la retire à l'autre commande, « Annuler » ne change rien. ↺ rétablit les touches par défaut d'une commande, sauf celles qu'une autre commande a prises depuis (signalé) ; « Tout rétablir » revient aux valeurs par défaut.
 
@@ -266,6 +273,9 @@ Mode `--bench <dossier>` intégré, plus `os_signpost`, sur de vrais ARW. Condit
 Tests unitaires : WindowPlanner (priorités, pression mémoire, répétition), FrameCache, clés et échecs DiskCache, fusion PhotoList. Scénarios imposés :
 - A puis B supprimés pendant un rescan : aucune résurrection ;
 - ⌘Z pendant que le trash est `pending` ;
+- ⌘Z après l'ouverture d'un autre dossier : restauré sur disque, absent de la nouvelle liste ;
+- restauration refusée (chemin occupé, accès refusé) puis retentée ; autre fichier à l'URL en corbeille : refus ;
+- journal interrompu entre déplacement et écriture : entrée tranchée par le disque ou « à vérifier » ;
 - fichier remplacé à la même URL : frame ancienne jamais affichée, suppression refusée ;
 - fichier remplacé entre le premier contrôle et le décodage : résultat rejeté, rien sur disque ;
 - changement externe pendant un scan : le scan suivant gagne ; dossier B ouvert pendant le scan de A : instantané de A rejeté ;

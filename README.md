@@ -3,7 +3,7 @@
 Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite possible.
 
 - Passage d'une photo à l'autre en moins d'une milliseconde quand la photo est préparée.
-- Suppression en une touche, vers la corbeille, annulable avec ⌘Z.
+- Suppression en une touche, vers la corbeille, annulable avec ⌘Z ; historique des suppressions du dossier avec aperçu (⌘Y).
 - Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo. Elle se déplace en glissant la photo.
 - Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs.
 - Une bande d'aperçu flottante, détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant et s'aimante au Dock et au centre de l'écran.
@@ -39,7 +39,7 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 | C | Comparer les photos, ou quitter la comparaison |
 | ↩ | Dans la comparaison : garder la photo choisie |
 
-Non modifiables : double-clic (100 % ou ajusté), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W et ⌘Q. Dans la comparaison, les touches 1 à 4 choisissent une photo.
+Non modifiables : double-clic (100 % ou ajusté), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W, ⌘Q, et ⌘Y (suppressions du dossier : aperçu et restauration d'une photo précise, sans annuler les suivantes). Dans la comparaison, les touches 1 à 4 choisissent une photo.
 
 ## Bande d'aperçu et comparaison
 
