@@ -96,8 +96,9 @@ private final class FloatingStripPanel: NSPanel {
 /// The strip's own small window, detached from the viewer, whose size follows each photo.
 @MainActor
 final class StripPanel {
-    private static let metrics = StripView.Metrics(height: 66, gap: 3, top: 7, fadesEdges: true)
-    private static let height: CGFloat = 92
+    private static let metrics = StripView.Metrics(height: 66, gap: 6, top: 8, fadesEdges: true)
+    /// As much room under the photos as above: no line of text under them.
+    private static let height: CGFloat = 82
     private static let wantedWidth: CGFloat = 820
 
     let view = StripView(metrics: StripPanel.metrics)

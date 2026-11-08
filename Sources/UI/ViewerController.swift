@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Connects the session, the pipeline and the view. Navigation here does a cache lookup and
 /// a layer commit, nothing else: all waiting happens in the pipeline.
@@ -32,7 +33,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private let thumbnails = ThumbnailStore()
 
     private var stripVisible = Preferences.stripVisible
+    private var stripOtherOpacity = Float(Preferences.stripOtherOpacity)
     private var stripPending = false
+    /// The photo a swipe brought to the middle of the strip, while the current photo is still
+    /// the one given: any move of the current photo brings the strip back to it.
+    private var stripBrowse: (center: PhotoKey, current: PhotoKey)?
     /// Photos picked by Shift-click, by path, to compare instead of the burst.
     private var stripSelection: Set<String> = []
 
@@ -52,6 +57,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The centre shapes are placed around. Reading it back from the frame would add a
     /// rounding error at every change of orientation, and the window would creep sideways.
     private var shapeCenter: CGPoint?
+    /// The window has not shown a photo yet: it is small, and clicking it opens one.
+    private var welcoming = false
+    private static let welcomeSize = CGSize(width: 480, height: 300)
 
     /// Benchmark hooks.
     var onDisplayed: ((PhotoKey, Tier?) -> Void)?
@@ -80,7 +88,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         window.contentView = view
         window.delegate = self
         window.title = "BetterView"
-        window.setFrameAutosaveName("Viewer")
         // Only the window with the photo's shape exists: no full-screen mode.
         window.collectionBehavior = .fullScreenNone
         window.minSize = NSSize(width: 200, height: 200)
@@ -88,13 +95,22 @@ final class ViewerController: NSObject, NSWindowDelegate {
         window.initialFirstResponder = view
         if !window.setFrameUsingName("Viewer") { window.center() }
         chosenHeight = window.frame.height
+        // Small until a photo gives it its shape, around where the photos were last shown.
+        // The size kept for photos is saved only from then on.
+        shapeCenter = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        welcoming = true
+        window.setFrame(CGRect(
+            x: (window.frame.midX - Self.welcomeSize.width / 2).rounded(),
+            y: (window.frame.midY - Self.welcomeSize.height / 2).rounded(),
+            width: Self.welcomeSize.width, height: Self.welcomeSize.height
+        ), display: false)
 
         view.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
         strip.view.onClick = { [weak self] photo, extending in self?.stripClicked(photo, extending: extending) }
-        strip.view.onLabelClick = { [weak self] in self?.perform(.compare) }
+        strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
         thumbnails.onLoaded = { [weak self] _ in self?.scheduleStripUpdate() }
         thumbnails.onStale = { [weak self] _ in self?.session.requestScan() }
@@ -124,12 +140,29 @@ final class ViewerController: NSObject, NSWindowDelegate {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.screensChanged() }
         }
-        view.showMessage("⌘O pour ouvrir un dossier ou une photo")
+        view.opensOnClick = true
+        view.showMessage("Cliquer ou ⌘O pour ouvrir un dossier ou une photo")
     }
 
     func showWindow() {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
+    }
+
+    /// Same as ⌘O, attached to the viewer.
+    func showOpenPanel() {
+        guard window.attachedSheet == nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = RawFormat.all.compactMap { UTType($0.uti) } + [.folder]
+        showWindow()
+        panel.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                if response == .OK { self?.open(panel.urls) }
+            }
+        }
     }
 
     func open(_ urls: [URL]) {
@@ -179,6 +212,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             replan()
         case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
+        case .clicked: showOpenPanel()
         case .zoomChanged:
             if !view.isZoomed { stopFollowingFocus() }
             display()
@@ -338,9 +372,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     // MARK: Window shape
 
+    func setStripOtherOpacity(_ opacity: Double) {
+        stripOtherOpacity = Float(opacity)
+        updateStrip()
+    }
+
     private func setWindowButtonsVisible(_ visible: Bool) {
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(kind)?.isHidden = !visible
+            window.standardWindowButton(kind)?.fade(visible: visible)
         }
     }
 
@@ -360,10 +399,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let frame = WindowShape.frame(aspect: aspect, height: chosenHeight, center: center, visible: screen.visibleFrame)
         // Also after a launch, when the restored frame may already have this size.
         window.contentAspectRatio = frame.size
-        guard frame.size != window.frame.size else { return }
+        guard frame.size != window.frame.size || welcoming else { return }
         applyingShape = true
         window.setFrame(frame, display: false)
         applyingShape = false
+        if welcoming {
+            welcoming = false
+            window.setFrameAutosaveName("Viewer")
+        }
     }
 
     // MARK: Navigation
@@ -428,6 +471,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             centreOnFocus(level: nil)
         }
         scheduleStripUpdate()
+        view.opensOnClick = session.list.current == nil
         guard let current = session.list.current else {
             visiblePhoto = nil
             shownTier = nil
@@ -562,8 +606,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
         strip.setVisible(true)
         let photos = session.list.photos
+        let center = browsedIndex() ?? index
         // More than the strip can show even with portrait photos: it cuts the rest at its edges.
-        let shown = StripView.window(around: index, count: photos.count, reach: Self.stripReach)
+        let shown = StripView.window(around: center, count: photos.count, reach: Self.stripReach)
         let cells = shown.map { at -> StripCell in
             let photo = photos[at]
             let selected = stripSelection.contains(photo.path)
@@ -571,15 +616,15 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 photo: photo,
                 image: thumbnails.image(for: photo),
                 mark: at == index ? .current : (selected ? .selected : .none),
-                opacity: at == index || selected ? 1 : 0.7
+                opacity: at == index || selected ? 1 : stripOtherOpacity
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
-        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [index + $0 * direction, index - $0 * direction] }
-        let wanted = ([index] + ahead).filter { photos.indices.contains($0) && ($0 - index).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
+        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
+        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
         thumbnails.request(wanted.map { photos[$0] })
 
-        let reach = max(index - Self.burstReach, 0)...min(index + Self.burstReach, photos.count - 1)
+        let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
         let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
             .map { ($0.lowerBound + reach.lowerBound)...($0.upperBound + reach.lowerBound) }
         // Positions among the cells, cut to what they cover.
@@ -587,23 +632,40 @@ final class ViewerController: NSObject, NSWindowDelegate {
             let from = max(burst.lowerBound, shown.lowerBound), to = min(burst.upperBound, shown.upperBound)
             return from <= to ? (from - shown.lowerBound)...(to - shown.lowerBound) : nil
         }
-        let brackets = bursts.compactMap(cellRange)
         let compareKey = view.shortcuts.keys(for: .compare).first?.label
-        let picked = selectedPhotos().count
-        var label: String?
-        var labelRange: ClosedRange<Int>?
-        if picked >= 2 {
-            label = "\(picked) sélectionnées"
-        } else if let burst = bursts.first(where: { $0.contains(index) }) {
-            label = "Rafale de \(burst.count)"
-            labelRange = cellRange(burst)
+        var groups: [ClosedRange<Int>] = []
+        var tips: [String] = []
+        for burst in bursts {
+            guard let range = cellRange(burst) else { continue }
+            groups.append(range)
+            tips.append("Rafale de \(burst.count)" + (compareKey.map { "  ·  \($0) pour comparer" } ?? ""))
         }
-        if let text = label, let compareKey { label = "\(text)  ·  \(compareKey) pour comparer" }
         strip.view.update(
-            cells: cells, anchor: index - shown.lowerBound,
+            cells: cells, anchor: center - shown.lowerBound,
             cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
-            brackets: brackets, label: label, labelRange: labelRange
+            groups: groups, tips: tips
         )
+    }
+
+    /// Where the strip was swiped to, if the current photo has not moved since.
+    private func browsedIndex() -> Int? {
+        guard let browse = stripBrowse, browse.current == session.list.current,
+              let at = session.list.photos.firstIndex(of: browse.center)
+        else {
+            stripBrowse = nil
+            return nil
+        }
+        return at
+    }
+
+    /// A swipe along the strip only browses it: the current photo stays.
+    private func stripScrolled(_ delta: Int) {
+        defer { scheduleStripUpdate() }
+        let photos = session.list.photos
+        guard let current = session.list.current, let index = session.list.index else { return }
+        let center = browsedIndex() ?? index
+        let target = min(max(center + delta, 0), photos.count - 1)
+        stripBrowse = target == index ? nil : (photos[target], current)
     }
 
     private static let stripReach = 14
@@ -977,13 +1039,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// A size the user chose stays for the next photos, whatever their orientation.
     func windowDidResize(_ notification: Notification) {
-        guard !applyingShape, comparison == nil else { return }
+        guard !applyingShape, comparison == nil, !welcoming else { return }
         chosenHeight = window.frame.height
         shapeCenter = nil
     }
 
     func windowDidMove(_ notification: Notification) {
         guard !applyingShape, comparison == nil else { return }
-        shapeCenter = nil
+        // The photo opens where the small window was taken.
+        shapeCenter = welcoming ? CGPoint(x: window.frame.midX, y: window.frame.midY) : nil
     }
 }

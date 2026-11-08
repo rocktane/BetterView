@@ -50,16 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Menu actions
 
     @objc private func openPanel(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = RawFormat.all.compactMap { UTType($0.uti) } + [.folder]
-        panel.beginSheetModal(for: viewer.window) { [weak self] response in
-            MainActor.assumeIsolated {
-                if response == .OK { self?.viewer.open(panel.urls) }
-            }
-        }
+        viewer.showOpenPanel()
     }
 
     @objc private func showSettings(_ sender: Any?) {
