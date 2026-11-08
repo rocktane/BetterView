@@ -200,6 +200,23 @@ final class DeletionHistoryTests: XCTestCase {
 
     // MARK: Journal
 
+    /// An unwritable journal never blocks a deletion, and says so once.
+    func testUnwritableJournalIsReportedOnceAndDeletionsGoOn() async throws {
+        let blocker = root.appendingPathComponent("blocker")
+        try Data().write(to: blocker)
+        let session = LibrarySession(fileOps: ops(), journal: DeletionJournal(url: blocker.appendingPathComponent("j.jsonl")))
+        await open(session)
+        var reports = 0
+        session.onEvent = { if case .historyNotSaved = $0 { reports += 1 } }
+        await trashAll(session, 2)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(reports, 1)
+        XCTAssertFalse(exists("a.arw"))
+        XCTAssertTrue(session.undo())
+        await spin { !session.hasPendingIO }
+        XCTAssertTrue(exists("b.arw"))
+    }
+
     func testHistoryAndRestoreSurviveARelaunch() async throws {
         let first = session(journal: true)
         await open(first)

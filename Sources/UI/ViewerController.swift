@@ -900,6 +900,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             alert("Impossible de restaurer \(name)", info: message, in: NSApp.keyWindow)
         case .deleteFailed(let name, let message):
             alert("Impossible de supprimer \(name)", info: message)
+        case .historyNotSaved(let message):
+            alert("L'historique des suppressions n'est pas enregistré", info: "\(message)\n\nLes suppressions continuent de fonctionner et ⌘Z reste possible, mais elles n'apparaîtront plus dans l'historique après avoir quitté.")
         }
     }
 

@@ -27,6 +27,8 @@ enum SessionEvent: Sendable {
     case trashFailed(PhotoKey, message: String)
     case restoreFailed(name: String, message: String)
     case deleteFailed(name: String, message: String)
+    /// The deletion history could not be written: deletions still work, without a record.
+    case historyNotSaved(message: String)
 }
 
 /// Owns the list and everything that can change it: scans, deletions and undo.
@@ -85,6 +87,11 @@ final class LibrarySession {
         self.scanner = scanner
         self.journal = journal
         if let journal {
+            journal.onFailure = { [weak self] message in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.onEvent(.historyNotSaved(message: message)) }
+                }
+            }
             // First on the queue, so it reads the file before this launch appends to it.
             ioQueue.async { [weak self] in
                 let loaded = journal.load()

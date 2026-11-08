@@ -135,21 +135,36 @@ final class DeletionJournal: @unchecked Sendable {
     }
 
     private let encoder = JSONEncoder()
+    /// Called on the file operation queue the first time a line cannot be written. The file
+    /// operation still happens: refusing it would leave only the permanent deletion offered
+    /// for a failed trash, and ⌘Z keeps working for this launch. The user is told instead.
+    var onFailure: @Sendable (String) -> Void = { _ in }
+    private var reported = false
 
     /// Written and flushed before returning: the next file operation comes after it.
     func append(_ record: DeletionRecord) {
-        guard var line = try? encoder.encode(record) else { return }
+        do {
+            try write(record)
+        } catch {
+            guard !reported else { return }
+            reported = true
+            onFailure(error.localizedDescription)
+        }
+    }
+
+    private func write(_ record: DeletionRecord) throws {
+        var line = try encoder.encode(record)
         line.append(0x0A)
         let manager = FileManager.default
         if !manager.fileExists(atPath: url.path) {
-            try? manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            manager.createFile(atPath: url.path, contents: nil)
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard manager.createFile(atPath: url.path, contents: nil) else { throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: url.path]) }
         }
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: line)
-        try? handle.synchronize()
+        try handle.seekToEnd()
+        try handle.write(contentsOf: line)
+        try handle.synchronize()
     }
 
     /// Folds the lines, settles interrupted phases from the disk, keeps the latest `limit`

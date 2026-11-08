@@ -82,7 +82,8 @@ final class HistoryWindowController: NSObject, NSWindowDelegate, NSTableViewData
 
     func reload() {
         let path = folder()
-        let name = path.map { FileManager.default.displayName(atPath: $0) }
+        // The last component, not FileManager.displayName: no disk access on the main thread.
+        let name = path.map { ($0 as NSString).lastPathComponent }
         window.title = name.map { "Suppressions · \($0)" } ?? "Suppressions"
         entries = path.map { folder in
             session.history.newestFirst.filter { Self.standardized($0.folderPath) == folder }
