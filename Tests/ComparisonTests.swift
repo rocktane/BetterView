@@ -471,23 +471,49 @@ final class StripLayoutTests: XCTestCase {
         return try XCTUnwrap(context.makeImage())
     }
 
-    private func strip(count: Int, anchor: Int, cut: (Bool, Bool)) throws -> StripView {
+    private func strip(count: Int, anchor: Int, cut: (Bool, Bool), groups: [ClosedRange<Int>] = []) throws -> StripView {
         let view = StripView(metrics: .init(height: 66, gap: 3, top: 7, fadesEdges: true))
-        view.frame = CGRect(x: 0, y: 0, width: 820, height: 92)
+        view.frame = CGRect(x: 0, y: 0, width: 820, height: 80)
         let image = try portrait()
         let cells = (0..<count).map { StripCell(photo: PhotoKey(path: "/p/\($0).arw", device: 1, inode: 1, size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0), image: image) }
-        view.update(cells: cells, anchor: anchor, cut: cut)
+        view.update(cells: cells, anchor: anchor, cut: cut, groups: groups, tips: groups.map { _ in "Rafale" })
         return view
+    }
+
+    /// Deleting the current photo slides the next one into the middle: right after the
+    /// update, it is still where it was, and only the animation moves it.
+    func testDeletingTheCurrentPhotoSlidesTheNextIntoPlace() throws {
+        let image = try portrait()
+        func key(_ n: Int) -> PhotoKey { PhotoKey(path: "/p/\(n).arw", device: 1, inode: 1, size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0) }
+        let view = StripView(metrics: .init(height: 66, gap: 6, top: 8, fadesEdges: true))
+        view.frame = CGRect(x: 0, y: 0, width: 820, height: 82)
+        view.update(cells: (0..<29).map { StripCell(photo: key($0), image: image) }, anchor: 14, cut: (true, true))
+        let before = view.cellFrames[15]
+        view.update(cells: (0..<29).filter { $0 != 14 }.map { StripCell(photo: key($0), image: image) }, anchor: 14, cut: (true, true))
+        XCTAssertEqual(view.cellFrames[14].minX, before.minX, accuracy: 1)
+    }
+
+    /// A burst is outlined as one, in the gaps around it, without reaching its neighbours.
+    func testABurstOutlineStaysInTheGapsAroundIt() throws {
+        let view = try strip(count: 29, anchor: 14, cut: (true, true), groups: [12...15])
+        let frames = view.cellFrames
+        let outline = try XCTUnwrap(view.outlineFrame)
+        XCTAssertLessThan(outline.minX, frames[12].minX)
+        XCTAssertGreaterThan(outline.minX, frames[11].maxX)
+        XCTAssertGreaterThan(outline.maxX, frames[15].maxX)
+        XCTAssertLessThan(outline.maxX, frames[16].minX)
+        XCTAssertGreaterThanOrEqual(outline.minY, 0)
+        XCTAssertLessThanOrEqual(outline.maxY, 80)
     }
 
     /// Portrait photos are 44 pt wide: 29 of them overflow 820 pt from either end.
     func testPortraitsFillTheStripAtBothEnds() throws {
         let start = try strip(count: 29, anchor: 0, cut: (false, true))
-        XCTAssertEqual(start.cellFrames.first?.minX, 10)
+        XCTAssertEqual(start.cellFrames.first?.minX, 7, "the same space as above the photos")
         XCTAssertGreaterThanOrEqual(start.cellFrames.last?.maxX ?? 0, 820)
 
         let end = try strip(count: 29, anchor: 28, cut: (true, false))
-        XCTAssertEqual(end.cellFrames.last?.maxX, 810)
+        XCTAssertEqual(end.cellFrames.last?.maxX, 813)
         XCTAssertLessThanOrEqual(end.cellFrames.first?.minX ?? 1, 0)
     }
 

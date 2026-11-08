@@ -6,6 +6,8 @@ enum ViewerCommand {
     case keyReleased
     case hoverChanged(Bool)
     case openDropped([URL])
+    /// A click that did not move the window, while `opensOnClick`.
+    case clicked
     case zoomChanged
     /// In the comparison: this slot takes the focus.
     case selectSlot(Int)
@@ -15,6 +17,8 @@ enum ViewerCommand {
 final class ViewerView: NSView {
     var onCommand: (ViewerCommand) -> Void = { _ in }
     var shortcuts = ShortcutMap.defaults
+    /// Nothing is shown: a click asks to open something.
+    var opensOnClick = false
 
     /// nil is fit-to-window. Otherwise 1.0 means one image pixel per screen pixel.
     private(set) var zoom: CGFloat?
@@ -229,8 +233,8 @@ final class ViewerView: NSView {
 
     private func applyOverlayVisibility() {
         let showInfo = hasInfo && isHovered
-        if infoPanel.isHidden == showInfo { infoPanel.isHidden = !showInfo }
-        if positionPanel.isHidden == showInfo { positionPanel.isHidden = !showInfo }
+        infoPanel.fade(visible: showInfo)
+        positionPanel.fade(visible: showInfo)
         updateBadge()
     }
 
@@ -249,8 +253,7 @@ final class ViewerView: NSView {
     private func updateBadge() {
         let parts = [tierBadge, focusNote].compactMap { $0 }
         setLabel(badgeLabel, parts.isEmpty || (!isHovered && focusNote == nil) ? nil : parts.joined(separator: "  ·  "))
-        let showLock = isProtected && isHovered
-        if lockBadge.isHidden == showLock { lockBadge.isHidden = !showLock }
+        lockBadge.fade(visible: isProtected && isHovered)
     }
 
     /// A property flip, no I/O: called after the image is committed. Shown with the other
@@ -454,9 +457,24 @@ final class ViewerView: NSView {
         window?.makeFirstResponder(self)
         if event.clickCount == 2 {
             toggleZoom(at: convert(event.locationInWindow, from: nil))
-        } else if zoom == nil {
+        } else if zoom == nil, let window {
             // Dragging the photo moves the window; once zoomed, it moves the image instead.
-            window?.performDrag(with: event)
+            // With nothing to show, a press that does not travel is a click, which opens.
+            guard opensOnClick else {
+                window.performDrag(with: event)
+                return
+            }
+            let start = event.locationInWindow
+            while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+                if next.type == .leftMouseUp {
+                    onCommand(.clicked)
+                    return
+                }
+                if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 3 {
+                    window.performDrag(with: event)
+                    return
+                }
+            }
         }
     }
 
@@ -498,5 +516,30 @@ final class ViewerView: NSView {
         else { return false }
         onCommand(.openDropped(urls))
         return true
+    }
+}
+
+extension NSView {
+    /// Overlays shown on hover: they appear almost at once, and leave a little more slowly.
+    /// A view that has faded out is hidden, so it takes no clicks.
+    func fade(visible: Bool) {
+        let target: CGFloat = visible ? 1 : 0
+        // The animator sets the value at once: a view already headed there is left alone.
+        if visible ? (!isHidden && alphaValue == 1) : (isHidden || alphaValue == 0) { return }
+        if visible, isHidden {
+            alphaValue = 0
+            isHidden = false
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = visible ? 0.08 : 0.22
+            context.timingFunction = CAMediaTimingFunction(name: visible ? .easeOut : .easeInEaseOut)
+            animator().alphaValue = target
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                // Shown again meanwhile: it stays.
+                guard let self, !visible, self.alphaValue == 0 else { return }
+                self.isHidden = true
+            }
+        }
     }
 }

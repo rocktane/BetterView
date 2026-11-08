@@ -7,7 +7,7 @@ struct StripCell {
     var photo: PhotoKey
     var image: CGImage?
     var mark = Mark.none
-    var opacity: Float = 0.7
+    var opacity: Float = 1
 }
 
 /// A strip of thumbnails laid end to end, each as wide as its photo's shape, drawn as layers:
@@ -25,8 +25,10 @@ final class StripView: NSView {
 
     private(set) var cells: [StripCell] = []
     var onClick: (PhotoKey, _ extending: Bool) -> Void = { _, _ in }
-    var onLabelClick: () -> Void = {}
     var onHoverChanged: () -> Void = {}
+    /// Set for a view that scrolls: called with how many photos the swipe carried past the
+    /// middle, forward positive. The strip expects to be given them centred.
+    var onScroll: ((Int) -> Void)?
     /// Set for a view that moves its window: called with the pointer's travel since the press,
     /// in screen points, then with nil when the drag ends.
     var onDrag: ((CGPoint?) -> Void)?
@@ -37,17 +39,27 @@ final class StripView: NSView {
     private let fade = CAGradientLayer()
     private var images: [CALayer] = []
     private var frames: [CGRect] = []
-    private let brackets = CAShapeLayer()
-    private let label = NSTextField(labelWithString: "")
+    private let outlines = CAShapeLayer()
     private var anchor: Int?
-    private var bracketRanges: [ClosedRange<Int>] = []
-    private var labelRange: ClosedRange<Int>?
+    private var groupRanges: [ClosedRange<Int>] = []
+    private var groupTips: [String] = []
     private var pressStart: CGPoint?
     private var dragging = false
     private var hoverTracking: NSTrackingArea?
+    /// How far a swipe has carried the photos from their place, in points, right positive.
+    private var scrollShift: CGFloat = 0
+    /// The photo a scroll step asked for, until the strip is given it.
+    private var scrollTarget: PhotoKey?
+    private var scrollGestureActive = false
+    private var settleTimer: Timer?
+    private var lastSettle: CFTimeInterval = 0
+    private static let settleTime: CFTimeInterval = 0.045
+    /// The shifts that still move the photos: past them, the row stops at an end of the list.
+    private var shiftRange: ClosedRange<CGFloat> = 0...0
 
-    /// Space kept between the first or last photo of the list and the edge.
-    private static let inset: CGFloat = 10
+    /// Space kept between the first or last photo of the list and the edge: the same as above
+    /// and below the photos.
+    private var inset: CGFloat { metrics.top }
     /// More photos exist beyond the first or last cell given: no need to stop at that end.
     private var cutAtStart = false
     private var cutAtEnd = false
@@ -60,11 +72,19 @@ final class StripView: NSView {
         return lower...(lower + size - 1)
     }
 
-    /// For tests: where each cell is drawn.
+    /// For tests: where each cell is drawn, and the outer edge of the group outlines.
     var cellFrames: [CGRect] { frames }
+    var outlineFrame: CGRect? {
+        outlines.path.map { $0.boundingBox.insetBy(dx: -outlines.lineWidth / 2, dy: -outlines.lineWidth / 2) }
+    }
 
     /// Shape of a thumbnail that has not arrived yet: the most common one.
     private static let defaultAspect: CGFloat = 1.5
+    private static let cornerRadius: CGFloat = 3
+    /// The outline of a group runs in the gap around it: this far from the photos, and this
+    /// thick, so that it never reaches a neighbour across a gap.
+    private static let outlineOffset: CGFloat = 1
+    private static let outlineWidth: CGFloat = 1.5
 
     init(metrics: Metrics) {
         self.metrics = metrics
@@ -83,16 +103,11 @@ final class StripView: NSView {
             fade.actions = ["bounds": NSNull(), "position": NSNull(), "locations": NSNull()]
             content.mask = fade
         }
-        brackets.fillColor = nil
-        brackets.strokeColor = NSColor(white: 0.6, alpha: 1).cgColor
-        brackets.lineWidth = 1
-        brackets.actions = ["path": NSNull()]
-        content.addSublayer(brackets)
-        label.font = .systemFont(ofSize: 10.5, weight: .medium)
-        label.textColor = NSColor(white: 0.78, alpha: 1)
-        label.alignment = .center
-        label.isHidden = true
-        addSubview(label)
+        outlines.fillColor = nil
+        outlines.strokeColor = NSColor(white: 0.72, alpha: 1).cgColor
+        outlines.lineWidth = Self.outlineWidth
+        outlines.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        content.addSublayer(outlines)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -102,20 +117,56 @@ final class StripView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
 
     /// `anchor` stays in the middle, so that moving along slides the strip under a fixed
-    /// highlight. Without one, a row that fits is centred as a whole. Brackets group runs of
-    /// cells, and `label` is written under `labelRange`.
-    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), brackets ranges: [ClosedRange<Int>] = [], label text: String? = nil, labelRange: ClosedRange<Int>? = nil) {
+    /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
+    /// outlined as one, and its tip shows when the pointer rests on it.
+    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
+        let previous = (cells: self.cells, anchor: self.anchor)
         self.cells = cells
         self.anchor = anchor
         cutAtStart = cut.start
         cutAtEnd = cut.end
-        bracketRanges = ranges
-        self.labelRange = labelRange
-        let isHidden = text == nil
-        if label.isHidden != isHidden { label.isHidden = isHidden }
-        if let text, label.stringValue != text { label.stringValue = text }
+        groupRanges = ranges
+        groupTips = tips
+        carryScroll(from: previous.cells, anchor: previous.anchor)
         redraw()
+        updateTips()
+        if !scrollGestureActive { settle() }
     }
+
+    /// A new photo in the middle first leaves the photos where they were, the shift rebased
+    /// on a photo both rows share: a swipe goes on under the fingers, and any other move,
+    /// deletion of the current photo included, slides there.
+    private func carryScroll(from old: [StripCell], anchor oldAnchor: Int?) {
+        scrollTarget = nil
+        guard let anchor, cells.indices.contains(anchor), let oldAnchor, old.indices.contains(oldAnchor),
+              cells[anchor].photo != old[oldAnchor].photo
+        else { return }
+        // The new middle photo if it was there, else the old one, else any photo kept.
+        let candidates = [cells[anchor].photo, old[oldAnchor].photo] + cells.map(\.photo)
+        guard let shared = candidates.lazy.compactMap({ photo -> (new: Int, old: Int)? in
+            guard let new = self.cells.firstIndex(where: { $0.photo == photo }),
+                  let was = old.firstIndex(where: { $0.photo == photo }) else { return nil }
+            return (new, was)
+        }).first else {
+            scrollShift = 0
+            return
+        }
+        // The shared photo keeps its place on screen.
+        let before = centres(of: old), after = centres(of: cells)
+        scrollShift += (after[anchor] - after[shared.new]) - (before[oldAnchor] - before[shared.old])
+    }
+
+    /// Where each cell's centre lies along the row, from the start of the first cell.
+    private func centres(of row: [StripCell]) -> [CGFloat] {
+        var x: CGFloat = 0
+        return row.map { cell in
+            let width = width(of: cell)
+            defer { x += width + metrics.gap }
+            return x + width / 2
+        }
+    }
+
+    private func centre(of index: Int) -> CGFloat { centres(of: cells)[index] }
 
     private func width(of cell: StripCell) -> CGFloat {
         guard let image = cell.image, image.width > 0, image.height > 0 else { return (metrics.height * Self.defaultAspect).rounded() }
@@ -127,14 +178,22 @@ final class StripView: NSView {
         let total = widths.reduce(0, +) + metrics.gap * CGFloat(max(cells.count - 1, 0))
         let y = bounds.height - metrics.top - metrics.height
         var x = (bounds.width - total) / 2
+        shiftRange = 0...0
         // The anchor stays in the middle, except near the ends of the list, where the strip stops
         // scrolling rather than leave half of itself empty.
-        if let anchor, cells.indices.contains(anchor), total > bounds.width - 2 * Self.inset {
+        if let anchor, cells.indices.contains(anchor), total > bounds.width - 2 * inset {
             let before = widths[..<anchor].reduce(0, +) + metrics.gap * CGFloat(anchor)
             let centred = bounds.midX - widths[anchor] / 2 - before
-            let first = Self.inset, last = bounds.width - Self.inset - total
+            let first = inset, last = bounds.width - inset - total
             // A cut list end (more photos beyond the cells given) may scroll past the edge.
-            x = min(max(centred, cutAtEnd ? -.infinity : last), cutAtStart ? .infinity : first)
+            let lowest = cutAtEnd ? -CGFloat.infinity : last, highest = cutAtStart ? CGFloat.infinity : first
+            shiftRange = (lowest - centred)...(highest - centred)
+            x = min(max(centred + scrollShift, lowest), highest)
+            // Only what shows is kept: nothing gathers past an end, to be undone before the
+            // photos move again.
+            scrollShift = x - centred
+        } else {
+            scrollShift = 0
         }
         frames = widths.map { width in
             defer { x += width + metrics.gap }
@@ -162,11 +221,11 @@ final class StripView: NSView {
         while images.count < cells.count {
             let layer = CALayer()
             layer.contentsGravity = .resizeAspectFill
-            layer.cornerRadius = 3
+            layer.cornerRadius = Self.cornerRadius
             layer.masksToBounds = true
             layer.minificationFilter = .trilinear
             layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
-            content.insertSublayer(layer, below: brackets)
+            content.insertSublayer(layer, below: outlines)
             images.append(layer)
         }
         for (position, layer) in images.enumerated() {
@@ -191,37 +250,107 @@ final class StripView: NSView {
                 layer.borderColor = NSColor(red: 0.42, green: 0.66, blue: 1, alpha: 1).cgColor
             }
         }
+        // One rounded outline around each group, concentric with the thumbnails' corners.
         let path = CGMutablePath()
-        for range in bracketRanges where frames.indices.contains(range.lowerBound) && frames.indices.contains(range.upperBound) {
-            let from = frames[range.lowerBound], to = frames[range.upperBound]
-            let y = from.minY - 3
-            path.move(to: CGPoint(x: from.minX + 1, y: y))
-            path.addLine(to: CGPoint(x: from.minX + 1, y: y - 3))
-            path.addLine(to: CGPoint(x: to.maxX - 1, y: y - 3))
-            path.addLine(to: CGPoint(x: to.maxX - 1, y: y))
+        let ring = Self.outlineOffset + Self.outlineWidth / 2
+        for rect in groupRects() {
+            path.addRoundedRect(in: rect.insetBy(dx: -ring, dy: -ring), cornerWidth: Self.cornerRadius + ring, cornerHeight: Self.cornerRadius + ring)
         }
-        brackets.frame = content.bounds
-        brackets.path = path
+        outlines.frame = content.bounds
+        outlines.path = path
         CATransaction.commit()
-        placeLabel()
     }
 
-    private func placeLabel() {
-        guard !label.isHidden else { return }
-        label.sizeToFit()
-        var size = label.frame.size
-        size.width = min(size.width, bounds.width - 16)
-        var middle = bounds.midX
-        if let labelRange, frames.indices.contains(labelRange.lowerBound), frames.indices.contains(labelRange.upperBound) {
-            middle = (frames[labelRange.lowerBound].minX + frames[labelRange.upperBound].maxX) / 2
+    /// The span of each group's cells.
+    private func groupRects() -> [CGRect] {
+        groupRanges.compactMap { range in
+            guard frames.indices.contains(range.lowerBound), frames.indices.contains(range.upperBound) else { return nil }
+            return frames[range.lowerBound].union(frames[range.upperBound])
         }
-        let x = min(max(middle - size.width / 2, 12), bounds.width - 12 - size.width)
-        let y = bounds.height - metrics.top - metrics.height - 6 - size.height
-        label.frame = CGRect(x: x.rounded(), y: y.rounded(), width: size.width, height: size.height)
+    }
+
+    private func updateTips() {
+        removeAllToolTips()
+        for (rect, tip) in zip(groupRects(), groupTips) {
+            addToolTip(rect.intersection(bounds), owner: tip as NSString, userData: nil)
+        }
     }
 
     override func layout() {
         super.layout()
+        redraw()
+        updateTips()
+    }
+
+    // MARK: Scrolling
+
+    /// A swipe slides the photos under the fingers; past halfway to a neighbour, that photo
+    /// becomes the current one. A mouse wheel moves one photo per notch.
+    override func scrollWheel(with event: NSEvent) {
+        guard let onScroll, let anchor, cells.indices.contains(anchor) else {
+            super.scrollWheel(with: event)
+            return
+        }
+        let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        let delta = abs(dx) >= abs(dy) ? dx : dy
+        guard event.hasPreciseScrollingDeltas else {
+            if delta != 0 { onScroll(delta < 0 ? 1 : -1) }
+            return
+        }
+        if event.phase == .began || event.momentumPhase == .began {
+            settleTimer?.invalidate()
+            settleTimer = nil
+            scrollGestureActive = true
+        }
+        scrollShift = (scrollShift + delta).clamped(to: shiftRange)
+        // Every photo whose centre the swipe passed halfway to, at once; the next asks wait
+        // for the strip to be given the photo asked for.
+        if scrollTarget == nil {
+            var to = anchor
+            while to < cells.count - 1, -scrollShift > centre(of: to) - centre(of: anchor) + (centre(of: to + 1) - centre(of: to)) / 2 { to += 1 }
+            while to > 0, scrollShift > centre(of: anchor) - centre(of: to) + (centre(of: to) - centre(of: to - 1)) / 2 { to -= 1 }
+            if to != anchor {
+                scrollTarget = cells[to].photo
+                onScroll(to - anchor)
+            }
+        }
+        redraw()
+        let ended = event.momentumPhase == .ended || event.momentumPhase == .cancelled
+            || (event.momentumPhase == [] && (event.phase == .ended || event.phase == .cancelled))
+        if ended { settle() }
+    }
+
+    /// Brings the nearest photo to the middle once the fingers let go. A momentum phase that
+    /// follows the release takes over again.
+    private func settle() {
+        scrollGestureActive = false
+        guard settleTimer == nil, abs(scrollShift - restingShift) >= 0.5 else { return }
+        lastSettle = CACurrentMediaTime()
+        settleTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.settleStep() }
+        }
+    }
+
+    /// The current photo in the middle, or as near as the ends of the list allow.
+    private var restingShift: CGFloat { CGFloat(0).clamped(to: shiftRange) }
+
+    private func settleStep() {
+        guard !scrollGestureActive else {
+            settleTimer?.invalidate()
+            settleTimer = nil
+            return
+        }
+        // An exponential ease, whatever the frame rate: about 0.2 s for a whole photo.
+        let now = CACurrentMediaTime()
+        let elapsed = now - lastSettle
+        lastSettle = now
+        let rest = restingShift
+        scrollShift = rest + (scrollShift - rest) * CGFloat(exp(-elapsed / Self.settleTime))
+        if abs(scrollShift - rest) < 0.5 {
+            scrollShift = rest
+            settleTimer?.invalidate()
+            settleTimer = nil
+        }
         redraw()
     }
 
@@ -262,12 +391,12 @@ final class StripView: NSView {
             return
         }
         let point = convert(event.locationInWindow, from: nil)
-        if !label.isHidden, label.frame.contains(point) {
-            onLabelClick()
-            return
-        }
         if let at = frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) }), point.x >= 0, point.x <= bounds.width {
             onClick(cells[at].photo, event.modifierFlags.contains(.shift))
         }
     }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
 }

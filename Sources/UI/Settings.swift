@@ -8,6 +8,7 @@ enum Preferences {
     static let infoVisibleKey = "infoVisible"
     static let deleteFollowsDirectionKey = "deleteFollowsDirection"
     static let stripVisibleKey = "stripVisible"
+    static let stripDimmingKey = "stripOtherOpacity"
     private static let stripPlacementKey = "stripPlacement"
 
     static var diskCacheGigabytes: Int {
@@ -30,6 +31,13 @@ enum Preferences {
     static var stripVisible: Bool {
         get { UserDefaults.standard.object(forKey: stripVisibleKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: stripVisibleKey) }
+    }
+
+    /// How opaque the strip's other photos are, from 0.2 to 1: the current and the selected
+    /// ones are always whole.
+    static var stripOtherOpacity: Double {
+        get { (UserDefaults.standard.object(forKey: stripDimmingKey) as? Double ?? 0.7).clamped(0.2, 1) }
+        set { UserDefaults.standard.set(newValue, forKey: stripDimmingKey) }
     }
 
     /// nil until the user first moves the strip.
@@ -213,9 +221,11 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.deleteFollowsDirectionKey) private var deleteFollowsDirection = false
     @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
     @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
+    @AppStorage(Preferences.stripDimmingKey) private var stripOtherOpacity = 0.7
     @State private var confirmsClear = false
     let onInfoVisibleChange: (Bool) -> Void
     let onStripVisibleChange: (Bool) -> Void
+    let onStripOpacityChange: (Double) -> Void
 
     var body: some View {
         Form {
@@ -224,6 +234,16 @@ struct GeneralSettingsView: View {
                     .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
                 Toggle("Afficher la bande d'aperçu", isOn: $stripVisible)
                     .onChange(of: stripVisible) { _, value in onStripVisibleChange(value) }
+                LabeledContent("Opacité des autres photos de la bande") {
+                    HStack {
+                        Slider(value: $stripOtherOpacity, in: 0.2...1, step: 0.05)
+                            .frame(width: 140)
+                        Text("\(Int((stripOtherOpacity * 100).rounded())) %")
+                            .monospacedDigit()
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                }
+                .onChange(of: stripOtherOpacity) { _, value in onStripOpacityChange(value) }
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
             }
 
@@ -636,7 +656,8 @@ enum SettingsWindow {
             associations: FileAssociations(),
             cache: CacheSettings(disk: disk),
             onInfoVisibleChange: { [weak viewer] in viewer?.setInfoVisible($0) },
-            onStripVisibleChange: { [weak viewer] in viewer?.setStripVisible($0) }
+            onStripVisibleChange: { [weak viewer] in viewer?.setStripVisible($0) },
+            onStripOpacityChange: { [weak viewer] in viewer?.setStripOtherOpacity($0) }
         )
         tabs.addTabViewItem(tab("Général", "gearshape", general))
         tabs.addTabViewItem(tab("Raccourcis", "keyboard", ShortcutsSettingsView(store: shortcuts)))
@@ -646,4 +667,8 @@ enum SettingsWindow {
         window.isReleasedWhenClosed = false
         return window
     }
+}
+
+private extension Double {
+    func clamped(_ low: Double, _ high: Double) -> Double { Swift.min(Swift.max(self, low), high) }
 }
