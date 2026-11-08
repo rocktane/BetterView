@@ -43,7 +43,7 @@ Non modifiables : double-clic (100 % ou ajusté), pincement, défilement et glis
 
 ## Bande d'aperçu et comparaison
 
-La bande montre 4 photos de chaque côté de la photo courante. Clic : aller à cette photo. Maj+clic : la sélectionner pour la comparer. Glisser, y compris depuis une vignette : déplacer la bande. Elle disparaît pendant un zoom et sa position est conservée.
+La bande est une pellicule : chaque vignette a la forme de sa photo, la photo courante reste au milieu, et la bande cesse de défiler aux extrémités du dossier pour rester remplie. Clic : aller à cette photo. Maj+clic : la sélectionner pour la comparer. Glisser, y compris depuis une vignette : déplacer la bande. Elle disparaît pendant un zoom et sa position est conservée.
 
 `C` compare, dans cet ordre de préférence : les photos sélectionnées, la rafale de la photo courante (photos consécutives prises à 2 s d'écart au plus), ou la photo courante et la suivante.
 

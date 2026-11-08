@@ -95,10 +95,9 @@ private final class FloatingStripPanel: NSPanel {
 /// The strip's own small window, detached from the viewer, whose size follows each photo.
 @MainActor
 final class StripPanel {
-    private static let metrics = StripView.Metrics(cell: CGSize(width: 78, height: 52), gap: 5, top: 9)
+    private static let metrics = StripView.Metrics(height: 66, gap: 3, top: 7, fadesEdges: true)
     private static let height: CGFloat = 92
-    private static let inset: CGFloat = 10
-    private static let wantedCells = 9
+    private static let wantedWidth: CGFloat = 820
 
     let view = StripView(metrics: StripPanel.metrics)
     private let panel: NSPanel
@@ -106,9 +105,6 @@ final class StripPanel {
     private var dragOrigin: CGPoint?
     /// The screen the viewer is on, for a first placement.
     var preferredScreen: () -> NSScreen? = { nil }
-
-    /// An odd number that fits the screen, so the current photo has a middle.
-    private(set) var cellCount = StripPanel.wantedCells
 
     init() {
         panel = FloatingStripPanel(
@@ -129,6 +125,7 @@ final class StripPanel {
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.94).cgColor
         view.layer?.cornerRadius = 12
+        view.layer?.masksToBounds = true
         view.layer?.borderColor = NSColor(white: 1, alpha: 0.1).cgColor
         view.layer?.borderWidth = 1
         panel.contentView = view
@@ -161,10 +158,7 @@ final class StripPanel {
     func fitToScreen() {
         guard let screen else { return }
         let visible = screen.visibleFrame
-        let fitting = StripView.capacity(metrics: Self.metrics, width: visible.width - 2 * StripMagnet.dockGap - 2 * Self.inset)
-        cellCount = max(1, min(Self.wantedCells, fitting.isMultiple(of: 2) ? fitting - 1 : fitting))
-        let width = CGFloat(cellCount) * (Self.metrics.cell.width + Self.metrics.gap) - Self.metrics.gap + 2 * Self.inset
-        let size = CGSize(width: width, height: Self.height)
+        let size = CGSize(width: min(Self.wantedWidth, visible.width - 2 * StripMagnet.dockGap).rounded(), height: Self.height)
         let origin = StripMagnet.origin(for: placement, size: size, screen: screen.frame, visible: visible)
         panel.setFrame(CGRect(origin: origin, size: size), display: panel.isVisible)
     }

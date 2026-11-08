@@ -481,31 +481,31 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
         strip.setVisible(true)
         let photos = session.list.photos
-        let half = strip.cellCount / 2
-        let cells = (-half...half).map { offset -> StripCell? in
-            let at = index + offset
-            guard photos.indices.contains(at) else { return nil }
+        // More than the strip can show even with portrait photos: it cuts the rest at its edges.
+        let shown = max(index - Self.stripReach, 0)...min(index + Self.stripReach, photos.count - 1)
+        let cells = shown.map { at -> StripCell in
             let photo = photos[at]
             let selected = stripSelection.contains(photo.path)
             return StripCell(
                 photo: photo,
                 image: thumbnails.image(for: photo),
-                mark: offset == 0 ? .current : (selected ? .selected : .none),
-                opacity: offset == 0 || selected ? 1 : 0.6
+                mark: at == index ? .current : (selected ? .selected : .none),
+                opacity: at == index || selected ? 1 : 0.7
             )
         }
-        // Thumbnails beyond the edges too, so that moving along finds them ready.
-        let ahead = (1...(half + Self.thumbnailMargin)).flatMap { [index + $0 * direction, index - $0 * direction] }
+        // Nearest first, and beyond the edges, so that moving along finds them ready.
+        let ahead = (1...(Self.stripReach + Self.thumbnailMargin)).flatMap { [index + $0 * direction, index - $0 * direction] }
         thumbnails.request(([index] + ahead).compactMap { photos.indices.contains($0) ? photos[$0] : nil })
 
         let reach = max(index - Self.burstReach, 0)...min(index + Self.burstReach, photos.count - 1)
         let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
             .map { ($0.lowerBound + reach.lowerBound)...($0.upperBound + reach.lowerBound) }
-        // Positions in the strip, cut to what it shows.
-        let brackets = bursts.compactMap { burst -> ClosedRange<Int>? in
-            let from = max(burst.lowerBound, index - half), to = min(burst.upperBound, index + half)
-            return from <= to ? (from - index + half)...(to - index + half) : nil
+        // Positions among the cells, cut to what they cover.
+        func cellRange(_ burst: ClosedRange<Int>) -> ClosedRange<Int>? {
+            let from = max(burst.lowerBound, shown.lowerBound), to = min(burst.upperBound, shown.upperBound)
+            return from <= to ? (from - shown.lowerBound)...(to - shown.lowerBound) : nil
         }
+        let brackets = bursts.compactMap(cellRange)
         let compareKey = view.shortcuts.keys(for: .compare).first?.label
         let picked = selectedPhotos().count
         var label: String?
@@ -514,14 +514,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
             label = "\(picked) sélectionnées"
         } else if let burst = bursts.first(where: { $0.contains(index) }) {
             label = "Rafale de \(burst.count)"
-            let from = max(burst.lowerBound, index - half), to = min(burst.upperBound, index + half)
-            labelRange = (from - index + half)...(to - index + half)
+            labelRange = cellRange(burst)
         }
         if let text = label, let compareKey { label = "\(text)  ·  \(compareKey) pour comparer" }
-        strip.view.update(cells: cells, brackets: brackets, label: label, labelRange: labelRange)
+        strip.view.update(
+            cells: cells, anchor: index - shown.lowerBound,
+            cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
+            brackets: brackets, label: label, labelRange: labelRange
+        )
     }
 
-    private static let thumbnailMargin = 8
+    private static let stripReach = 14
+    private static let thumbnailMargin = 6
 
     private func selectedPhotos() -> [PhotoKey] {
         guard !stripSelection.isEmpty else { return [] }
@@ -670,15 +674,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// Every photo of the comparison: its slot number shows through the marks and the opacity.
     private func updateComparisonRow() {
         guard let model = comparison else { return }
-        // A long burst scrolls to keep the focused photo in view.
-        let capacity = comparisonView.rowCapacity
-        var members = model.members
-        if members.count > capacity, let focused = model.focused, let at = members.firstIndex(of: focused) {
-            let start = min(max(at - capacity / 2, 0), members.count - capacity)
-            members = Array(members[start..<(start + capacity)])
-        }
+        let members = model.members
         thumbnails.request(members)
-        let cells = members.map { photo -> StripCell? in
+        let cells = members.map { photo -> StripCell in
             let inSlot = model.shown.contains(photo)
             let isWaiting = model.waiting.contains(photo)
             return StripCell(
@@ -689,7 +687,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             )
         }
         let waiting = model.waiting.count
-        comparisonView.row.update(cells: cells, label: nil)
+        // Centred when it fits; a long burst keeps the focused photo in the middle instead.
+        comparisonView.row.update(cells: cells, anchor: model.focused.flatMap { members.firstIndex(of: $0) })
         comparisonView.setRowNote(waiting > 0 ? "\(waiting) en attente" : nil)
     }
 

@@ -222,7 +222,7 @@ final class ComparisonView: NSView {
     private static let titleHeight: CGFloat = 28
     private static let rowHeight: CGFloat = 50
     private static let hintHeight: CGFloat = 26
-    private static let rowMetrics = StripView.Metrics(cell: CGSize(width: 48, height: 32), gap: 4, top: 9)
+    private static let rowMetrics = StripView.Metrics(height: 36, gap: 3, top: 7, fadesEdges: false)
 
     /// nil is fit-to-slot. Otherwise 1.0 means one image pixel per screen pixel.
     private(set) var zoom: CGFloat?
@@ -240,8 +240,6 @@ final class ComparisonView: NSView {
     private var toastToken = 0
     let row = StripView(metrics: ComparisonView.rowMetrics)
 
-    /// What fits in the row, for choosing the photos to list.
-    var rowCapacity: Int { StripView.capacity(metrics: Self.rowMetrics, width: bounds.width - 16) }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

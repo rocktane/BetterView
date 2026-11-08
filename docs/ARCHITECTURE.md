@@ -146,7 +146,7 @@ La fenêtre change de largeur à chaque photo : la bande vit donc dans son propr
 
 **Vignettes** (`ThumbnailStore`) : 200 px, en priorité basse, sur leur propre file, 2 à la fois, et ce qui attend est remplacé à chaque navigation. Elles ne viennent pas du pipeline : P est évincé dès que S existe, et garder des frames pour la bande retiendrait de la mémoire hors budget. Environ 35 Mo au maximum.
 
-**Mise à jour** : après l'image, au plus une fois par tour de boucle, en affectant des pointeurs à des layers. Chaque cellule garde sa place quelle que soit l'orientation, donc rien ne se décale à l'arrivée d'une vignette.
+**Mise à jour** : après l'image, au plus une fois par tour de boucle, en affectant des pointeurs à des layers. Chaque vignette a la largeur de sa photo à hauteur fixe ; avant l'arrivée de sa vignette, elle prend du 3:2. Les vignettes sont demandées bien au-delà des bords, donc ce décalage ne se voit qu'en sautant loin. La photo courante reste au milieu, sauf aux extrémités du dossier où la bande s'arrête pour ne pas laisser de vide, et les vignettes coupées par les bords s'estompent.
 
 **Rafales** (`PhotoGroups`) : photos consécutives prises à 2 s d'écart au plus, d'après l'heure EXIF déjà lue par `MetadataStore`. Elles sont cherchées à ±12 photos de la courante, ce qui borne une rafale à 25 photos. Une rafale qui dépasse ce rayon n'est donc vue qu'en partie. Aucune analyse d'image : c'est prévisible, mais deux cadrages proches pris à 10 s d'écart ne sont pas regroupés (Maj+clic couvre ce cas).
 
