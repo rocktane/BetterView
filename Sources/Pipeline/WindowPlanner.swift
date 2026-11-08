@@ -19,6 +19,16 @@ struct PlanInput: Sendable {
     var screenAhead = 20
     var screenBehind = 8
     var previewRadius = 25
+    /// Set while comparing: this replaces the usual window around the current photo.
+    var comparison: ComparisonPlan?
+}
+
+/// The positions in the list of the photos being compared.
+struct ComparisonPlan: Equatable, Sendable {
+    /// In a slot on screen, the focused one first.
+    var shown: [Int]
+    /// Next in line: they replace a deleted photo at once if they are ready.
+    var waiting: [Int]
 }
 
 struct PlanItem: Equatable, Sendable {
@@ -36,6 +46,10 @@ enum WindowPlanner {
         guard input.count > 0, input.current >= 0, input.current < input.count else { return [] }
         var builder = Builder(input: input)
         let current = input.current
+        if let comparison = input.comparison {
+            builder.addComparison(comparison)
+            return builder.items
+        }
 
         // 1. What the photo on screen is waiting for.
         builder.add(current, .preview, visible: true)
@@ -102,6 +116,26 @@ enum WindowPlanner {
             for distance in 1...max(ahead, behind, 1) {
                 if distance <= ahead { add(center + distance * input.direction, tier) }
                 if distance <= behind { add(center - distance * input.direction, tier) }
+            }
+        }
+
+        /// Everything on screen is the visible demand. Under memory pressure, only the focused
+        /// photo stays sharp; the others keep what lets them be recognised.
+        mutating func addComparison(_ comparison: ComparisonPlan) {
+            let focused = comparison.shown.first
+            for index in comparison.shown {
+                add(index, .preview, visible: true)
+                if input.memory != .critical || index == focused { add(index, .screen, visible: true) }
+            }
+            if input.zoomed {
+                for index in comparison.shown where input.memory == .normal || index == focused {
+                    add(index, .full, visible: true)
+                }
+            }
+            guard input.memory == .normal else { return }
+            for index in comparison.waiting.prefix(ComparisonModel.slotCount) {
+                add(index, .preview)
+                add(index, .screen)
             }
         }
 

@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var viewer: ViewerController!
     private var settingsWindow: NSWindow?
+    private let shortcuts = ShortcutStore()
+    private var shortcutItems: [(action: ShortcutAction, item: NSMenuItem)] = []
     private var terminating = false
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -13,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Decoders.warmUp()
         viewer = ViewerController(diskDirectory: Benchmark.diskDirectory ?? DiskCache.defaultDirectory)
         NSApp.mainMenu = buildMenu()
+        applyShortcuts(shortcuts.map)
+        shortcuts.onChange = { [weak self] in self?.applyShortcuts($0) }
         viewer.session.onDrained = { [weak self] in
             guard let self, self.terminating else { return }
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -58,7 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let disk = viewer.pipeline.disk
+        let viewer = viewer!
         let root = SettingsView(
+            shortcuts: shortcuts,
+            onInfoVisibleChange: { viewer.setInfoVisible($0) },
+            onStripVisibleChange: { viewer.setStripVisible($0) },
             onCacheSizeChange: { disk.setBudget($0 * 1_000_000_000) },
             onClearCache: { disk.clear() }
         )
@@ -71,15 +79,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = window
     }
 
-    @objc private func undo(_ sender: Any?) { viewer.undo() }
-    @objc private func deleteCurrent(_ sender: Any?) {
-        if NSApp.currentEvent?.isARepeat != true { viewer.deleteCurrent() }
+    @objc private func performShortcut(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String, let action = ShortcutAction(rawValue: name) else { return }
+        if action.repeats || NSApp.currentEvent?.isARepeat != true { viewer.perform(action) }
     }
-    @objc private func next(_ sender: Any?) { viewer.step(1) }
-    @objc private func previous(_ sender: Any?) { viewer.step(-1) }
-    @objc private func zoom(_ sender: Any?) { viewer.toggleZoom() }
-    @objc private func zoomToFocus(_ sender: Any?) { viewer.zoomToFocus() }
-    @objc private func fullScreen(_ sender: Any?) { viewer.window.toggleFullScreen(nil) }
+
+    /// The view and the menu always answer to the keys chosen in the settings.
+    private func applyShortcuts(_ map: ShortcutMap) {
+        viewer.setShortcuts(map)
+        for (action, item) in shortcutItems {
+            let equivalent = map.menuBinding(for: action)?.menuEquivalent
+            item.keyEquivalent = equivalent?.key ?? ""
+            item.keyEquivalentModifierMask = equivalent?.modifiers ?? []
+        }
+    }
 
     // MARK: Menu
 
@@ -99,6 +112,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             entry.target = self
             return entry
         }
+        func action(_ action: ShortcutAction, title: String? = nil) -> NSMenuItem {
+            let entry = NSMenuItem(title: title ?? action.title, action: #selector(performShortcut), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = action.rawValue
+            shortcutItems.append((action, entry))
+            return entry
+        }
 
         let quit = NSMenuItem(title: "Quitter BetterView", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         submenu("BetterView", [
@@ -108,20 +128,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         submenu("Fichier", [
             item("Ouvrir…", #selector(openPanel), "o"),
-            item("Mettre à la corbeille", #selector(deleteCurrent), "\u{8}"),
+            action(.delete),
+            action(.revealInFinder),
             .separator(),
             NSMenuItem(title: "Fermer", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"),
         ])
         submenu("Édition", [
-            item("Annuler la suppression", #selector(undo), "z"),
+            action(.undo),
         ])
         submenu("Présentation", [
-            item("Suivante", #selector(next), String(UnicodeScalar(NSRightArrowFunctionKey)!), []),
-            item("Précédente", #selector(previous), String(UnicodeScalar(NSLeftArrowFunctionKey)!), []),
+            action(.next),
+            action(.previous),
+            action(.jumpForward),
+            action(.jumpBackward),
+            action(.first),
+            action(.last),
             .separator(),
-            item("100 % / Ajusté", #selector(zoom), "z", []),
-            item("100 % sur le point AF enregistré", #selector(zoomToFocus), "a", []),
-            item("Plein écran", #selector(fullScreen), "f", []),
+            action(.toggleZoom),
+            action(.zoomToFocus),
+            action(.toggleInfo),
+            action(.toggleStrip),
+            .separator(),
+            action(.compare),
+            action(.keepSelected),
         ])
         return main
     }

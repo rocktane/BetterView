@@ -33,7 +33,7 @@ final class Benchmark {
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
             .filter { $0.lowercased().hasSuffix(".arw") }.sorted()
         var orientations: [Int: Int] = [:]
-        var worstMean = 0.0, worstMax = 0, compared = 0, failures = 0
+        var worstMean = 0.0, worstMax = 0, compared = 0, failures = 0, metadataFailures = 0
         for name in names {
             let path = folder.appendingPathComponent(name).path
             guard let key = PhotoKey.read(path: path),
@@ -48,6 +48,10 @@ final class Benchmark {
                 continue
             }
             orientations[parsed.orientation, default: 0] += 1
+            if !Self.sameMetadata(PhotoMetadata.readARW(key.url), PhotoMetadata.readImageIO(key.url)) {
+                metadataFailures += 1
+                print("METADATA MISMATCH \(name)")
+            }
             direct.surface.lock(options: .readOnly, seed: nil)
             reference.surface.lock(options: .readOnly, seed: nil)
             let a = direct.surface.baseAddress.assumingMemoryBound(to: UInt8.self)
@@ -72,6 +76,20 @@ final class Benchmark {
         }
         print(String(format: "verified %d files, failures %d, orientations %@, worst mean diff %.2f, worst pixel diff %d",
                      compared, failures, String(describing: orientations.sorted { $0.key < $1.key }), worstMean, worstMax))
+        print("metadata compared with ImageIO: \(compared + failures - metadataFailures) identical, \(metadataFailures) different")
+    }
+
+    private nonisolated static func sameMetadata(_ a: PhotoMetadata?, _ b: PhotoMetadata?) -> Bool {
+        guard let a, let b else { return false }
+        func close(_ x: Double?, _ y: Double?) -> Bool {
+            switch (x, y) {
+            case (nil, nil): true
+            case let (x?, y?): abs(x - y) < 0.0001
+            default: false
+            }
+        }
+        return a.date == b.date && a.iso == b.iso && close(a.exposure, b.exposure)
+            && close(a.fNumber, b.fNumber) && close(a.focalLength, b.focalLength)
     }
 
     /// Prints the AF position read by the app for each ARW, raw then upright, and checks it

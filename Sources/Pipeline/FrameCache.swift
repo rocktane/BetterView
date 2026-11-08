@@ -65,6 +65,12 @@ final class FrameCache {
     }
 
     func budget(_ tier: Tier) -> Int { shelves[tier.rawValue].budget }
+
+    func setBudget(_ tier: Tier, _ budget: Int) {
+        shelves[tier.rawValue].budget = budget
+        trim(tier.rawValue, keeping: nil)
+    }
+
     func bytes(_ tier: Tier) -> Int { shelves[tier.rawValue].bytes }
     var totalBytes: Int { shelves.reduce(0) { $0 + $1.bytes } }
 

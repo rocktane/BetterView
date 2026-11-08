@@ -6,8 +6,9 @@ Visionneuse RAW macOS native, mono-usage : trier des photos Sony A7C le plus vit
 
 - Ouvrir un ARW (double-clic Finder) ou un dossier, passer d'une photo à l'autre sans latence perceptible.
 - Supprimer en une touche.
-- Réglages : devenir l'app par défaut pour les formats RAW courants, quelques raccourcis.
-- Hors périmètre : édition, catalogue, notation, filmstrip, métadonnées avancées, export, sync, sandbox, Mac App Store.
+- Réglages : devenir l'app par défaut pour les formats RAW courants, raccourcis configurables.
+- Bande d'aperçu et comparaison de photos proches, pour garder la meilleure.
+- Hors périmètre : édition, catalogue, notation, métadonnées avancées, export, sync, sandbox, Mac App Store.
 - Utilisateur unique, usage personnel. Machine : M1 Pro 8 cœurs, 16 Go, écran 3024×1964, macOS 27.
 
 ## 2. Mesures réelles (24 Mpx A7C, ARW compressés 25 Mo, SSD interne, cache de pages chaud)
@@ -143,6 +144,39 @@ Commande A : 100 % sur la position AF enregistrée par le boîtier. Le zoom Z (c
 - **Repère.** Un cercle fin blanc, 22 pt, avec ombre, affiché seulement dans ce mode. Pas de vert ni de cadre AF : rien ne doit laisser croire que la mise au point y est garantie.
 - **Centre exact.** Sur 562 ARW réels, 71 ont exactement (3000, 2000) : 56 en zone AF « Centre » (attendu), 2 en suivi des visages avec la zone « Centre », 13 en « Large », mode où les mêmes valeurs reviennent souvent (x = 1818, 2053, 3000, 3946, 4181 ; y = 1341, 1500, 2000, 2658), comme des positions de collimateurs dont le centre ferait partie. Rien ne montre un repli faute de position : le centre est traité comme une vraie position. Le zoom serait de toute façon identique.
 - **Ce que la valeur ne dit pas.** Exemple observé (A7C03320, suivi des visages, 3 visages détectés) : la position enregistrée tombe au-dessus d'une tête, hors des cadres de visage que le boîtier a lui-même enregistrés. La vue montre la valeur du boîtier telle quelle.
+**Forme de la fenêtre** (`WindowShape`, `ViewerController.applyWindowShape`) : la fenêtre prend le ratio de la photo, ce qui supprime les bordures sans rien recadrer. Un rendu lui donne toujours sa forme exacte ; un aperçu, dont la taille vient d'un en-tête légèrement différent, ne la change que si le ratio s'écarte de plus de 1 %. Elle ne change pas pendant un zoom, pour comparer la mise au point sans que rien ne bouge. L'image couvre toujours la vue (le plus grand des deux rapports), donc un arrondi ne peut pas ouvrir de bande. Le tier S reste ajusté à l'écran : une photo portrait est affichée à sa pleine définition de rendu.
+
+**Fenêtre seule** : aucun plein écran, natif ou non, et donc aucune touche pour y aller. La barre de titre est invisible. Glisser la photo déplace la fenêtre, sauf en zoom où cela déplace l'image. La fenêtre conserve sa hauteur d'une orientation à l'autre, seule sa largeur change, et les contraintes du bandeau restent sous les priorités de la fenêtre, pour que le texte ne lui impose pas de largeur minimale.
+
+**Survol** : boutons, trois lignes en bas à gauche (nom ; ISO, vitesse, ouverture, focale ; date), position en bas à droite et marqueur « Aperçu » ne s'affichent que si le pointeur est sur la photo. L'état est relu à chaque changement de forme, car une fenêtre qui change sous un pointeur immobile n'envoie aucun événement. Le message d'erreur de décodage reste toujours visible : il porte le nom du fichier qu'une suppression viserait.
+
+**Informations** : `MetadataStore` lit l'EXIF hors main, un fichier à la fois, le plus récent d'abord, et anticipe sur les photos voisines. Pour les `.arw`, lecture directe des 64 premiers Ko (`PhotoMetadata.parse`), sans charger le plugin RAW d'ImageIO ; repli sur ImageIO sinon. Vérifié sur 133 fichiers réels par `--verify-previews` : valeurs identiques à ImageIO. La date reste celle de l'appareil, l'EXIF n'ayant pas de fuseau.
+
+
+
+### Bande d'aperçu
+
+La fenêtre change de largeur à chaque photo : la bande vit donc dans son propre `NSPanel` (`StripPanel`), flottant et sans activation. Il ne devient jamais fenêtre clé, donc le clavier reste à la visionneuse, et il se masque quand l'app passe en arrière-plan. La bande disparaît pendant un zoom, pour ne pas couvrir ce qu'on inspecte.
+
+**Aimants** (`StripMagnet`, pur et testé) : le bord du Dock se déduit de l'écart entre `frame` et `visibleFrame` (bas si le Dock est masqué) ; le centre est celui de `visibleFrame`, sur chaque axe indépendamment. La position proposée suit toujours le pointeur : s'éloigner au-delà de la portée (36 pt pour le Dock, 24 pt pour le centre) suffit à décrocher. C'est `StripPlacement` qui est mémorisé, avec les aimants qui retiennent la bande, et non la seule position : une bande retenue suit le Dock et les changements d'écran.
+
+**Vignettes** (`ThumbnailStore`) : 200 px, en priorité basse, sur leur propre file, 2 à la fois, et ce qui attend est remplacé à chaque navigation. Elles ne viennent pas du pipeline : P est évincé dès que S existe, et garder des frames pour la bande retiendrait de la mémoire hors budget. Environ 35 Mo au maximum.
+
+**Mise à jour** : après l'image, au plus une fois par tour de boucle, en affectant des pointeurs à des layers. Chaque vignette a la largeur de sa photo à hauteur fixe ; avant l'arrivée de sa vignette, elle prend du 3:2. Les vignettes sont demandées bien au-delà des bords, donc ce décalage ne se voit qu'en sautant loin. La photo courante reste au milieu, sauf aux extrémités du dossier où la bande s'arrête pour ne pas laisser de vide, et les vignettes coupées par les bords s'estompent.
+
+**Rafales** (`PhotoGroups`) : photos consécutives prises à 2 s d'écart au plus, d'après l'heure EXIF déjà lue par `MetadataStore`. Elles sont cherchées à ±12 photos de la courante, ce qui borne une rafale à 25 photos. Une rafale qui dépasse ce rayon n'est donc vue qu'en partie. Aucune analyse d'image : c'est prévisible, mais deux cadrages proches pris à 10 s d'écart ne sont pas regroupés (Maj+clic couvre ce cas).
+
+### Comparaison
+
+Un mode de la même fenêtre : `ComparisonView` remplace la vue de contenu, la fenêtre prend presque tout l'écran, puis retrouve son cadre exact en sortant. Le nom d'autosave est retiré pendant ce temps, pour que ce grand cadre ne revienne pas au lancement suivant.
+
+`ComparisonModel` (pur, testé) tient 4 emplacements et une file d'attente. Une photo retirée est remplacée sur place par la suivante en attente. À 4 ou 3 photos la grille reste en 2×2 avec une case vide, pour que rien ne bouge ; à 2 elles se partagent l'espace. Quand il n'en reste qu'une, retour à la vue normale, sur cette photo.
+
+**Sécurité** (principe 4) : la suppression n'agit que sur un emplacement qui montre vraiment sa photo. « Garder celle-ci » exige que toutes les photos affichées soient visibles, et ne touche jamais la file d'attente, que personne n'a encore vue. Un fichier modifié sur le disque n'est pas supprimé, comme ailleurs.
+
+**Annulation** : `LibrarySession.trash(_:)` donne le même groupe aux opérations d'un même geste, et ⌘Z restaure tout le groupe. Toute photo retirée qui réapparaît dans la liste (annulation, échec de la corbeille, fichier modifié) retrouve son emplacement dans la comparaison, quel que soit l'ordre d'arrivée. Volume sans corbeille : une alerte par photo, comme pour une suppression seule.
+
+**Pipeline** : `PlanInput.comparison` remplace la fenêtre autour de la photo courante. Toutes les photos affichées sont une demande visible, et leur S est préparé pour les 4 suivantes en attente. En zoom, F de chacune, la photo choisie d'abord. Un seul rendu F à la fois (section 11), soit environ 1,3 s pour 4 photos au premier zoom, pendant lesquelles chaque emplacement affiche S et un marqueur. Le budget F est doublé pendant la comparaison pour que 4 photos tiennent, puis rétabli. Sous pression mémoire, seule la photo choisie reste nette, et les autres emplacements relâchent aussitôt leurs surfaces évincées. Une photo sans aperçu embarqué garde son S déjà rendu ; si elle n'en avait pas encore, l'emplacement affiche son nom, sa suppression reste refusée, et elle se rend dès qu'on la choisit ou que la pression retombe.
 
 ### PhotoList et dossier
 
@@ -161,7 +195,7 @@ Photo disparue → retirée, on passe à la suivante.
 Chaque suppression crée d'abord un `TrashOp { photo, indexOrigine, état: pending|done(trashURL)|failed, undoDemandé }`, sur le main.
 
 1. Touche Supprimer (`keyDown` non répété : **`isARepeat` ignoré**, pour que maintenir la touche ne vide pas le dossier), acceptée seulement si la photo est visible (principe 4).
-2. Tombstone posé, retrait optimiste de la liste, affichage synchrone de la suivante dans le sens de navigation. Aucune confirmation : c'est réversible. La photo n'étant plus dans la liste, une double suppression est impossible.
+2. Tombstone posé, retrait optimiste de la liste, affichage synchrone de la photo suivante du dossier (ou dans le sens de navigation, selon le réglage ; la précédente si c'était la dernière). Aucune confirmation : c'est réversible. La photo n'étant plus dans la liste, une double suppression est impossible.
 3. File série (FIFO) : la révision sur disque est revérifiée. Différente de `key` (fichier remplacé entre-temps) → **pas de suppression**, photo réinsérée, alerte. Sinon `FileManager.trashItem`, l'URL en corbeille est conservée dans l'opération.
 4. Échec : réinsertion à sa place triée, alerte. Volume sans corbeille (SMB) : alerte proposant une suppression **définitive**, confirmée à chaque fois, et qui n'entre jamais dans la pile d'annulation.
 5. ⌘Z prend la dernière opération. Si `pending`, marque `undoDemandé` : l'annulation s'exécute à la fin du trash (succès → restauration, échec → déjà réinsérée). Si `done`, met le déplacement retour dans la même file. `moveItem` ne remplace jamais : si le chemin d'origine est occupé, erreur explicite. Réinsertion et navigation dessus.
@@ -176,21 +210,7 @@ Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en 
 - Réglages : une case par format, `NSWorkspace.setDefaultApplication(at:toOpen:completion:)`, appels sérialisés par type, erreurs affichées (le système peut demander un consentement ou refuser). L'état affiché est relu via `urlForApplication(toOpen:)` après chaque changement, jamais stocké. Le bundle précédent est mémorisé ; il n'est restauré à la désactivation que si BetterView est toujours le gestionnaire effectif et que cette app existe encore.
 - Non sandboxé (requis : un double-clic ne donne accès qu'au fichier en sandbox, pas à ses voisins). Hardened runtime. Signature locale, script d'installation vers `/Applications`.
 
-Raccourcis, en dur, visibles dans le menu :
-
-| Touche | Action |
-|---|---|
-| ← → | Précédente, suivante |
-| ⌫ ou X | Mettre à la corbeille |
-| ⌘Z | Annuler |
-| Z ou double-clic | 100 % / ajusté, centré sur le curseur |
-| A | 100 % sur le point AF enregistré, suivi photo après photo tant que ce zoom reste actif |
-| Pincement, défilement | Zoom, déplacement |
-| F | Plein écran |
-| I | Nom, EXIF de base, tier |
-| Début, Fin | Première, dernière |
-| ⌘O | Ouvrir |
-| ⌘, | Réglages |
+Raccourcis : `ShortcutMap` associe chaque action à ses touches, enregistrées dans `UserDefaults` ; une touche n'appartient qu'à une action, et l'attribuer ailleurs la retire de la première. Les lettres sont stockées par caractère (valable en AZERTY), les touches spéciales par code. La vue répond à toutes les touches, le menu affiche la première. ⌘Q, ⌘W, ⌘O et ⌘, sont réservés. Une touche sans modificateur n'entre jamais dans le menu pour la suppression : elle agirait aussi depuis la fenêtre de réglages. La liste par défaut est dans le README.
 
 ## 7. Objectifs vérifiables
 
@@ -280,5 +300,8 @@ Résultats de `--bench` (Release, M1 Pro 16 Go, 133 ARW sur SSD interne, cache d
 | Pic d'empreinte, pendant les rendus | non fixé | 4,2 Go, transitoire | À surveiller |
 
 Point AF, `--bench` relancé (Release, mêmes 133 ARW, machine partagée avec d'autres compilations) en alternant `main` et la branche, deux passes chacun : navigation au p99 0,7-2,2 ms contre 0,7-2,1 ms, arrivées en S 100 % dans les deux cas, touche maintenue 38,7 % S et 0 écran vide dans les deux, saut sans cache p95 464-521 ms contre 491-566 ms. Le lancement varie de 216 à 622 ms d'une passe à l'autre pour les deux versions (machine chargée) : pas d'écart attribuable. Une passe isolée de la branche, sous forte charge extérieure, a été écartée (saut à 2,5 s).
+Fenêtre à la forme de la photo, avec une immersion plein écran depuis retirée (mesures à refaire), même machine, même dossier, version précédente puis version actuelle (`--bench`, un passage chacun) : navigation à 1 photo/s p99 1,0 → 3,0 ms (le changement de forme de la fenêtre, objectif de 8 ms tenu), touche maintenue p99 2,0 → 1,9 ms, suppression p99 1,0 → 1,3 ms, lancement 358 → 218 ms. Zoom immédiat p50 452 → 742 ms sur 6 mesures seulement : écart non expliqué, à reconfirmer.
+
+Bande d'aperçu affichée, même machine, même dossier, `main` puis cette version (`--bench`, un passage chacun, donc comparaison indicative) : navigation à 1 photo/s p99 9,7 → 5,0 ms, touche maintenue p99 2,5 → 2,1 ms, suppression p99 2,2 → 2,5 ms, empreinte au repos 1,67 → 1,60 Go. Aucune dégradation visible ; l'écart à 1 photo/s reste dans le bruit d'un passage unique.
 
 Non mesuré : latence jusqu'à l'image réellement présentée à l'écran (seul le commit l'est), lecture à froid, carte SD, volume SMB, écran 6K.
