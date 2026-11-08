@@ -567,10 +567,15 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 offsets.append(-distance * direction)
             }
         }
+        var positions = offsets.map { index + $0 }
+        // A strip browsed elsewhere also needs the dates that outline its bursts. One request
+        // for both: each replaces the last.
+        if let center = browsedIndex() {
+            positions += [center] + (1...Self.burstReach).flatMap { [center + $0, center - $0] }
+        }
         var seen = Set<Int>()
-        metadata.request(offsets.compactMap { offset -> PhotoKey? in
-            let at = index + offset
-            return photos.indices.contains(at) && seen.insert(at).inserted ? photos[at] : nil
+        metadata.request(positions.compactMap { at -> PhotoKey? in
+            photos.indices.contains(at) && seen.insert(at).inserted ? photos[at] : nil
         })
     }
 
@@ -623,11 +628,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
         let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
         thumbnails.request(wanted.map { photos[$0] })
-        // Away from the current photo, the dates that outline its bursts are read here.
-        if center != index {
-            metadata.request(([center] + (1...Self.burstReach).flatMap { [center + $0, center - $0] })
-                .filter(photos.indices.contains).map { photos[$0] })
-        }
 
         let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
         let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
@@ -671,6 +671,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let center = browsedIndex() ?? index
         let target = min(max(center + delta, 0), photos.count - 1)
         stripBrowse = target == index ? nil : (photos[target], current)
+        requestMetadata()
     }
 
     private static let stripReach = 14
