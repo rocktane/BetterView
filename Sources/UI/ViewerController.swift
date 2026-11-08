@@ -304,6 +304,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
+        // Known protected (camera « Protéger », Finder lock, read-only): refused at once, no queue.
+        let protection = session.protection(of: current)
+        guard protection.isEmpty else {
+            view.flash(protection.refusal)
+            return
+        }
         // The next photo in the folder, unless the user asked to keep the direction of travel.
         if !Preferences.deleteFollowsDirection { direction = 1 }
         session.trashCurrent(direction: direction)
@@ -427,6 +433,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             shownTier = nil
             view.showMessage(session.tombstones.isEmpty ? "Aucune photo" : "Aucune photo restante")
             updateInfo()
+            view.setProtected(false)
             onDisplayed?(PhotoKey(path: "", device: 0, inode: 0, size: 0, mtimeSeconds: 0, mtimeNanoseconds: 0), nil)
             return
         }
@@ -445,8 +452,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
             visiblePhoto = nil
             shownTier = nil
         }
+        updateProtectionBadge()
         updateInfo()
         onDisplayed?(current, shownTier)
+    }
+
+    /// After the image commit: one dictionary lookup, no I/O.
+    private func updateProtectionBadge() {
+        view.setProtected(session.list.current.map { !session.protection(of: $0).isEmpty } ?? false)
     }
 
     private func frameArrived(_ frame: Frame) {
@@ -717,30 +730,37 @@ final class ViewerController: NSObject, NSWindowDelegate {
         for (slot, entry) in model.slots.enumerated() {
             guard let photo = entry else { continue }
             let known = metadata.metadata(for: photo)
+            let locked = !session.protection(of: photo).isEmpty
             comparisonView.setCaption(slot: slot, number: slot + 1, name: photo.name, settings: known?.settingsText ?? "")
             if let frame = pipeline.cache.best(photo, zoomed: zoomed != nil) {
                 comparisonView.showFrame(frame, slot: slot)
                 comparedVisible.insert(slot)
                 if frame.key.tier == .preview {
-                    comparisonView.setBadge("Aperçu", slot: slot)
+                    comparisonView.setBadge(Self.badge("Aperçu", locked: locked), slot: slot)
                 } else if let zoomed {
                     // Under memory pressure, only the focused photo is rendered at 100 %.
                     let coming = pipeline.memoryLevel == .normal || slot == model.focus
-                    comparisonView.setBadge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), slot: slot)
+                    comparisonView.setBadge(Self.badge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), locked: locked), slot: slot)
                 } else {
-                    comparisonView.setBadge(nil, slot: slot)
+                    comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
                 }
             } else if pipeline.hasFailed(FrameKey(photo: photo, tier: .screen)) {
                 comparisonView.showMessage("Impossible de décoder \(photo.name)", slot: slot)
-                comparisonView.setBadge(nil, slot: slot)
+                comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
                 comparedVisible.insert(slot)
             } else {
                 comparisonView.showMessage(photo.name, slot: slot)
-                comparisonView.setBadge(nil, slot: slot)
+                comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
             }
         }
         metadata.request(model.shown + model.waiting.prefix(ComparisonModel.slotCount))
         scheduleStripUpdate()
+    }
+
+    /// A protected photo says so on its badge, next to what the badge already shows.
+    private static func badge(_ text: String?, locked: Bool) -> String? {
+        guard locked else { return text }
+        return text.map { "\($0)  ·  Protégée" } ?? "Protégée"
     }
 
     /// Every photo of the comparison: its slot number shows through the marks and the opacity.
@@ -819,6 +839,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
+        let protection = session.protection(of: focused)
+        guard protection.isEmpty else {
+            comparisonView.showToast(protection.refusal)
+            return
+        }
         trashInComparison([focused], message: "\(focused.name) à la corbeille")
     }
 
@@ -832,8 +857,17 @@ final class ViewerController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        let count = others.count
-        trashInComparison(others, message: "\(count) photo\(count > 1 ? "s" : "") à la corbeille")
+        // Protected photos stay on screen: keeping one photo never deletes a protected one.
+        let deletable = others.filter { session.protection(of: $0).isEmpty }
+        let kept = others.count - deletable.count
+        guard !deletable.isEmpty else {
+            comparisonView.showToast(kept > 1 ? "Photos protégées : non supprimées" : "Photo protégée : non supprimée")
+            return
+        }
+        let count = deletable.count
+        var message = "\(count) photo\(count > 1 ? "s" : "") à la corbeille"
+        if kept > 0 { message += "  ·  \(kept) protégée\(kept > 1 ? "s" : "") conservée\(kept > 1 ? "s" : "")" }
+        trashInComparison(deletable, message: message)
     }
 
     private func trashInComparison(_ photos: [PhotoKey], message: String) {
@@ -887,8 +921,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
             pipeline.disk.invalidate(photo)
         case .fileChanged(let name):
             alert("\(name) a changé sur le disque", info: "La photo n'a pas été supprimée.")
-        case .trashFailed(let photo, let message):
-            confirmPermanentDelete(photo, message: message)
+        case .protectionChanged:
+            if comparison != nil { displayComparison() } else { updateProtectionBadge() }
+        case .trashFailed(let photo, let failure):
+            if failure.allowsPermanentDelete {
+                confirmPermanentDelete(photo, message: failure.explanation)
+            } else {
+                alert("\(photo.name) n'a pas été mise à la corbeille", info: failure.explanation)
+            }
         case .restoreFailed(let name, let message):
             // Restores also start from the history window: the alert goes where the user is.
             alert("Impossible de restaurer \(name)", info: message, in: NSApp.keyWindow)

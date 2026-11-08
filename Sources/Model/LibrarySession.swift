@@ -24,7 +24,9 @@ enum SessionEvent: Sendable {
     case restored(PhotoKey)
     case trashed(PhotoKey)
     case fileChanged(name: String)
-    case trashFailed(PhotoKey, message: String)
+    case trashFailed(PhotoKey, TrashFailure)
+    /// Only the protection of some photos changed: no pixels to redo.
+    case protectionChanged
     case restoreFailed(name: String, message: String)
     case deleteFailed(name: String, message: String)
     /// The deletion history could not be written: deletions still work, without a record.
@@ -54,11 +56,13 @@ final class LibrarySession {
     /// Every deletion, of this launch and of earlier ones when a journal is given.
     let history = DeletionHistory()
     private(set) var tombstones: Set<String> = []
+    /// Protected photos by path, from the latest scan or deletion attempt. Never read from disk here.
+    private(set) var protection: [String: FileProtection] = [:]
     var onEvent: (SessionEvent) -> Void = { _ in }
     var onDrained: (() -> Void)?
 
     var fileOps: FileOps
-    private let scanner: @Sendable (URL, Set<String>?) -> [PhotoKey]
+    private let scanner: @Sendable (URL, Set<String>?) -> ScanSnapshot
     private let ioQueue = DispatchQueue(label: "betterview.fileops", qos: .userInitiated)
     private let scanQueue = DispatchQueue(label: "betterview.scan", qos: .userInitiated)
     private let watcher = FolderWatcher()
@@ -81,7 +85,7 @@ final class LibrarySession {
     private let journal: DeletionJournal?
 
     init(fileOps: FileOps = .system,
-         scanner: @escaping @Sendable (URL, Set<String>?) -> [PhotoKey] = FolderScanner.scan,
+         scanner: @escaping @Sendable (URL, Set<String>?) -> ScanSnapshot = FolderScanner.scan,
          journal: DeletionJournal? = nil) {
         self.fileOps = fileOps
         self.scanner = scanner
@@ -103,6 +107,8 @@ final class LibrarySession {
     }
 
     var hasPendingIO: Bool { pendingIO > 0 }
+
+    func protection(of photo: PhotoKey) -> FileProtection { protection[photo.path] ?? [] }
 
     /// The folder of the active list, for the history's default filter.
     var folderPath: String? { folder?.standardizedFileURL.path }
@@ -126,6 +132,7 @@ final class LibrarySession {
         scanRunning = false
         rescanPending = false
         list = PhotoList()
+        protection = [:]
         let session = sessionID
 
         var isDirectory: ObjCBool = false
@@ -140,11 +147,12 @@ final class LibrarySession {
             allowed = urls.count > 1 ? Set(urls.map { $0.standardizedFileURL.path }) : nil
             desiredPath = path
             scanQueue.async { [weak self] in
-                guard let key = PhotoKey.read(path: path) else { return }
+                guard let (key, protected) = PhotoKey.readWithProtection(path: path) else { return }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard let self, self.sessionID == session, self.list.count == 0 else { return }
                         self.list = PhotoList(photos: [key], selecting: path)
+                        if !protected.isEmpty { self.protection[path] = protected }
                         self.onEvent(.listChanged)
                     }
                 }
@@ -183,7 +191,7 @@ final class LibrarySession {
         }
     }
 
-    private func apply(snapshot: [PhotoKey], session: Int, generation: Int) {
+    private func apply(snapshot: ScanSnapshot, session: Int, generation: Int) {
         // An old session's scan neither applies nor touches the new session's flags.
         guard session == sessionID else { return }
         scanRunning = false
@@ -191,8 +199,12 @@ final class LibrarySession {
             requestScan()
             return
         }
-        if list.merge(scan: snapshot, excluding: tombstones, selecting: desiredPath) {
+        let protectionChanged = snapshot.protection != protection
+        protection = snapshot.protection
+        if list.merge(scan: snapshot.photos, excluding: tombstones, selecting: desiredPath) {
             onEvent(.listChanged)
+        } else if protectionChanged {
+            onEvent(.protectionChanged)
         }
         if rescanPending { requestScan() }
     }
@@ -205,10 +217,11 @@ final class LibrarySession {
     // MARK: Deleting
 
     /// Removes the current photo from the list right away, then trashes it in FIFO order.
-    /// Returns false when there is nothing to delete.
+    /// Returns false when there is nothing to delete, or when the photo is known to be protected.
     @discardableResult
     func trashCurrent(direction: Int) -> Bool {
-        guard let photo = list.removeCurrent(direction: direction) else { return false }
+        guard let current = list.current, protection(of: current).isEmpty,
+              let photo = list.removeCurrent(direction: direction) else { return false }
         lastGroup += 1
         enqueueTrash(photo, group: lastGroup)
         onEvent(.listChanged)
@@ -220,7 +233,7 @@ final class LibrarySession {
     /// Returns false when none of them could be deleted.
     @discardableResult
     func trash(_ photos: [PhotoKey]) -> Bool {
-        let accepted = photos.filter { list.remove($0) }
+        let accepted = photos.filter { protection(of: $0).isEmpty && list.remove($0) }
         guard !accepted.isEmpty else { return false }
         lastGroup += 1
         for photo in accepted { enqueueTrash(photo, group: lastGroup) }
@@ -260,16 +273,19 @@ final class LibrarySession {
     private enum TrashResult: Sendable {
         case trashed(URL)
         case changed
-        case failed(String)
+        case failed(TrashFailure)
     }
 
     /// The file on disk must still be the revision the user saw, otherwise it is not ours to delete.
+    /// A protection set since the scan is checked again here, and never bypassed.
     private nonisolated static func performTrash(photo: PhotoKey, fileOps: FileOps) -> TrashResult {
-        guard PhotoKey.read(path: photo.path) == photo else { return .changed }
+        guard let (key, protected) = PhotoKey.readWithProtection(path: photo.path), key == photo else { return .changed }
+        if protected.contains(.locked) { return .failed(.locked) }
+        if protected.contains(.readOnly) { return .failed(.fileNotWritable) }
         do {
             return .trashed(try fileOps.trash(photo.url))
         } catch {
-            return .failed(error.localizedDescription)
+            return .failed(TrashFailure.classify(error, probe: TrashProbe.read(path: photo.path)))
         }
     }
 
@@ -286,13 +302,15 @@ final class LibrarySession {
         case .changed:
             onEvent(.fileChanged(name: op.photo.name))
             requestScan()
-        case .failed(let message):
+        case .failed(let failure):
             // Still in its folder on disk; back in the list only if that folder is still open.
             if covers(op.photo.path) {
+                if failure == .locked { protection[op.photo.path, default: []].insert(.locked) }
+                if failure == .fileNotWritable { protection[op.photo.path, default: []].insert(.readOnly) }
                 list.insert(op.photo, select: op.undoRequested || list.count == 0)
                 onEvent(.listChanged)
             }
-            onEvent(.trashFailed(op.photo, message: message))
+            onEvent(.trashFailed(op.photo, failure))
         }
         ioFinished()
     }
@@ -442,8 +460,12 @@ final class LibrarySession {
         ioQueue.async { [weak self] in
             journal?.append(record)
             var message: String?
-            if PhotoKey.read(path: photo.path) == photo {
-                do { try fileOps.deletePermanently(photo.url) } catch { message = error.localizedDescription }
+            if let (key, protected) = PhotoKey.readWithProtection(path: photo.path), key == photo {
+                if !protected.isEmpty {
+                    message = (protected.contains(.locked) ? TrashFailure.locked : .fileNotWritable).explanation
+                } else {
+                    do { try fileOps.deletePermanently(photo.url) } catch { message = error.localizedDescription }
+                }
             } else {
                 message = "Le fichier a changé sur le disque."
             }
