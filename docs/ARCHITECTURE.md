@@ -74,7 +74,7 @@ AppDelegate ── ViewerWindowController ── ViewerView (CALayer)
       FolderWatcher   ├─ FrameCache (LRU par octets, par tier)
                       ├─ DiskCache (JPEG, LRU par octets)
                       └─ Workers : PreviewDecoder, RawRenderer, DiskCodec
-Settings : Preferences, FileAssociations, SettingsView (SwiftUI)
+Settings : Preferences, FileAssociations, CacheSettings, KeyRecorder, vues SwiftUI dans un NSTabViewController (SettingsWindow)
 ```
 
 Environ 1500 lignes. Un dossier source, une cible app, une cible de tests. Projet généré par xcodegen.
@@ -214,10 +214,38 @@ Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en 
 ## 6. Réglages et intégration système
 
 - `Info.plist` : `CFBundleDocumentTypes` avec `LSHandlerRank = Alternate` (n'usurpe rien) pour ARW, CR2, CR3, NEF, NRW, RAF, DNG, ORF, RW2, PEF, SRW (UTI système `com.sony.arw-raw-image` etc., vérifiées au build).
-- Réglages : une case par format, `NSWorkspace.setDefaultApplication(at:toOpen:completion:)`, appels sérialisés par type, erreurs affichées (le système peut demander un consentement ou refuser). L'état affiché est relu via `urlForApplication(toOpen:)` après chaque changement, jamais stocké. Le bundle précédent est mémorisé ; il n'est restauré à la désactivation que si BetterView est toujours le gestionnaire effectif et que cette app existe encore.
 - Non sandboxé (requis : un double-clic ne donne accès qu'au fichier en sandbox, pas à ses voisins). Hardened runtime. Signature locale, script d'installation vers `/Applications`.
 
-Raccourcis : `ShortcutMap` associe chaque action à ses touches, enregistrées dans `UserDefaults` ; une touche n'appartient qu'à une action, et l'attribuer ailleurs la retire de la première. Les lettres sont stockées par caractère (valable en AZERTY), les touches spéciales par code. La vue répond à toutes les touches, le menu affiche la première. ⌘Q, ⌘W, ⌘O, ⌘, et ⌘Y sont réservés. Une touche sans modificateur n'entre jamais dans le menu pour la suppression : elle agirait aussi depuis la fenêtre de réglages. La liste par défaut est dans le README.
+### Fenêtre de réglages
+
+`SettingsWindow` : un `NSTabViewController` en style barre d'outils (convention des réglages macOS), un `NSHostingController` SwiftUI par onglet, largeur 540 pt, la hauteur suit l'onglet (et le détail déplié).
+
+- **Général > Affichage** : informations, bande d'aperçu, sens de navigation après une suppression.
+- **Général > Formats RAW** : un interrupteur « Ouvrir les RAW avec BetterView » et une ligne de résumé (« 10 formats sur 11. ARW s'ouvre avec… »), puis le détail repliable en grille de cases, une par format. `NSWorkspace.setDefaultApplication(at:toOpen:completion:)` est appelé **un format à la fois**, y compris pour l'interrupteur global ; les erreurs sont regroupées en une alerte (le système peut demander un consentement ou refuser). L'état affiché est relu via `urlForApplication(toOpen:)` à l'ouverture, au retour au premier plan et après chaque changement, jamais stocké. Le bundle précédent est mémorisé ; il n'est restauré à la désactivation que si BetterView est toujours le gestionnaire effectif et que cette app existe encore.
+- **Général > Cache disque** : taille maximale, espace utilisé (mesuré sur la file du cache, hors main), « Vider le cache… » avec confirmation.
+- **Raccourcis** : liste groupée dérivée de `ShortcutAction`, plus les raccourcis fixes du menu de l'app (⌘O, ⌘,, ⌘Y, ⌘W, ⌘Q).
+
+### Raccourcis
+
+Une seule source : `ShortcutAction.spec` (`Sources/Model/Shortcuts.swift`), une ligne par commande avec titre, groupe des réglages, touches par défaut et répétition. Le clavier de la visionneuse et de la comparaison, la barre de menus et l'onglet Raccourcis en sont dérivés.
+
+**Ajouter une commande** : un `case`, sa ligne dans `spec`, et son effet dans `ViewerController.perform` (et `performInComparison`) ; le compilateur réclame les deux derniers. Pour un élément de menu, ajouter `action(.nouvelle)` dans `AppDelegate.buildMenu`. Exemple :
+
+```swift
+case .history: Spec(title: "Historique des suppressions", group: .sorting, keys: [.character("y", modifiers: .command)])
+```
+
+La valeur brute du `case` est enregistrée avec les touches de l'utilisateur : ne jamais renommer un `case`. Une commande inconnue des données enregistrées (ajoutée depuis) reçoit ses touches par défaut si elles sont libres ; une commande retirée est ignorée. Un test vérifie qu'aucune touche par défaut n'appartient à deux commandes ni n'est réservée.
+
+**Résolution** : `ShortcutMap` vit en mémoire ; `ShortcutStore` le lit une fois au lancement et l'enregistre (`UserDefaults`, clé `shortcuts`) à chaque changement, jamais à la frappe. Une frappe coûte la construction d'un `KeyBinding` et une recherche dans un dictionnaire (≈ 0,7 µs en Debug, mesuré par un test). Les lettres sont stockées par caractère tapé (`charactersIgnoringModifiers`, donc valable en AZERTY), les touches spéciales (flèches, ⌫, ⌦, Échap, Espace, ↩, pages, F1-F12…) par code.
+
+**Répétition** : `ShortcutMap.decide` est le seul point de décision, pour la visionneuse, la comparaison et le menu. `NSEvent.isARepeat` sur une commande sans `repeats` est absorbé, quelle que soit la touche : maintenir une touche de suppression ne supprime qu'une photo, une bascule ne bascule qu'une fois. Seule la navigation se répète.
+
+**Menus** : la vue répond à toutes les touches d'une commande, le menu en affiche une. Une touche sans modificateur n'entre jamais dans le menu pour une commande destructive. Les éléments de menu des commandes photo sont grisés quand la visionneuse n'a pas le clavier : une touche tapée dans les réglages n'atteint jamais une photo. Seul « Annuler la suppression » reste actif partout (il ne fait que restaurer, y compris depuis l'historique). ⌘Q, ⌘W, ⌘O, ⌘, et ⌘Y (historique) sont réservés au menu de l'app.
+
+**Conflits** : dans les réglages, une touche déjà prise est signalée (« déjà utilisée par… ») ; « Remplacer » la retire à l'autre commande, « Annuler » ne change rien. ↺ rétablit les touches par défaut d'une commande, sauf celles qu'une autre commande a prises depuis (signalé) ; « Tout rétablir » revient aux valeurs par défaut.
+
+**Capture** : `KeyRecorder` pose un moniteur local `NSEvent` le temps d'une capture, qui avale les frappes de la fenêtre de réglages avant les menus. Une frappe dans une autre fenêtre, ou la perte du clavier par les réglages, annule la capture et la frappe suit son chemin normal. Échap seul annule (convention macOS) ; ⌫ s'enregistre comme une touche.
 
 ## 7. Objectifs vérifiables
 
