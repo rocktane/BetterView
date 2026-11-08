@@ -133,9 +133,9 @@ final class KeyRecorderTests: XCTestCase {
         XCTAssertEqual(store.map, .defaults)
 
         recorder.start(.delete, in: settings)
-        NSApp.sendEvent(key("a", 0, in: settings))
+        NSApp.sendEvent(key("g", 5, in: settings))
         XCTAssertNil(recorder.target)
-        XCTAssertEqual(store.map.action(for: .character("a")), .delete)
+        XCTAssertEqual(store.map.action(for: .character("g")), .delete)
     }
 
     func testConflictWaitsForAnAnswer() {

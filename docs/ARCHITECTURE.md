@@ -225,7 +225,7 @@ Une seule source : `ShortcutAction.spec` (`Sources/Model/Shortcuts.swift`), une 
 **Ajouter une commande** : un `case`, sa ligne dans `spec`, et son effet dans `ViewerController.perform` (et `performInComparison`) ; le compilateur réclame les deux derniers. Pour un élément de menu, ajouter `action(.nouvelle)` dans `AppDelegate.buildMenu`. Exemple :
 
 ```swift
-case .afZoom: Spec(title: "Zoom sur le point AF", group: .display, keys: [.character("a")])
+case .history: Spec(title: "Historique des suppressions", group: .sorting, keys: [.character("y", modifiers: .command)])
 ```
 
 La valeur brute du `case` est enregistrée avec les touches de l'utilisateur : ne jamais renommer un `case`. Une commande inconnue des données enregistrées (ajoutée depuis) reçoit ses touches par défaut si elles sont libres ; une commande retirée est ignorée. Un test vérifie qu'aucune touche par défaut n'appartient à deux commandes ni n'est réservée.
