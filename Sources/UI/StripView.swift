@@ -52,6 +52,17 @@ final class StripView: NSView {
     private var cutAtStart = false
     private var cutAtEnd = false
 
+    /// The photos to give the strip: always `2 * reach + 1` when the list has them, taken from the
+    /// other side near an end, so that portrait photos still fill it there.
+    static func window(around index: Int, count: Int, reach: Int) -> ClosedRange<Int> {
+        let size = min(2 * reach + 1, count)
+        let lower = min(max(index - reach, 0), count - size)
+        return lower...(lower + size - 1)
+    }
+
+    /// For tests: where each cell is drawn.
+    var cellFrames: [CGRect] { frames }
+
     /// Shape of a thumbnail that has not arrived yet: the most common one.
     private static let defaultAspect: CGFloat = 1.5
 
@@ -139,7 +150,13 @@ final class StripView: NSView {
         if metrics.fadesEdges {
             fade.frame = content.bounds
             let edge = min(0.12, 28 / max(bounds.width, 1))
-            fade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+            // Only an edge that cuts a thumbnail fades: the first or last photo stays whole.
+            let cutLeft = (frames.first?.minX ?? 0) < 0
+            let cutRight = (frames.last?.maxX ?? 0) > bounds.width
+            fade.colors = [
+                (cutLeft ? NSColor.clear : NSColor.black).cgColor, NSColor.black.cgColor,
+                NSColor.black.cgColor, (cutRight ? NSColor.clear : NSColor.black).cgColor,
+            ]
             fade.locations = [0, NSNumber(value: Double(edge)), NSNumber(value: Double(1 - edge)), 1]
         }
         while images.count < cells.count {

@@ -74,13 +74,14 @@ enum StripMagnet {
     /// Applies a remembered placement to the screen as it is now.
     static func origin(for placement: StripPlacement, size: CGSize, screen: CGRect, visible: CGRect) -> CGPoint {
         var origin = clamped(placement.origin ?? CGPoint(x: visible.midX, y: visible.midY), size: size, visible: visible)
-        if placement.docked {
-            let dock = dockedOrigin(size: size, visible: visible, edge: dockEdge(screen: screen, visible: visible))
-            if let x = dock.x { origin.x = x }
-            if let y = dock.y { origin.y = y }
-        }
-        if placement.centeredX { origin.x = visible.midX - size.width / 2 }
-        if placement.centeredY { origin.y = visible.midY - size.height / 2 }
+        // The Dock wins on its own axis, as when dragging: it may have moved since.
+        let dock = dockedOrigin(size: size, visible: visible, edge: dockEdge(screen: screen, visible: visible))
+        let holdsX = placement.docked && dock.x != nil
+        let holdsY = placement.docked && dock.y != nil
+        if holdsX, let x = dock.x { origin.x = x }
+        if holdsY, let y = dock.y { origin.y = y }
+        if placement.centeredX, !holdsX { origin.x = visible.midX - size.width / 2 }
+        if placement.centeredY, !holdsY { origin.y = visible.midY - size.height / 2 }
         return CGPoint(x: origin.x.rounded(), y: origin.y.rounded())
     }
 }

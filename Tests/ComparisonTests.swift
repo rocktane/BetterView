@@ -237,6 +237,14 @@ final class StripMagnetTests: XCTestCase {
         XCTAssertEqual(moved, CGPoint(x: ((2560 - 763) / 2 as CGFloat).rounded(), y: 68))
     }
 
+    func testTheDockWinsOverARememberedCentreOnItsAxis() {
+        // Docked at the bottom and centred, then the Dock moves to the left.
+        let held = StripPlacement(origin: CGPoint(x: 374, y: 88), docked: true, centeredX: true)
+        let origin = StripMagnet.origin(for: held, size: size, screen: screen, visible: leftDock)
+        XCTAssertEqual(origin.x, 78, "against the Dock, not centred")
+        XCTAssertEqual(StripMagnet.origin(for: StripPlacement(), size: size, screen: screen, visible: leftDock).x, 78, "the first placement too")
+    }
+
     func testAFreePlacementStaysWhereItWas() {
         let free = StripPlacement(origin: CGPoint(x: 100, y: 300), docked: false, centeredX: false)
         XCTAssertEqual(StripMagnet.origin(for: free, size: size, screen: screen, visible: bottomDock), CGPoint(x: 100, y: 300))
@@ -442,5 +450,55 @@ final class ComparisonMemoryTests: XCTestCase {
         pipeline.cache.insert(Frame(key: screen, surface: surface, nativeSize: CGSize(width: 8, height: 8)))
         pipeline.setMemoryLevel(.critical)
         XCTAssertTrue(pipeline.cache.contains(screen))
+    }
+}
+
+final class StripWindowTests: XCTestCase {
+    func testTheSameNumberOfPhotosEvenAtTheEnds() {
+        XCTAssertEqual(StripView.window(around: 50, count: 133, reach: 14), 36...64)
+        XCTAssertEqual(StripView.window(around: 0, count: 133, reach: 14), 0...28)
+        XCTAssertEqual(StripView.window(around: 132, count: 133, reach: 14), 104...132)
+        XCTAssertEqual(StripView.window(around: 3, count: 10, reach: 14), 0...9, "a short list is given whole")
+        XCTAssertEqual(StripView.window(around: 0, count: 1, reach: 14), 0...0)
+    }
+}
+
+@MainActor
+final class StripLayoutTests: XCTestCase {
+    private func portrait() throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(data: nil, width: 2, height: 3, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    private func strip(count: Int, anchor: Int, cut: (Bool, Bool)) throws -> StripView {
+        let view = StripView(metrics: .init(height: 66, gap: 3, top: 7, fadesEdges: true))
+        view.frame = CGRect(x: 0, y: 0, width: 820, height: 92)
+        let image = try portrait()
+        let cells = (0..<count).map { StripCell(photo: PhotoKey(path: "/p/\($0).arw", device: 1, inode: 1, size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0), image: image) }
+        view.update(cells: cells, anchor: anchor, cut: cut)
+        return view
+    }
+
+    /// Portrait photos are 44 pt wide: 29 of them overflow 820 pt from either end.
+    func testPortraitsFillTheStripAtBothEnds() throws {
+        let start = try strip(count: 29, anchor: 0, cut: (false, true))
+        XCTAssertEqual(start.cellFrames.first?.minX, 10)
+        XCTAssertGreaterThanOrEqual(start.cellFrames.last?.maxX ?? 0, 820)
+
+        let end = try strip(count: 29, anchor: 28, cut: (true, false))
+        XCTAssertEqual(end.cellFrames.last?.maxX, 810)
+        XCTAssertLessThanOrEqual(end.cellFrames.first?.minX ?? 1, 0)
+    }
+
+    func testTheCurrentPhotoIsCentredAwayFromTheEnds() throws {
+        let middle = try strip(count: 29, anchor: 14, cut: (true, true))
+        XCTAssertEqual(middle.cellFrames[14].midX, 410, accuracy: 1)
+        XCTAssertEqual(middle.cellFrames[14].width, 44)
+    }
+
+    func testAShortListIsCentredWhole() throws {
+        let short = try strip(count: 5, anchor: 0, cut: (false, false))
+        let frames = short.cellFrames
+        XCTAssertEqual(frames.first!.minX - 0, 820 - frames.last!.maxX, accuracy: 1)
     }
 }

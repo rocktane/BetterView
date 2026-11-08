@@ -91,6 +91,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.view.onLabelClick = { [weak self] in self?.perform(.compare) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
         thumbnails.onLoaded = { [weak self] _ in self?.scheduleStripUpdate() }
+        thumbnails.onStale = { [weak self] _ in self?.session.requestScan() }
         session.onEvent = { [weak self] in self?.handle($0) }
         pipeline.onFrame = { [weak self] in self?.frameArrived($0) }
         pipeline.onFailed = { [weak self] in self?.frameFailed($0) }
@@ -482,7 +483,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.setVisible(true)
         let photos = session.list.photos
         // More than the strip can show even with portrait photos: it cuts the rest at its edges.
-        let shown = max(index - Self.stripReach, 0)...min(index + Self.stripReach, photos.count - 1)
+        let shown = StripView.window(around: index, count: photos.count, reach: Self.stripReach)
         let cells = shown.map { at -> StripCell in
             let photo = photos[at]
             let selected = stripSelection.contains(photo.path)
@@ -494,8 +495,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
-        let ahead = (1...(Self.stripReach + Self.thumbnailMargin)).flatMap { [index + $0 * direction, index - $0 * direction] }
-        thumbnails.request(([index] + ahead).compactMap { photos.indices.contains($0) ? photos[$0] : nil })
+        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [index + $0 * direction, index - $0 * direction] }
+        let wanted = ([index] + ahead).filter { photos.indices.contains($0) && ($0 - index).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
+        thumbnails.request(wanted.map { photos[$0] })
 
         let reach = max(index - Self.burstReach, 0)...min(index + Self.burstReach, photos.count - 1)
         let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
@@ -575,6 +577,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.setVisible(false)
         comparedVisible = []
         comparisonView.reset()
+        // The viewer leaves the window: it must not keep a surface alive that the cache let go.
+        view.showMessage(nil)
+        visiblePhoto = nil
         comparisonView.frame = window.contentLayoutRect
         window.contentView = comparisonView
         window.makeFirstResponder(comparisonView)

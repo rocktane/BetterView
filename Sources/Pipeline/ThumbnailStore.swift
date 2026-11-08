@@ -22,6 +22,8 @@ final class ThumbnailStore {
     private var running: Set<PhotoKey> = []
     private let queue = DispatchQueue(label: "betterview.thumbnails", qos: .utility, attributes: .concurrent)
     var onLoaded: (PhotoKey) -> Void = { _ in }
+    /// The file is no longer this revision: the list needs a scan.
+    var onStale: (PhotoKey) -> Void = { _ in }
 
     /// nil while it is loading, and for a photo that has none.
     func image(for photo: PhotoKey) -> CGImage? { known[photo]?.image }
@@ -37,11 +39,20 @@ final class ThumbnailStore {
             let photo = wanted.removeFirst()
             running.insert(photo)
             queue.async { [weak self] in
-                let thumbnail = Thumbnail(Decoders.thumbnail(photo))
+                // Checked before and after, as for frames: a file replaced in between must not
+                // lend its pixels to the old revision.
+                let current = PhotoKey.read(path: photo.path) == photo
+                let image = current ? Decoders.thumbnail(photo) : nil
+                let thumbnail = current && PhotoKey.read(path: photo.path) == photo ? Thumbnail(image) : nil
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.running.remove(photo)
+                        guard let thumbnail else {
+                            self.onStale(photo)
+                            self.pump()
+                            return
+                        }
                         if self.known.count >= Self.capacity { self.known.removeAll() }
                         self.known[photo] = thumbnail
                         self.onLoaded(photo)
