@@ -68,4 +68,6 @@ BetterView.app/Contents/MacOS/BetterView --verify-previews <dossier>
 BetterView.app/Contents/MacOS/BetterView --verify-af <dossier>
 ```
 
+L'icône se dessine dans `Resources/AppIcon.svg` ; `scripts/make-icon.sh` en tire toutes les tailles de l'asset catalog (il faut `rsvg-convert` : `brew install librsvg`).
+
 Architecture, décisions et résultats mesurés : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
