@@ -7,6 +7,8 @@ enum Preferences {
     fileprivate static let handlersKey = "previousHandlers"
     fileprivate static let infoVisibleKey = "infoVisible"
     fileprivate static let deleteFollowsDirectionKey = "deleteFollowsDirection"
+    fileprivate static let stripVisibleKey = "stripVisible"
+    private static let stripPlacementKey = "stripPlacement"
 
     static var diskCacheGigabytes: Int {
         get {
@@ -24,6 +26,19 @@ enum Preferences {
     }
 
     static var deleteFollowsDirection: Bool { UserDefaults.standard.bool(forKey: deleteFollowsDirectionKey) }
+
+    static var stripVisible: Bool {
+        get { UserDefaults.standard.object(forKey: stripVisibleKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: stripVisibleKey) }
+    }
+
+    /// nil until the user first moves the strip.
+    static var stripPlacement: StripPlacement? {
+        get {
+            UserDefaults.standard.data(forKey: stripPlacementKey).flatMap { try? JSONDecoder().decode(StripPlacement.self, from: $0) }
+        }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: stripPlacementKey) }
+    }
 }
 
 /// Default-app state per format. The state shown is always read back from the system.
@@ -141,7 +156,9 @@ struct SettingsView: View {
     @State private var shortcutNotice: String?
     @AppStorage(Preferences.deleteFollowsDirectionKey) private var deleteFollowsDirection = false
     @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
+    @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
     let onInfoVisibleChange: (Bool) -> Void
+    let onStripVisibleChange: (Bool) -> Void
     let onCacheSizeChange: (Int) -> Void
     let onClearCache: () -> Void
 
@@ -150,6 +167,8 @@ struct SettingsView: View {
             Section("Affichage") {
                 Toggle("Afficher les informations sur la photo", isOn: $infoVisible)
                     .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
+                Toggle("Afficher la bande d'aperçu", isOn: $stripVisible)
+                    .onChange(of: stripVisible) { _, value in onStripVisibleChange(value) }
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
             }
             Section {

@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = SettingsView(
             shortcuts: shortcuts,
             onInfoVisibleChange: { viewer.setInfoVisible($0) },
+            onStripVisibleChange: { viewer.setStripVisible($0) },
             onCacheSizeChange: { disk.setBudget($0 * 1_000_000_000) },
             onClearCache: { disk.clear() }
         )
@@ -85,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The view and the menu always answer to the keys chosen in the settings.
     private func applyShortcuts(_ map: ShortcutMap) {
-        viewer.view.shortcuts = map
+        viewer.setShortcuts(map)
         for (action, item) in shortcutItems {
             let equivalent = map.menuBinding(for: action)?.menuEquivalent
             item.keyEquivalent = equivalent?.key ?? ""
@@ -145,6 +146,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .separator(),
             action(.toggleZoom),
             action(.toggleInfo),
+            action(.toggleStrip),
+            .separator(),
+            action(.compare),
+            action(.keepSelected),
         ])
         return main
     }

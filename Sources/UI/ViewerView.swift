@@ -7,6 +7,8 @@ enum ViewerCommand {
     case hoverChanged(Bool)
     case openDropped([URL])
     case zoomChanged
+    /// In the comparison: this slot takes the focus.
+    case selectSlot(Int)
 }
 
 /// Shows one IOSurface in a layer and handles geometry and input. No app logic here.

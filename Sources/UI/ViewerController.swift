@@ -7,6 +7,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     let session: LibrarySession
     let pipeline: Pipeline
     let view = ViewerView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
+    private let comparisonView = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
+    private let strip = StripPanel()
     let window: NSWindow
 
     private(set) var direction = 1
@@ -21,6 +23,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var infoVisible = Preferences.infoVisible
     private var titlePending = false
     private let metadata = MetadataStore()
+    private let thumbnails = ThumbnailStore()
+
+    private var stripVisible = Preferences.stripVisible
+    private var stripPending = false
+    /// Photos picked by Shift-click, by path, to compare instead of the burst.
+    private var stripSelection: Set<String> = []
+
+    /// Set while comparing, when the comparison view has the window.
+    private var comparison: ComparisonModel?
+    /// What to give back on leaving: the comparison window has no photo's shape.
+    private var preComparisonFrame: CGRect?
+    private var preComparisonCenter: CGPoint?
+    /// Slots whose content can legitimately be deleted: pixels, or an error with its name.
+    private var comparedVisible: Set<Int> = []
+    private let normalFullBudget: Int
 
     /// The shape the window currently has, and the size it keeps across shapes.
     private var shapedAspect: CGFloat?
@@ -40,6 +57,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             budgets: .scaled(physicalMemory: ProcessInfo.processInfo.physicalMemory),
             disk: DiskCache(directory: diskDirectory, budget: budget)
         )
+        normalFullBudget = pipeline.cache.budget(.full)
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 750),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -66,14 +84,30 @@ final class ViewerController: NSObject, NSWindowDelegate {
         chosenHeight = window.frame.height
 
         view.onCommand = { [weak self] in self?.handle($0) }
+        comparisonView.onCommand = { [weak self] in self?.handle($0) }
+        comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
+        strip.preferredScreen = { [weak self] in self?.window.screen }
+        strip.view.onClick = { [weak self] photo, extending in self?.stripClicked(photo, extending: extending) }
+        strip.view.onLabelClick = { [weak self] in self?.perform(.compare) }
+        strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
+        thumbnails.onLoaded = { [weak self] _ in self?.scheduleStripUpdate() }
+        thumbnails.onStale = { [weak self] _ in self?.session.requestScan() }
         session.onEvent = { [weak self] in self?.handle($0) }
         pipeline.onFrame = { [weak self] in self?.frameArrived($0) }
         pipeline.onFailed = { [weak self] in self?.frameFailed($0) }
         pipeline.onStale = { [weak self] _ in self?.session.requestScan() }
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
+        pipeline.onEvicted = { [weak self] in
+            if self?.comparison != nil { self?.displayComparison() }
+        }
         metadata.onLoaded = { [weak self] photo in
-            guard let self, photo == self.session.list.current else { return }
-            self.updateInfo()
+            guard let self else { return }
+            if self.comparison != nil {
+                self.displayComparison()
+                return
+            }
+            self.scheduleStripUpdate()
+            if photo == self.session.list.current { self.updateInfo() }
         }
 
         updateTarget()
@@ -92,8 +126,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     func open(_ urls: [URL]) {
+        leaveComparison()
         showWindow()
         visiblePhoto = nil
+        stripSelection = []
         for url in urls {
             NSDocumentController.shared.noteNewRecentDocumentURL(url)
         }
@@ -115,7 +151,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func screensChanged() {
         updateTarget()
-        shapedAspect = nil
+        strip.fitToScreen()
+        if comparison != nil {
+            placeComparisonWindow()
+        } else {
+            shapedAspect = nil
+        }
         display()
         replan()
     }
@@ -134,10 +175,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .zoomChanged:
             display()
             replan()
+        case .selectSlot(let slot): selectSlot(slot)
         }
     }
 
+    func setShortcuts(_ map: ShortcutMap) {
+        view.shortcuts = map
+        comparisonView.shortcuts = map
+        scheduleStripUpdate()
+    }
+
     func perform(_ action: ShortcutAction, repeating isRepeat: Bool = false) {
+        if comparison != nil {
+            performInComparison(action)
+            return
+        }
         switch action {
         case .next: step(1, repeating: isRepeat)
         case .previous: step(-1, repeating: isRepeat)
@@ -151,7 +203,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .toggleInfo: setInfoVisible(!infoVisible)
         case .revealInFinder: revealInFinder()
         case .exit:
+            if !stripSelection.isEmpty {
+                stripSelection = []
+                scheduleStripUpdate()
+            }
             view.exitZoom()
+        case .toggleStrip: setStripVisible(!stripVisible)
+        case .compare: enterComparison()
+        case .keepSelected: break
         }
     }
 
@@ -194,6 +253,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
         infoVisible = visible
         Preferences.infoVisible = visible
         updateInfo()
+    }
+
+    func setStripVisible(_ visible: Bool) {
+        stripVisible = visible
+        Preferences.stripVisible = visible
+        updateStrip()
     }
 
     private func revealInFinder() {
@@ -264,6 +329,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
         guard let index = session.list.index else { return }
         var input = PlanInput(count: session.list.count, current: index)
         input.direction = direction
+        if let comparison {
+            input.comparison = comparisonPlan(comparison)
+            input.zoomed = comparisonView.zoom != nil
+            input.memory = pipeline.memoryLevel
+            pipeline.plan(photos: session.list.photos, input: input)
+            return
+        }
         input.repeating = repeating
         input.settled = settled
         input.focused = focused
@@ -277,7 +349,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Shows the current photo's best frame, or nothing: never another photo's pixels.
     func display() {
+        if comparison != nil {
+            displayComparison()
+            return
+        }
         scheduleTitleUpdate()
+        scheduleStripUpdate()
         guard let current = session.list.current else {
             visiblePhoto = nil
             shownTier = nil
@@ -306,12 +383,20 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     private func frameArrived(_ frame: Frame) {
+        if let comparison {
+            if comparison.shown.contains(frame.key.photo) { displayComparison() }
+            return
+        }
         guard frame.key.photo == session.list.current else { return }
         if frame.key.tier == .full && !view.isZoomed && shownTier != nil { return }
         display()
     }
 
     private func frameFailed(_ key: FrameKey) {
+        if let comparison {
+            if comparison.shown.contains(key.photo) { displayComparison() }
+            return
+        }
         guard key.photo == session.list.current else { return }
         // A RAW that cannot render, or a file without preview before its render arrives.
         if key.tier == .screen { display() }
@@ -337,18 +422,381 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The name and position are known at once; the shooting information follows, read ahead
     /// for the next photos so it is normally there on arrival.
     private func updateInfo() {
+        requestMetadata()
         guard infoVisible, let current = session.list.current, let index = session.list.index else {
             view.hideInfo()
             return
         }
         let known = metadata.metadata(for: current)
         view.setInfo(name: current.name, settings: known?.settingsText ?? "", date: known?.dateText ?? "", position: "\(index + 1) / \(session.list.count)")
+    }
+
+    /// The nearest photos first, then enough around them to see the bursts. A held key only
+    /// asks for the nearest: the rest would be out of date at the next repeat.
+    private func requestMetadata() {
+        guard let index = session.list.index else { return }
         let photos = session.list.photos
-        let around = [0, direction, 2 * direction, -direction, 3 * direction].compactMap { offset -> PhotoKey? in
-            let at = index + offset
-            return photos.indices.contains(at) ? photos[at] : nil
+        var offsets = [0, direction, 2 * direction, -direction, 3 * direction]
+        if !repeating {
+            for distance in 1...Self.burstReach {
+                offsets.append(distance * direction)
+                offsets.append(-distance * direction)
+            }
         }
-        metadata.request(around)
+        var seen = Set<Int>()
+        metadata.request(offsets.compactMap { offset -> PhotoKey? in
+            let at = index + offset
+            return photos.indices.contains(at) && seen.insert(at).inserted ? photos[at] : nil
+        })
+    }
+
+    // MARK: Strip
+
+    /// How far from the current photo a burst is looked for: this bounds a comparison's size too.
+    private static let burstReach = 12
+
+    /// Drawn after the image, and at most once per turn: the strip never delays a photo.
+    private func scheduleStripUpdate() {
+        guard !stripPending else { return }
+        stripPending = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.stripPending = false
+                self.updateStrip()
+            }
+        }
+    }
+
+    private func updateStrip() {
+        guard comparison == nil else {
+            strip.setVisible(false)
+            updateComparisonRow()
+            return
+        }
+        guard stripVisible, !view.isZoomed, window.isVisible, !window.isMiniaturized,
+              session.list.count > 1, let index = session.list.index
+        else {
+            strip.setVisible(false)
+            return
+        }
+        strip.setVisible(true)
+        let photos = session.list.photos
+        // More than the strip can show even with portrait photos: it cuts the rest at its edges.
+        let shown = StripView.window(around: index, count: photos.count, reach: Self.stripReach)
+        let cells = shown.map { at -> StripCell in
+            let photo = photos[at]
+            let selected = stripSelection.contains(photo.path)
+            return StripCell(
+                photo: photo,
+                image: thumbnails.image(for: photo),
+                mark: at == index ? .current : (selected ? .selected : .none),
+                opacity: at == index || selected ? 1 : 0.7
+            )
+        }
+        // Nearest first, and beyond the edges, so that moving along finds them ready.
+        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [index + $0 * direction, index - $0 * direction] }
+        let wanted = ([index] + ahead).filter { photos.indices.contains($0) && ($0 - index).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
+        thumbnails.request(wanted.map { photos[$0] })
+
+        let reach = max(index - Self.burstReach, 0)...min(index + Self.burstReach, photos.count - 1)
+        let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
+            .map { ($0.lowerBound + reach.lowerBound)...($0.upperBound + reach.lowerBound) }
+        // Positions among the cells, cut to what they cover.
+        func cellRange(_ burst: ClosedRange<Int>) -> ClosedRange<Int>? {
+            let from = max(burst.lowerBound, shown.lowerBound), to = min(burst.upperBound, shown.upperBound)
+            return from <= to ? (from - shown.lowerBound)...(to - shown.lowerBound) : nil
+        }
+        let brackets = bursts.compactMap(cellRange)
+        let compareKey = view.shortcuts.keys(for: .compare).first?.label
+        let picked = selectedPhotos().count
+        var label: String?
+        var labelRange: ClosedRange<Int>?
+        if picked >= 2 {
+            label = "\(picked) sélectionnées"
+        } else if let burst = bursts.first(where: { $0.contains(index) }) {
+            label = "Rafale de \(burst.count)"
+            labelRange = cellRange(burst)
+        }
+        if let text = label, let compareKey { label = "\(text)  ·  \(compareKey) pour comparer" }
+        strip.view.update(
+            cells: cells, anchor: index - shown.lowerBound,
+            cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
+            brackets: brackets, label: label, labelRange: labelRange
+        )
+    }
+
+    private static let stripReach = 14
+    private static let thumbnailMargin = 6
+
+    private func selectedPhotos() -> [PhotoKey] {
+        guard !stripSelection.isEmpty else { return [] }
+        return session.list.photos.filter { stripSelection.contains($0.path) }
+    }
+
+    private func stripClicked(_ photo: PhotoKey, extending: Bool) {
+        if extending {
+            if !stripSelection.insert(photo.path).inserted { stripSelection.remove(photo.path) }
+            updateStrip()
+            return
+        }
+        guard let at = session.list.photos.firstIndex(of: photo), let index = session.list.index, at != index else { return }
+        jump(to: at, direction: at < index ? -1 : 1)
+    }
+
+    // MARK: Comparison
+
+    /// The Shift-clicked photos, or else the burst around the current photo, or else the
+    /// current photo and the next.
+    private func photosToCompare() -> [PhotoKey] {
+        let picked = selectedPhotos()
+        if picked.count >= 2 { return picked }
+        guard let index = session.list.index else { return [] }
+        let photos = session.list.photos
+        let reach = max(index - Self.burstReach, 0)...min(index + Self.burstReach, photos.count - 1)
+        let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
+        if let burst = bursts.first(where: { $0.contains(index - reach.lowerBound) }) {
+            return Array(photos[(burst.lowerBound + reach.lowerBound)...(burst.upperBound + reach.lowerBound)])
+        }
+        guard photos.count >= 2 else { return [] }
+        return index + 1 < photos.count ? [photos[index], photos[index + 1]] : [photos[index - 1], photos[index]]
+    }
+
+    private func enterComparison() {
+        guard let model = ComparisonModel(photos: photosToCompare(), focusing: session.list.current) else {
+            NSSound.beep()
+            return
+        }
+        view.exitZoom()
+        preComparisonFrame = window.frame
+        preComparisonCenter = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
+        // The large window must not come back as the viewer's at the next launch.
+        window.setFrameAutosaveName("")
+        comparison = model
+        stripSelection = []
+        strip.setVisible(false)
+        comparedVisible = []
+        comparisonView.reset()
+        // The viewer leaves the window: it must not keep a surface alive that the cache let go.
+        view.showMessage(nil)
+        visiblePhoto = nil
+        comparisonView.frame = window.contentLayoutRect
+        window.contentView = comparisonView
+        window.makeFirstResponder(comparisonView)
+        setWindowButtonsVisible(true)
+        // Four photos at 100 % have to fit at once, or each render would push another out.
+        pipeline.cache.setBudget(.full, normalFullBudget * 2)
+        // Any size goes while comparing.
+        window.contentResizeIncrements = NSSize(width: 1, height: 1)
+        placeComparisonWindow()
+        syncListToFocus()
+        displayComparison()
+        replan()
+    }
+
+    /// Close to the whole screen: this is the one view that wants the room.
+    private func placeComparisonWindow() {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        applyingShape = true
+        window.setFrame(screen.visibleFrame.insetBy(dx: 16, dy: 12), display: true)
+        applyingShape = false
+    }
+
+    /// Back to the viewer, on the focused photo, with the window it had.
+    private func leaveComparison() {
+        guard comparison != nil else { return }
+        syncListToFocus()
+        comparison = nil
+        comparisonView.reset()
+        pipeline.cache.setBudget(.full, normalFullBudget)
+        applyingShape = true
+        window.contentView = view
+        if let preComparisonFrame { window.setFrame(preComparisonFrame, display: true) }
+        window.contentAspectRatio = preComparisonFrame?.size ?? window.frame.size
+        applyingShape = false
+        window.setFrameAutosaveName("Viewer")
+        window.makeFirstResponder(view)
+        shapeCenter = preComparisonCenter
+        shapedAspect = nil
+        view.refreshHover()
+        setWindowButtonsVisible(view.isHovered)
+        didNavigate()
+    }
+
+    private func comparisonPlan(_ model: ComparisonModel) -> ComparisonPlan {
+        var positions: [String: Int] = [:]
+        for (at, photo) in session.list.photos.enumerated() { positions[photo.path] = at }
+        var shown = model.shown.filter { $0 != model.focused }
+        if let focused = model.focused { shown.insert(focused, at: 0) }
+        return ComparisonPlan(
+            shown: shown.compactMap { positions[$0.path] },
+            waiting: model.waiting.compactMap { positions[$0.path] }
+        )
+    }
+
+    /// Everything else in the app reads the current photo: it follows the focus.
+    private func syncListToFocus() {
+        guard let focused = comparison?.focused, let at = session.list.photos.firstIndex(of: focused) else { return }
+        session.move(to: at)
+    }
+
+    private func displayComparison() {
+        guard let model = comparison else { return }
+        comparisonView.arrange(layout: model.layout, focus: model.focus, photos: model.slots)
+        let left = model.remaining
+        comparisonView.setTitle("Comparer  ·  \(left) photo\(left > 1 ? "s" : "") restante\(left > 1 ? "s" : "")")
+        comparedVisible = []
+        let zoomed = comparisonView.zoom
+        for (slot, entry) in model.slots.enumerated() {
+            guard let photo = entry else { continue }
+            let known = metadata.metadata(for: photo)
+            comparisonView.setCaption(slot: slot, number: slot + 1, name: photo.name, settings: known?.settingsText ?? "")
+            if let frame = pipeline.cache.best(photo, zoomed: zoomed != nil) {
+                comparisonView.showFrame(frame, slot: slot)
+                comparedVisible.insert(slot)
+                if frame.key.tier == .preview {
+                    comparisonView.setBadge("Aperçu", slot: slot)
+                } else if let zoomed {
+                    // Under memory pressure, only the focused photo is rendered at 100 %.
+                    let coming = pipeline.memoryLevel == .normal || slot == model.focus
+                    comparisonView.setBadge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), slot: slot)
+                } else {
+                    comparisonView.setBadge(nil, slot: slot)
+                }
+            } else if pipeline.hasFailed(FrameKey(photo: photo, tier: .screen)) {
+                comparisonView.showMessage("Impossible de décoder \(photo.name)", slot: slot)
+                comparisonView.setBadge(nil, slot: slot)
+                comparedVisible.insert(slot)
+            } else {
+                comparisonView.showMessage(photo.name, slot: slot)
+                comparisonView.setBadge(nil, slot: slot)
+            }
+        }
+        metadata.request(model.shown + model.waiting.prefix(ComparisonModel.slotCount))
+        scheduleStripUpdate()
+    }
+
+    /// Every photo of the comparison: its slot number shows through the marks and the opacity.
+    private func updateComparisonRow() {
+        guard let model = comparison else { return }
+        let members = model.members
+        thumbnails.request(members)
+        let cells = members.map { photo -> StripCell in
+            let inSlot = model.shown.contains(photo)
+            let isWaiting = model.waiting.contains(photo)
+            return StripCell(
+                photo: photo,
+                image: thumbnails.image(for: photo),
+                mark: photo == model.focused ? .current : .none,
+                opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14)
+            )
+        }
+        let waiting = model.waiting.count
+        // Centred when it fits; a long burst keeps the focused photo in the middle instead.
+        comparisonView.row.update(cells: cells, anchor: model.focused.flatMap { members.firstIndex(of: $0) })
+        comparisonView.setRowNote(waiting > 0 ? "\(waiting) en attente" : nil)
+    }
+
+    private func comparisonRowClicked(_ photo: PhotoKey) {
+        guard let slot = comparison?.slots.firstIndex(of: photo) else { return }
+        selectSlot(slot)
+    }
+
+    private func selectSlot(_ slot: Int) {
+        comparison?.setFocus(slot: slot)
+        focusChanged()
+    }
+
+    private func focusChanged() {
+        syncListToFocus()
+        displayComparison()
+        replan()
+    }
+
+    private func performInComparison(_ action: ShortcutAction) {
+        guard comparison != nil else { return }
+        switch action {
+        case .next, .jumpForward:
+            comparison?.moveFocus(by: 1)
+            focusChanged()
+        case .previous, .jumpBackward:
+            comparison?.moveFocus(by: -1)
+            focusChanged()
+        case .first:
+            selectSlot(comparison?.slots.firstIndex { $0 != nil } ?? 0)
+        case .last:
+            selectSlot(comparison?.slots.lastIndex { $0 != nil } ?? 0)
+        case .delete:
+            trashFocusedInComparison()
+        case .keepSelected:
+            keepFocusedInComparison()
+        case .undo:
+            undo()
+        case .toggleZoom:
+            let point = window.mouseLocationOutsideOfEventStream
+            comparisonView.toggleZoom(atWindowPoint: comparisonView.bounds.contains(comparisonView.convert(point, from: nil)) ? point : nil)
+        case .exit:
+            if comparisonView.zoom != nil {
+                comparisonView.exitZoom()
+            } else {
+                leaveComparison()
+            }
+        case .compare:
+            leaveComparison()
+        case .revealInFinder:
+            revealInFinder()
+        case .toggleInfo, .toggleStrip:
+            break
+        }
+    }
+
+    /// Whatever is deleted must be what the user is looking at.
+    private func trashFocusedInComparison() {
+        guard let model = comparison, let focused = model.focused, comparedVisible.contains(model.focus) else {
+            NSSound.beep()
+            return
+        }
+        trashInComparison([focused], message: "\(focused.name) à la corbeille")
+    }
+
+    /// Removes the other photos on screen. Those still waiting stay out of this: nobody has
+    /// seen them yet. They come in next.
+    private func keepFocusedInComparison() {
+        guard let model = comparison, model.focused != nil else { return }
+        let others = model.shownOthers
+        let everyoneVisible = model.slots.indices.allSatisfy { model.slots[$0] == nil || comparedVisible.contains($0) }
+        guard !others.isEmpty, everyoneVisible else {
+            NSSound.beep()
+            return
+        }
+        let count = others.count
+        trashInComparison(others, message: "\(count) photo\(count > 1 ? "s" : "") à la corbeille")
+    }
+
+    private func trashInComparison(_ photos: [PhotoKey], message: String) {
+        // The model first: the list event that follows must find them already gone from it.
+        comparison?.remove(photos)
+        guard session.trash(photos) else {
+            NSSound.beep()
+            comparisonListChanged()
+            session.requestScan()
+            return
+        }
+        if comparison != nil {
+            let undoKey = view.shortcuts.keys(for: .undo).first?.label
+            comparisonView.showToast(undoKey.map { "\(message)  ·  \($0) pour annuler" } ?? message)
+        }
+    }
+
+    /// The list changed under the comparison: a deletion just made, or the folder itself.
+    private func comparisonListChanged() {
+        comparison?.reconcile(with: session.list.photos)
+        guard let model = comparison else { return }
+        if model.remaining <= 1 {
+            leaveComparison()
+            return
+        }
+        focusChanged()
     }
 
     // MARK: Session events
@@ -356,11 +804,20 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func handle(_ event: SessionEvent) {
         switch event {
         case .listChanged:
+            if comparison != nil {
+                comparisonListChanged()
+                return
+            }
             display()
             replan()
             scheduleTimers()
         case .restored:
             navigationToken += 1
+            if comparison != nil {
+                // Its list event already brought the photo back; the session then selected it.
+                focusChanged()
+                return
+            }
             display()
             replan()
         case .trashed(let photo):
@@ -393,7 +850,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         alert.addButton(withTitle: "Supprimer définitivement").hasDestructiveAction = true
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
-                if response == .alertSecondButtonReturn { self?.session.deletePermanently(photo) }
+                guard response == .alertSecondButtonReturn else { return }
+                // Recorded like a trash, so a failure brings the photo back to its slot.
+                self?.comparison?.remove([photo])
+                self?.session.deletePermanently(photo)
             }
         }
     }
@@ -405,15 +865,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
         view.refreshHover()
     }
 
+    func windowDidMiniaturize(_ notification: Notification) { updateStrip() }
+    func windowDidDeminiaturize(_ notification: Notification) { updateStrip() }
+
     /// A size the user chose stays for the next photos, whatever their orientation.
     func windowDidResize(_ notification: Notification) {
-        guard !applyingShape else { return }
+        guard !applyingShape, comparison == nil else { return }
         chosenHeight = window.frame.height
         shapeCenter = nil
     }
 
     func windowDidMove(_ notification: Notification) {
-        guard !applyingShape else { return }
+        guard !applyingShape, comparison == nil else { return }
         shapeCenter = nil
     }
 }

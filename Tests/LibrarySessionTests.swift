@@ -100,6 +100,59 @@ final class LibrarySessionTests: XCTestCase {
         XCTAssertEqual(session.list.current?.name, "a.arw")
     }
 
+    func testOneUndoBringsBackTheWholeGroup() async throws {
+        let session = LibrarySession(fileOps: ops())
+        await openFolder(session)
+        session.trashCurrent(direction: 1)
+        let group = session.list.photos.filter { ["c.arw", "d.arw"].contains($0.name) }
+        XCTAssertTrue(session.trash(group))
+        XCTAssertEqual(names(session), ["b.arw"], "the list changes at once")
+        await spin { !session.hasPendingIO }
+
+        XCTAssertTrue(session.undo())
+        await spin { !session.hasPendingIO && session.list.count == 3 }
+        XCTAssertEqual(names(session), ["b.arw", "c.arw", "d.arw"], "the earlier single deletion stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("c.arw").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("d.arw").path))
+
+        XCTAssertTrue(session.undo())
+        await spin { !session.hasPendingIO && session.list.count == 4 }
+        XCTAssertFalse(session.undo())
+    }
+
+    func testUndoWhileTheGroupIsStillBeingTrashed() async throws {
+        let gate = Gate()
+        let session = LibrarySession(fileOps: ops(gate: gate))
+        await openFolder(session)
+        let group = Array(session.list.photos.prefix(3))
+        XCTAssertTrue(session.trash(group))
+        XCTAssertTrue(session.undo())
+        XCTAssertFalse(session.undo(), "nothing else to undo")
+        gate.release()
+        await spin { !session.hasPendingIO && session.list.count == 4 }
+        XCTAssertEqual(names(session), ["a.arw", "b.arw", "c.arw", "d.arw"])
+    }
+
+    func testAGroupTrashKeepsTheCurrentPhoto() async throws {
+        let session = LibrarySession(fileOps: ops())
+        await openFolder(session)
+        session.move(to: 1)
+        let others = session.list.photos.filter { $0.name != "b.arw" }
+        XCTAssertTrue(session.trash(others))
+        XCTAssertEqual(session.list.current?.name, "b.arw")
+        await spin { !session.hasPendingIO }
+    }
+
+    func testAGroupWithAReplacedFileLeavesItOut() async throws {
+        let session = LibrarySession(fileOps: ops())
+        await openFolder(session)
+        let first = session.list.photos[0]
+        let stale = PhotoKey(path: first.path, device: first.device, inode: first.inode, size: first.size + 1, mtimeSeconds: first.mtimeSeconds, mtimeNanoseconds: first.mtimeNanoseconds)
+        XCTAssertFalse(session.trash([stale]))
+        XCTAssertEqual(session.list.count, 4)
+        XCTAssertFalse(session.hasPendingIO)
+    }
+
     func testDeletedPhotosDoNotComeBackDuringRescan() async throws {
         let gate = Gate()
         let session = LibrarySession(fileOps: ops(gate: gate))

@@ -41,9 +41,14 @@ final class LibrarySession {
     @MainActor private final class TrashOp {
         enum State { case pending, done(URL) }
         let photo: PhotoKey
+        /// Deletions of one gesture share a group, and one undo brings them all back.
+        let group: Int
         var state = State.pending
         var undoRequested = false
-        init(photo: PhotoKey) { self.photo = photo }
+        init(photo: PhotoKey, group: Int) {
+            self.photo = photo
+            self.group = group
+        }
     }
 
     private(set) var list = PhotoList()
@@ -66,6 +71,7 @@ final class LibrarySession {
     private var rescanPending = false
     private var ops: [TrashOp] = []
     private var pendingIO = 0
+    private var lastGroup = 0
 
     init(fileOps: FileOps = .system,
          scanner: @escaping @Sendable (URL, Set<String>?) -> [PhotoKey] = FolderScanner.scan) {
@@ -166,8 +172,28 @@ final class LibrarySession {
     @discardableResult
     func trashCurrent(direction: Int) -> Bool {
         guard let photo = list.removeCurrent(direction: direction) else { return false }
+        lastGroup += 1
+        enqueueTrash(photo, group: lastGroup)
+        onEvent(.listChanged)
+        return true
+    }
+
+    /// Removes these photos from the list right away, then trashes them in FIFO order, as one
+    /// gesture for undo. Photos no longer listed under this exact revision are left alone.
+    /// Returns false when none of them could be deleted.
+    @discardableResult
+    func trash(_ photos: [PhotoKey]) -> Bool {
+        let accepted = photos.filter { list.remove($0) }
+        guard !accepted.isEmpty else { return false }
+        lastGroup += 1
+        for photo in accepted { enqueueTrash(photo, group: lastGroup) }
+        onEvent(.listChanged)
+        return true
+    }
+
+    private func enqueueTrash(_ photo: PhotoKey, group: Int) {
         tombstones.insert(photo.path)
-        let op = TrashOp(photo: photo)
+        let op = TrashOp(photo: photo, group: group)
         ops.append(op)
         pendingIO += 1
         let fileOps = fileOps
@@ -177,8 +203,6 @@ final class LibrarySession {
                 MainActor.assumeIsolated { self?.finishTrash(op, result) }
             }
         }
-        onEvent(.listChanged)
-        return true
     }
 
     private enum TrashResult: Sendable {
@@ -221,17 +245,19 @@ final class LibrarySession {
         ioFinished()
     }
 
-    /// Undoes the latest deletion not already being undone. A deletion still in progress
-    /// is restored as soon as it completes.
+    /// Undoes the latest deletion gesture not already being undone, whatever number of photos
+    /// it took. A deletion still in progress is restored as soon as it completes.
     @discardableResult
     func undo() -> Bool {
-        guard let op = ops.last(where: { !$0.undoRequested }) else { return false }
-        switch op.state {
-        case .pending:
-            op.undoRequested = true
-        case .done(let trashURL):
-            ops.removeAll { $0 === op }
-            restore(op.photo, from: trashURL)
+        guard let latest = ops.last(where: { !$0.undoRequested }) else { return false }
+        for op in ops.reversed() where op.group == latest.group && !op.undoRequested {
+            switch op.state {
+            case .pending:
+                op.undoRequested = true
+            case .done(let trashURL):
+                ops.removeAll { $0 === op }
+                restore(op.photo, from: trashURL)
+            }
         }
         return true
     }
