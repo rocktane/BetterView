@@ -144,11 +144,37 @@ final class KeyRecorderTests: XCTestCase {
         recorder.start(.delete, in: settings)
         NSApp.sendEvent(key("z", 6, in: settings))
         XCTAssertEqual(recorder.conflict?.owner, .toggleZoom)
-        XCTAssertFalse(recorder.isListening)
+        XCTAssertFalse(recorder.isCapturing)
+        NSApp.sendEvent(key("q", 12, in: settings))
+        XCTAssertEqual(recorder.conflict?.owner, .toggleZoom, "other keys wait for the answer")
         XCTAssertEqual(store.map, .defaults, "nothing moves before Remplacer")
         recorder.replace()
         XCTAssertEqual(store.map.action(for: .character("z")), .delete)
         XCTAssertTrue(store.map.keys(for: .toggleZoom).isEmpty)
+        XCTAssertFalse(recorder.isListening)
+    }
+
+    func testAPendingConflictEndsWithEscapeOrAnotherWindow() {
+        let store = ShortcutStore(defaults: defaults)
+        let recorder = KeyRecorder(store: store)
+        recorder.start(.delete, in: settings)
+        NSApp.sendEvent(key("z", 6, in: settings))
+        NSApp.sendEvent(key("\u{1B}", 53, in: settings))
+        XCTAssertNil(recorder.conflict)
+        XCTAssertNil(recorder.target)
+        XCTAssertFalse(recorder.isListening)
+
+        recorder.start(.delete, in: settings)
+        NSApp.sendEvent(key("z", 6, in: settings))
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: settings)
+        XCTAssertNil(recorder.conflict)
+        XCTAssertFalse(recorder.isListening)
+
+        recorder.start(.delete, in: settings)
+        NSApp.sendEvent(key("z", 6, in: settings))
+        NSApp.sendEvent(key("a", 0, in: viewer))
+        XCTAssertNil(recorder.conflict)
+        XCTAssertEqual(store.map, .defaults)
     }
 
     func testReplacingAKeyAndEscape() {

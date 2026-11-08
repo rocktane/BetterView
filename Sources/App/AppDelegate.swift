@@ -69,10 +69,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func performShortcut(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String, let action = ShortcutAction(rawValue: name) else { return }
-        // Same rule as the keyboard: a held key acts once unless the command is navigation.
-        let event = NSApp.currentEvent
-        let isRepeat = event?.type == .keyDown && event?.isARepeat == true
-        if action.repeats || !isRepeat { viewer.perform(action, repeating: isRepeat) }
+        // By key, the same decision as the viewer's: a held key acts once unless the command
+        // is navigation. By click, the command simply runs.
+        guard let event = NSApp.currentEvent, event.type == .keyDown else {
+            viewer.perform(action)
+            return
+        }
+        switch shortcuts.map.decide(KeyBinding(event: event), isRepeat: event.isARepeat) {
+        case .perform(let decided, let repeating) where decided == action:
+            viewer.perform(action, repeating: repeating)
+        case .swallow:
+            return
+        default:
+            // The menu matched a key the map resolves differently: apply the rule to the item.
+            if action.repeats || !event.isARepeat { viewer.perform(action, repeating: event.isARepeat) }
+        }
     }
 
     /// The view and the menu always answer to the keys chosen in the settings.

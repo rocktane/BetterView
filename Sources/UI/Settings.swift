@@ -352,6 +352,9 @@ final class KeyRecorder: ObservableObject {
 
     var isListening: Bool { monitor != nil }
 
+    /// Listening for a new key, as opposed to waiting for an answer about a conflict.
+    var isCapturing: Bool { monitor != nil && conflict == nil }
+
     /// `window` is the settings window, the only one whose keys are recorded.
     func start(_ action: ShortcutAction, replacing: KeyBinding? = nil, in window: NSWindow? = NSApp.keyWindow) {
         stopListening()
@@ -387,8 +390,7 @@ final class KeyRecorder: ObservableObject {
     func replace() {
         guard let conflict else { return }
         apply(conflict.binding, conflict.target)
-        self.conflict = nil
-        target = nil
+        cancel()
     }
 
     private func record(_ event: NSEvent) {
@@ -398,13 +400,14 @@ final class KeyRecorder: ObservableObject {
             cancel()
             return
         }
+        // A conflict waits for Remplacer or Annuler: other keys do nothing meanwhile.
+        if conflict != nil { return }
         guard let binding = KeyBinding(event: event) else { return }
         if binding.isReserved {
             notice = (target.action, "\(binding.label) est réservé par le menu de l'app.")
             return
         }
         if let owner = store.map.action(for: binding), owner != target.action {
-            stopListening()
             conflict = Conflict(target: target, binding: binding, owner: owner)
             return
         }
