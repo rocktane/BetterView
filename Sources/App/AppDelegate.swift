@@ -13,7 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Runs alongside the first preview: no photo depends on the other finishing first.
         Decoders.warmUp()
-        viewer = ViewerController(diskDirectory: Benchmark.diskDirectory ?? DiskCache.defaultDirectory)
+        // The benchmark deletes clones into a fake Trash: they stay out of the real history.
+        let journal = Benchmark.diskDirectory == nil ? DeletionJournal(url: DeletionJournal.defaultURL) : nil
+        viewer = ViewerController(
+            session: LibrarySession(journal: journal),
+            diskDirectory: Benchmark.diskDirectory ?? DiskCache.defaultDirectory
+        )
         NSApp.mainMenu = buildMenu()
         applyShortcuts(shortcuts.map)
         shortcuts.onChange = { [weak self] in self?.applyShortcuts($0) }

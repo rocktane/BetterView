@@ -896,7 +896,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .trashFailed(let photo, let message):
             confirmPermanentDelete(photo, message: message)
         case .restoreFailed(let name, let message):
-            alert("Impossible de restaurer \(name)", info: "\(message)\nLe fichier est resté dans la corbeille.")
+            alert("Impossible de restaurer \(name)", info: message)
         case .deleteFailed(let name, let message):
             alert("Impossible de supprimer \(name)", info: message)
         }
