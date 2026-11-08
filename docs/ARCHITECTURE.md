@@ -305,3 +305,12 @@ Fenêtre à la forme de la photo, avec une immersion plein écran depuis retiré
 Bande d'aperçu affichée, même machine, même dossier, `main` puis cette version (`--bench`, un passage chacun, donc comparaison indicative) : navigation à 1 photo/s p99 9,7 → 5,0 ms, touche maintenue p99 2,5 → 2,1 ms, suppression p99 2,2 → 2,5 ms, empreinte au repos 1,67 → 1,60 Go. Aucune dégradation visible ; l'écart à 1 photo/s reste dans le bruit d'un passage unique.
 
 Non mesuré : latence jusqu'à l'image réellement présentée à l'écran (seul le commit l'est), lecture à froid, carte SD, volume SMB, écran 6K.
+
+
+### Validation après intégration du zoom AF (2026-11-08)
+
+135 tests passent après fusion de `main` (raccourcis configurables, bande et comparaison). Council GPT-6.1 Sol medium : APPROVE sur `db5d743`, seconde instance du même modèle autorisée explicitement. A rejoint `ShortcutAction` ; la comparaison conserve son zoom synchronisé et ignore cette action AF, réservée à la vue normale.
+
+Sur les 403 ARW actuellement présents dans `~/Pictures`, `--verify-af` retrouve 403 positions (68 au centre), aucune incohérence avec l’extent Apple. Comparaison séparée avec ExifTool : aucun écart de position, orientation ou mode AF.
+
+Bench Release sur ces 403 fichiers : après une première passe perturbée (saut sans cache p95 1059 ms), une passe de référence `main`, puis une seconde passe AF donnent respectivement un p99 de navigation à 1 photo/s de 5,5 et 5,6 ms, touche maintenue 2,2 et 2,1 ms, saut sans cache p95 613 et 593 ms. Aucun écran vide ; arrivées S/F 100 % à 1 et 3 photos/s. La seconde passe AF démarre en 378 ms et tient 1762 Mo au repos. Les premiers lancements des deux binaires neufs ont pris environ 20 s ; un contrôle de lancement AF suivant prend 403 ms. Ces délais initiaux restent inexpliqués et ne sont pas spécifiques à la branche. Mesures indicatives sur une machine partagée ; aucune régression reproductible identifiée.
