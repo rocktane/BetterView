@@ -623,6 +623,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
         let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
         thumbnails.request(wanted.map { photos[$0] })
+        // Away from the current photo, the dates that outline its bursts are read here.
+        if center != index {
+            metadata.request(([center] + (1...Self.burstReach).flatMap { [center + $0, center - $0] })
+                .filter(photos.indices.contains).map { photos[$0] })
+        }
 
         let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
         let bursts = PhotoGroups.bursts(dates: photos[reach].map { metadata.metadata(for: $0)?.date })
@@ -756,7 +761,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if let preComparisonFrame { window.setFrame(preComparisonFrame, display: true) }
         window.contentAspectRatio = preComparisonFrame?.size ?? window.frame.size
         applyingShape = false
-        window.setFrameAutosaveName("Viewer")
+        // Without a photo shown yet, the first shape enables it: the small frame is not kept.
+        if !welcoming { window.setFrameAutosaveName("Viewer") }
         window.makeFirstResponder(view)
         shapeCenter = preComparisonCenter
         shapedAspect = nil

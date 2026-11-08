@@ -120,36 +120,53 @@ final class StripView: NSView {
     /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
     /// outlined as one, and its tip shows when the pointer rests on it.
     func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
-        let previous = self.anchor.flatMap { self.cells.indices.contains($0) ? self.cells[$0].photo : nil }
+        let previous = (cells: self.cells, anchor: self.anchor)
         self.cells = cells
         self.anchor = anchor
         cutAtStart = cut.start
         cutAtEnd = cut.end
         groupRanges = ranges
         groupTips = tips
-        carryScroll(from: previous)
+        carryScroll(from: previous.cells, anchor: previous.anchor)
         redraw()
         updateTips()
         if !scrollGestureActive { settle() }
     }
 
     /// A new photo in the middle first leaves the photos where they were, the shift rebased
-    /// on it: a swipe goes on under the fingers, and any other move slides there.
-    private func carryScroll(from previous: PhotoKey?) {
+    /// on a photo both rows share: a swipe goes on under the fingers, and any other move,
+    /// deletion of the current photo included, slides there.
+    private func carryScroll(from old: [StripCell], anchor oldAnchor: Int?) {
         scrollTarget = nil
-        guard let anchor, cells.indices.contains(anchor), let previous, cells[anchor].photo != previous else { return }
-        guard let from = cells.firstIndex(where: { $0.photo == previous }) else {
+        guard let anchor, cells.indices.contains(anchor), let oldAnchor, old.indices.contains(oldAnchor),
+              cells[anchor].photo != old[oldAnchor].photo
+        else { return }
+        // The new middle photo if it was there, else the old one, else any photo kept.
+        let candidates = [cells[anchor].photo, old[oldAnchor].photo] + cells.map(\.photo)
+        guard let shared = candidates.lazy.compactMap({ photo -> (new: Int, old: Int)? in
+            guard let new = self.cells.firstIndex(where: { $0.photo == photo }),
+                  let was = old.firstIndex(where: { $0.photo == photo }) else { return nil }
+            return (new, was)
+        }).first else {
             scrollShift = 0
             return
         }
-        scrollShift += centre(of: anchor) - centre(of: from)
+        // The shared photo keeps its place on screen.
+        let before = centres(of: old), after = centres(of: cells)
+        scrollShift += (after[anchor] - after[shared.new]) - (before[oldAnchor] - before[shared.old])
     }
 
-    /// Where a cell's centre lies along the row, from the start of the first cell.
-    private func centre(of index: Int) -> CGFloat {
-        let widths = cells.map(width(of:))
-        return widths[..<index].reduce(0, +) + metrics.gap * CGFloat(index) + widths[index] / 2
+    /// Where each cell's centre lies along the row, from the start of the first cell.
+    private func centres(of row: [StripCell]) -> [CGFloat] {
+        var x: CGFloat = 0
+        return row.map { cell in
+            let width = width(of: cell)
+            defer { x += width + metrics.gap }
+            return x + width / 2
+        }
     }
+
+    private func centre(of index: Int) -> CGFloat { centres(of: cells)[index] }
 
     private func width(of cell: StripCell) -> CGFloat {
         guard let image = cell.image, image.width > 0, image.height > 0 else { return (metrics.height * Self.defaultAspect).rounded() }

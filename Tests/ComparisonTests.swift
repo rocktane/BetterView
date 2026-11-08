@@ -480,6 +480,19 @@ final class StripLayoutTests: XCTestCase {
         return view
     }
 
+    /// Deleting the current photo slides the next one into the middle: right after the
+    /// update, it is still where it was, and only the animation moves it.
+    func testDeletingTheCurrentPhotoSlidesTheNextIntoPlace() throws {
+        let image = try portrait()
+        func key(_ n: Int) -> PhotoKey { PhotoKey(path: "/p/\(n).arw", device: 1, inode: 1, size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0) }
+        let view = StripView(metrics: .init(height: 66, gap: 6, top: 8, fadesEdges: true))
+        view.frame = CGRect(x: 0, y: 0, width: 820, height: 82)
+        view.update(cells: (0..<29).map { StripCell(photo: key($0), image: image) }, anchor: 14, cut: (true, true))
+        let before = view.cellFrames[15]
+        view.update(cells: (0..<29).filter { $0 != 14 }.map { StripCell(photo: key($0), image: image) }, anchor: 14, cut: (true, true))
+        XCTAssertEqual(view.cellFrames[14].minX, before.minX, accuracy: 1)
+    }
+
     /// A burst is outlined as one, in the gaps around it, without reaching its neighbours.
     func testABurstOutlineStaysInTheGapsAroundIt() throws {
         let view = try strip(count: 29, anchor: 14, cut: (true, true), groups: [12...15])
