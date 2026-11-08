@@ -116,6 +116,22 @@ final class ProtectionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: path("a.arw")))
     }
 
+    /// The comparison's « keep this one » deletes the others in one gesture: a protected one stays.
+    func testGroupedDeletionLeavesProtectedPhotos() async throws {
+        lock("b.arw")
+        let calls = Box<[String]>([])
+        let session = LibrarySession(fileOps: ops(calls: calls))
+        await openFolder(session)
+        let photos = session.list.photos
+
+        XCTAssertFalse(session.trash([photos[1]]), "only a protected photo: nothing to do")
+        XCTAssertTrue(session.trash([photos[1], photos[2]]))
+        await spin { !session.hasPendingIO }
+        XCTAssertEqual(calls.value, ["c.arw"])
+        XCTAssertEqual(session.list.photos.map(\.name), ["a.arw", "b.arw", "d.arw"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path("b.arw")))
+    }
+
     /// Locked after the scan: the queue sees it before the Trash is asked, and never unlocks it.
     func testLockSetAfterScanIsCaughtInTheQueue() async throws {
         let calls = Box<[String]>([])
