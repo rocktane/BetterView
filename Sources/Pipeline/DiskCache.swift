@@ -107,6 +107,26 @@ final class DiskCache {
         }
     }
 
+    /// Bytes on disk, measured off the main thread. Runs on the cache's serial queue, so a
+    /// measure asked after `clear()` sees the cleared directory.
+    func measureUsage(_ completion: @escaping @MainActor (_ bytes: Int, _ files: Int) -> Void) {
+        let directory = directory
+        queue.async {
+            let keys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .fileSizeKey]
+            let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys))) ?? []
+            var bytes = 0
+            var count = 0
+            for url in files where url.pathExtension == "jpg" {
+                let values = try? url.resourceValues(forKeys: keys)
+                bytes += values?.totalFileAllocatedSize ?? values?.fileSize ?? 0
+                count += 1
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(bytes, count) }
+            }
+        }
+    }
+
     /// Registers a finished write, unless the cache was cleared while it ran: the file is
     /// then deleted so a clear really leaves nothing behind.
     func noteWritten(photo: PhotoKey, entry: Entry, generation written: Int) {

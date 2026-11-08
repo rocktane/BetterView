@@ -61,19 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.makeKeyAndOrderFront(nil)
             return
         }
-        let disk = viewer.pipeline.disk
-        let viewer = viewer!
-        let root = SettingsView(
-            shortcuts: shortcuts,
-            onInfoVisibleChange: { viewer.setInfoVisible($0) },
-            onStripVisibleChange: { viewer.setStripVisible($0) },
-            onCacheSizeChange: { disk.setBudget($0 * 1_000_000_000) },
-            onClearCache: { disk.clear() }
-        )
-        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
-        window.title = "Réglages"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
+        let window = SettingsWindow.make(shortcuts: shortcuts, disk: viewer.pipeline.disk, viewer: viewer)
         window.center()
         window.makeKeyAndOrderFront(nil)
         settingsWindow = window
@@ -81,7 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func performShortcut(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String, let action = ShortcutAction(rawValue: name) else { return }
-        if action.repeats || NSApp.currentEvent?.isARepeat != true { viewer.perform(action) }
+        // Same rule as the keyboard: a held key acts once unless the command is navigation.
+        let event = NSApp.currentEvent
+        let isRepeat = event?.type == .keyDown && event?.isARepeat == true
+        if action.repeats || !isRepeat { viewer.perform(action, repeating: isRepeat) }
     }
 
     /// The view and the menu always answer to the keys chosen in the settings.
@@ -141,8 +132,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.previous),
             action(.jumpForward),
             action(.jumpBackward),
-            action(.first),
-            action(.last),
             .separator(),
             action(.toggleZoom),
             action(.zoomToFocus),
@@ -153,5 +142,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.keepSelected),
         ])
         return main
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    /// Photo commands need the viewer in front: a key typed in the settings window never
+    /// reaches a photo, even one that is also a menu key.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(performShortcut(_:)) else { return true }
+        return viewer.window.isKeyWindow
     }
 }
