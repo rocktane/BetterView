@@ -161,6 +161,8 @@ struct KeyBinding: Hashable, Codable, Sendable {
         .character("w", modifiers: .command),
         .character("o", modifiers: .command),
         .character(",", modifiers: .command),
+        // Deletion history.
+        .character("y", modifiers: .command),
     ]
 
     var isReserved: Bool { Self.reserved.contains(self) }

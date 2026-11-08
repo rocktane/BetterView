@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var viewer: ViewerController!
     private var settingsWindow: NSWindow?
+    private var historyWindow: HistoryWindowController?
     private let shortcuts = ShortcutStore()
     private var shortcutItems: [(action: ShortcutAction, item: NSMenuItem)] = []
     private var terminating = false
@@ -84,6 +85,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow = window
     }
 
+    @objc private func showHistory(_ sender: Any?) {
+        if historyWindow == nil {
+            let session = viewer.session
+            historyWindow = HistoryWindowController(session: session) {
+                session.folderPath ?? Self.lastOpenedFolder()
+            }
+        }
+        historyWindow?.show()
+    }
+
+    /// The folder of the most recent item in Open Recent, without touching the disk: a RAW is
+    /// a file, anything else was opened as a folder.
+    private static func lastOpenedFolder() -> String? {
+        guard let url = NSDocumentController.shared.recentDocumentURLs.first else { return nil }
+        let isPhoto = RawFormat.extensions.contains(url.pathExtension.lowercased())
+        return (isPhoto ? url.deletingLastPathComponent() : url).standardizedFileURL.path
+    }
+
     @objc private func performShortcut(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String, let action = ShortcutAction(rawValue: name) else { return }
         if action.repeats || NSApp.currentEvent?.isARepeat != true { viewer.perform(action) }
@@ -140,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         submenu("Édition", [
             action(.undo),
+            item("Suppressions du dossier…", #selector(showHistory), "y"),
         ])
         submenu("Présentation", [
             action(.next),

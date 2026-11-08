@@ -144,6 +144,8 @@ final class LibrarySession {
             }
         }
         onEvent(.listChanged)
+        // The history window shows the open folder's deletions.
+        history.onChange()
         if let folder {
             watcher.watch(folder) { [weak self] in self?.requestScan() }
         }

@@ -70,8 +70,13 @@ extension Decoders {
     /// Upright, decoded, and small. Sony files go through the JPEG cut out of the file, so
     /// ImageIO's RAW plugin stays unloaded here too.
     static func thumbnail(_ photo: PhotoKey) -> CGImage? {
+        thumbnail(at: photo.url, maxPixels: thumbnailPixels)
+    }
+
+    /// Same, for any file and size: the deletion history reads files in the Trash.
+    static func thumbnail(at url: URL, maxPixels thumbnailPixels: Int) -> CGImage? {
         autoreleasepool { () -> CGImage? in
-            if let parsed = ARWPreview.read(photo.url)?.preview,
+            if let parsed = ARWPreview.read(url)?.preview,
                let source = CGImageSourceCreateWithData(parsed.jpeg as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
                let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                    kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -79,7 +84,7 @@ extension Decoders {
                ] as CFDictionary) {
                 return upright(image, orientation: parsed.orientation)
             }
-            guard let source = CGImageSourceCreateWithURL(photo.url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                       kCGImageSourceCreateThumbnailFromImageAlways: false,
                       kCGImageSourceCreateThumbnailFromImageIfAbsent: false,

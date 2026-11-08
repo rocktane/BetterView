@@ -896,17 +896,19 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .trashFailed(let photo, let message):
             confirmPermanentDelete(photo, message: message)
         case .restoreFailed(let name, let message):
-            alert("Impossible de restaurer \(name)", info: message)
+            // Restores also start from the history window: the alert goes where the user is.
+            alert("Impossible de restaurer \(name)", info: message, in: NSApp.keyWindow)
         case .deleteFailed(let name, let message):
             alert("Impossible de supprimer \(name)", info: message)
         }
     }
 
-    private func alert(_ title: String, info: String) {
+    private func alert(_ title: String, info: String, in host: NSWindow? = nil) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = info
-        alert.beginSheetModal(for: window)
+        let target = host.flatMap { $0.attachedSheet == nil && !($0 is NSPanel) ? $0 : nil } ?? window
+        alert.beginSheetModal(for: target)
     }
 
     /// Volumes without a Trash: the file is kept unless the user confirms this one deletion.

@@ -263,10 +263,15 @@ final class DeletionHistory {
         }
     }
 
-    /// Looks at the Trash URL of these entries, off the main thread, once per request.
+    /// The next `check` looks at the Trash again, for entries already looked at.
+    func forgetChecks() {
+        checks.removeAll()
+    }
+
+    /// Looks at the Trash URL of these entries not looked at yet, off the main thread.
     func check(_ ids: [UUID]) {
         let todo = ids.compactMap { id -> (UUID, String)? in
-            guard !checking.contains(id), let record = records[id], record.phase == .inTrash,
+            guard checks[id] == nil, !checking.contains(id), let record = records[id], record.phase == .inTrash,
                   let path = record.trashPath else { return nil }
             return (id, path)
         }

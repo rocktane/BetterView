@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import ImageIO
 
 /// Small previews for the history window, read on request from the file where it is now (the
 /// Trash URL returned by the move, or the origin once restored). One at a time, below the
@@ -8,7 +7,8 @@ import ImageIO
 /// as IOSurfaces, and dropped when the window closes. A missing preview never blocks a restore.
 @MainActor
 final class HistoryThumbnails {
-    nonisolated static let maxPixel = 160
+    /// 180 × 120 points on a Retina screen.
+    nonisolated static let maxPixel = 360
     private static let capacity = 200
     private static let maxQueued = 40
 
@@ -103,58 +103,8 @@ final class HistoryThumbnails {
     /// after. Blocking.
     nonisolated static func load(path: String, revision: FileRevision) -> CGImage? {
         guard PathState.inspect(path) == .file(revision) else { return nil }
-        let url = URL(fileURLWithPath: path)
-        let image = autoreleasepool { direct(url) ?? imageIO(url) }
+        let image = Decoders.thumbnail(at: URL(fileURLWithPath: path), maxPixels: maxPixel)
         guard PathState.inspect(path) == .file(revision) else { return nil }
         return image
-    }
-
-    private nonisolated static func thumbnailOptions(transform: Bool) -> CFDictionary {
-        [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-            kCGImageSourceCreateThumbnailWithTransform: transform,
-            kCGImageSourceShouldCacheImmediately: true,
-        ] as CFDictionary
-    }
-
-    /// The Sony fast path: the JPEG cut out of the TIFF, scaled down by ImageIO.
-    private nonisolated static func direct(_ url: URL) -> CGImage? {
-        guard let parsed = ARWPreview.read(url),
-              let source = CGImageSourceCreateWithData(parsed.jpeg as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let small = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions(transform: false))
-        else { return nil }
-        return upright(small, orientation: parsed.orientation)
-    }
-
-    /// Other formats: the embedded thumbnail through ImageIO, never a RAW decode.
-    private nonisolated static func imageIO(_ url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: false,
-            kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-        ] as CFDictionary)
-    }
-
-    private nonisolated static func upright(_ image: CGImage, orientation: Int) -> CGImage? {
-        guard orientation != 1 else { return image }
-        let (w, h) = (image.width, image.height)
-        let swapped = orientation == 6 || orientation == 8
-        let (outW, outH) = swapped ? (h, w) : (w, h)
-        guard let context = CGContext(
-            data: nil, width: outW, height: outH, bitsPerComponent: 8, bytesPerRow: 0,
-            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else { return image }
-        switch orientation {
-        case 3: context.concatenate(CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: CGFloat(w), ty: CGFloat(h)))
-        case 6: context.concatenate(CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: CGFloat(w)))
-        case 8: context.concatenate(CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: CGFloat(h), ty: 0))
-        default: break
-        }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
-        return context.makeImage()
     }
 }
