@@ -29,6 +29,8 @@ enum SessionEvent: Sendable {
     case protectionChanged
     case restoreFailed(name: String, message: String)
     case deleteFailed(name: String, message: String)
+    /// The deletion history could not be written: deletions still work, without a record.
+    case historyNotSaved(message: String)
 }
 
 /// Owns the list and everything that can change it: scans, deletions and undo.
@@ -41,19 +43,18 @@ enum SessionEvent: Sendable {
 @MainActor
 final class LibrarySession {
     @MainActor private final class TrashOp {
-        enum State { case pending, done(URL) }
         let photo: PhotoKey
-        /// Deletions of one gesture share a group, and one undo brings them all back.
-        let group: Int
-        var state = State.pending
+        let record: UUID
         var undoRequested = false
-        init(photo: PhotoKey, group: Int) {
+        init(photo: PhotoKey, record: UUID) {
             self.photo = photo
-            self.group = group
+            self.record = record
         }
     }
 
     private(set) var list = PhotoList()
+    /// Every deletion, of this launch and of earlier ones when a journal is given.
+    let history = DeletionHistory()
     private(set) var tombstones: Set<String> = []
     /// Protected photos by path, from the latest scan or deletion attempt. Never read from disk here.
     private(set) var protection: [String: FileProtection] = [:]
@@ -73,19 +74,53 @@ final class LibrarySession {
     private var opGeneration = 0
     private var scanRunning = false
     private var rescanPending = false
-    private var ops: [TrashOp] = []
-    private var pendingIO = 0
+    /// Deletions still in progress, by record.
+    private var ops: [UUID: TrashOp] = [:]
+    /// Deletions of this launch that ⌘Z can take back, latest last. A failed restore stays.
+    private var undoStack: [UUID] = []
+    /// Deletions of one gesture share a group, and one undo brings them all back.
+    private var groups: [UUID: Int] = [:]
     private var lastGroup = 0
+    private var pendingIO = 0
+    private let journal: DeletionJournal?
 
     init(fileOps: FileOps = .system,
-         scanner: @escaping @Sendable (URL, Set<String>?) -> ScanSnapshot = FolderScanner.scan) {
+         scanner: @escaping @Sendable (URL, Set<String>?) -> ScanSnapshot = FolderScanner.scan,
+         journal: DeletionJournal? = nil) {
         self.fileOps = fileOps
         self.scanner = scanner
+        self.journal = journal
+        if let journal {
+            journal.onFailure = { [weak self] message in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.onEvent(.historyNotSaved(message: message)) }
+                }
+            }
+            // First on the queue, so it reads the file before this launch appends to it.
+            ioQueue.async { [weak self] in
+                let loaded = journal.load()
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.history.load(loaded) }
+                }
+            }
+        }
     }
 
     var hasPendingIO: Bool { pendingIO > 0 }
 
     func protection(of photo: PhotoKey) -> FileProtection { protection[photo.path] ?? [] }
+
+    /// The folder of the active list, for the history's default filter.
+    var folderPath: String? { folder?.standardizedFileURL.path }
+
+    /// Whether a file belongs in the active list: same folder, and among the chosen files
+    /// when only some were opened. A file of another folder is restored on disk only.
+    private func covers(_ path: String) -> Bool {
+        guard let folderPath else { return false }
+        let file = URL(fileURLWithPath: path).standardizedFileURL
+        guard file.deletingLastPathComponent().path == folderPath else { return false }
+        return allowed?.contains(file.path) ?? true
+    }
 
     // MARK: Opening
 
@@ -124,6 +159,8 @@ final class LibrarySession {
             }
         }
         onEvent(.listChanged)
+        // The history window shows the open folder's deletions.
+        history.onChange()
         if let folder {
             watcher.watch(folder) { [weak self] in self?.requestScan() }
         }
@@ -206,14 +243,29 @@ final class LibrarySession {
 
     private func enqueueTrash(_ photo: PhotoKey, group: Int) {
         tombstones.insert(photo.path)
-        let op = TrashOp(photo: photo, group: group)
-        ops.append(op)
+        let record = DeletionRecord(photo: photo, phase: .trashing)
+        let op = TrashOp(photo: photo, record: record.id)
+        ops[record.id] = op
+        undoStack.append(record.id)
+        groups[record.id] = group
+        history.update(record)
         pendingIO += 1
         let fileOps = fileOps
+        let journal = journal
         ioQueue.async { [weak self] in
+            // Intent first: an interruption after the move leaves an entry to check, not a lie.
+            journal?.append(record)
             let result = Self.performTrash(photo: photo, fileOps: fileOps)
+            var outcome = record.with(.cancelled)
+            if case .trashed(let trashURL) = result {
+                outcome = record.with(.inTrash)
+                outcome.trashPath = trashURL.path
+                if case .file(let revision) = PathState.inspect(trashURL.path) { outcome.trashRevision = revision }
+            }
+            journal?.append(outcome)
+            let settled = outcome
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.finishTrash(op, result) }
+                MainActor.assumeIsolated { self?.finishTrash(op, result, record: settled) }
             }
         }
     }
@@ -237,78 +289,156 @@ final class LibrarySession {
         }
     }
 
-    private func finishTrash(_ op: TrashOp, _ result: TrashResult) {
+    private func finishTrash(_ op: TrashOp, _ result: TrashResult, record: DeletionRecord) {
         tombstones.remove(op.photo.path)
         opGeneration += 1
+        ops[op.record] = nil
+        history.update(record)
+        if case .trashed = result {} else { dropUndo(op.record) }
         switch result {
-        case .trashed(let trashURL):
-            op.state = .done(trashURL)
+        case .trashed:
             onEvent(.trashed(op.photo))
-            if op.undoRequested {
-                ops.removeAll { $0 === op }
-                restore(op.photo, from: trashURL)
-            }
+            if op.undoRequested { restore(op.record) }
         case .changed:
-            ops.removeAll { $0 === op }
             onEvent(.fileChanged(name: op.photo.name))
             requestScan()
         case .failed(let failure):
-            ops.removeAll { $0 === op }
-            if failure == .locked { protection[op.photo.path, default: []].insert(.locked) }
-            if failure == .fileNotWritable { protection[op.photo.path, default: []].insert(.readOnly) }
-            list.insert(op.photo, select: op.undoRequested || list.count == 0)
-            onEvent(.listChanged)
+            // Still in its folder on disk; back in the list only if that folder is still open.
+            if covers(op.photo.path) {
+                if failure == .locked { protection[op.photo.path, default: []].insert(.locked) }
+                if failure == .fileNotWritable { protection[op.photo.path, default: []].insert(.readOnly) }
+                list.insert(op.photo, select: op.undoRequested || list.count == 0)
+                onEvent(.listChanged)
+            }
             onEvent(.trashFailed(op.photo, failure))
         }
         ioFinished()
     }
 
-    /// Undoes the latest deletion gesture not already being undone, whatever number of photos
-    /// it took. A deletion still in progress is restored as soon as it completes.
+    private func dropUndo(_ id: UUID) {
+        undoStack.removeAll { $0 == id }
+        groups[id] = nil
+    }
+
+    /// Undoes the latest deletion gesture of this launch not already being undone, whatever
+    /// number of photos it took. A deletion still in progress is restored as soon as it
+    /// completes. A restore that failed is tried again.
     @discardableResult
     func undo() -> Bool {
-        guard let latest = ops.last(where: { !$0.undoRequested }) else { return false }
-        for op in ops.reversed() where op.group == latest.group && !op.undoRequested {
-            switch op.state {
-            case .pending:
+        func undoable(_ id: UUID) -> Bool {
+            if let op = ops[id] { return !op.undoRequested }
+            return history[id]?.phase == .inTrash
+        }
+        guard let latest = undoStack.last(where: undoable) else { return false }
+        let group = groups[latest]
+        for id in undoStack.reversed() where groups[id] == group && undoable(id) {
+            if let op = ops[id] {
                 op.undoRequested = true
-            case .done(let trashURL):
-                ops.removeAll { $0 === op }
-                restore(op.photo, from: trashURL)
+            } else {
+                restore(id)
             }
         }
         return true
     }
 
-    private func restore(_ photo: PhotoKey, from trashURL: URL) {
+    /// Restores one entry of the history, with the same checks as ⌘Z. Later deletions stay.
+    /// Returns false when the entry is not in the Trash as far as the history knows.
+    @discardableResult
+    func restore(_ id: UUID) -> Bool {
+        guard let record = history[id], record.phase == .inTrash, record.trashPath != nil else { return false }
+        let restoring = record.with(.restoring)
+        history.update(restoring)
         pendingIO += 1
         let fileOps = fileOps
+        let journal = journal
         ioQueue.async { [weak self] in
-            var failure: String?
-            var restored: PhotoKey?
-            do {
-                try fileOps.restore(trashURL, photo.url)
-                restored = PhotoKey.read(path: photo.path)
-            } catch {
-                failure = error.localizedDescription
-            }
-            let message = failure
-            let key = restored
+            journal?.append(restoring)
+            let outcome = Self.performRestore(restoring, fileOps: fileOps)
+            let settled: DeletionRecord
+            if case .restored = outcome { settled = restoring.with(.restored) } else { settled = restoring.with(.inTrash) }
+            journal?.append(settled)
             DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.opGeneration += 1
-                    if let key {
-                        self.list.insert(key, select: true)
-                        self.onEvent(.listChanged)
-                        self.onEvent(.restored(key))
-                    } else {
-                        self.onEvent(.restoreFailed(name: photo.name, message: message ?? ""))
-                    }
-                    self.ioFinished()
-                }
+                MainActor.assumeIsolated { self?.finishRestore(settled, outcome) }
             }
         }
+        return true
+    }
+
+    enum RestoreOutcome: Sendable, Equatable {
+        case restored(PhotoKey)
+        /// Something already has the original name. Free it and try again.
+        case occupied
+        /// The Trash no longer has it: emptied, or the file was taken out.
+        case missing
+        /// Something else sits at the Trash URL. It is not ours to restore.
+        case replaced
+        case inaccessible(String)
+        case failed(String)
+
+        var message: String {
+            switch self {
+            case .restored: ""
+            case .occupied: "Un fichier porte déjà ce nom dans le dossier d'origine. Rien n'a été écrasé : libérez ce nom puis réessayez."
+            case .missing: "Le fichier n'est plus dans la corbeille : elle a été vidée, ou il en a été retiré."
+            case .replaced: "Le fichier présent dans la corbeille à cet emplacement n'est pas celui qui a été supprimé. Il n'a pas été déplacé."
+            case .inaccessible(let reason): "Accès refusé (\(reason)). Le fichier est resté dans la corbeille."
+            case .failed(let reason): "\(reason)\nLe fichier est resté dans la corbeille."
+            }
+        }
+    }
+
+    /// The file in the Trash must be the one that was moved there, and the origin must be free.
+    private nonisolated static func performRestore(_ record: DeletionRecord, fileOps: FileOps) -> RestoreOutcome {
+        guard let trashPath = record.trashPath else { return .missing }
+        switch PathState.inspect(trashPath) {
+        case .missing: return .missing
+        case .other: return .replaced
+        case .inaccessible(let reason): return .inaccessible(reason)
+        case .file(let revision):
+            guard revision == record.expectedInTrash else { return .replaced }
+        }
+        switch PathState.inspect(record.originPath) {
+        case .missing: break
+        case .inaccessible(let reason): return .inaccessible(reason)
+        case .file, .other: return .occupied
+        }
+        do {
+            // Never replaces: a file arriving at the origin meanwhile makes this throw.
+            try fileOps.restore(URL(fileURLWithPath: trashPath), URL(fileURLWithPath: record.originPath))
+        } catch let error as CocoaError where error.code == .fileWriteFileExists {
+            return .occupied
+        } catch let error as CocoaError where error.code == .fileWriteNoPermission || error.code == .fileReadNoPermission {
+            return .inaccessible(error.localizedDescription)
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+        guard let key = PhotoKey.read(path: record.originPath) else { return .failed("Le fichier restauré est introuvable.") }
+        return .restored(key)
+    }
+
+    private func finishRestore(_ record: DeletionRecord, _ outcome: RestoreOutcome) {
+        opGeneration += 1
+        history.update(record)
+        switch outcome {
+        case .restored(let key):
+            dropUndo(record.id)
+            if covers(key.path) {
+                list.insert(key, select: true)
+                onEvent(.listChanged)
+            }
+            onEvent(.restored(key))
+        case .missing, .replaced:
+            // Retrying can never work: ⌘Z moves on to the deletion before.
+            dropUndo(record.id)
+            history.setCheck(record.id, outcome == .missing ? .missing : .other)
+            onEvent(.restoreFailed(name: record.name, message: outcome.message))
+        case .inaccessible(let reason):
+            history.setCheck(record.id, .inaccessible(reason))
+            onEvent(.restoreFailed(name: record.name, message: outcome.message))
+        case .occupied, .failed:
+            onEvent(.restoreFailed(name: record.name, message: outcome.message))
+        }
+        ioFinished()
     }
 
     /// Only after the user confirmed a volume without Trash. Never enters the undo stack.
@@ -322,9 +452,13 @@ final class LibrarySession {
             _ = list.merge(scan: list.photos, excluding: tombstones)
         }
         onEvent(.listChanged)
+        let record = DeletionRecord(photo: photo, phase: .deleting)
+        history.update(record)
         pendingIO += 1
         let fileOps = fileOps
+        let journal = journal
         ioQueue.async { [weak self] in
+            journal?.append(record)
             var message: String?
             if let (key, protected) = PhotoKey.readWithProtection(path: photo.path), key == photo {
                 if !protected.isEmpty {
@@ -336,9 +470,12 @@ final class LibrarySession {
                 message = "Le fichier a changé sur le disque."
             }
             let failure = message
+            let settled = record.with(failure == nil ? .deleted : .cancelled)
+            journal?.append(settled)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.history.update(settled)
                     self.tombstones.remove(photo.path)
                     self.opGeneration += 1
                     if let failure {

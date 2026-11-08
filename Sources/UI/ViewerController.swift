@@ -21,6 +21,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private(set) var visiblePhoto: PhotoKey?
     private(set) var shownTier: Tier?
     private var infoVisible = Preferences.infoVisible
+    /// Zoomed through the AF command: each photo opens on its own AF position, at the
+    /// current zoom, until the zoom ends.
+    private(set) var followsFocus = false
+    /// The photo last centred on its AF position, and whether that position was unknown.
+    private var focusCentred: PhotoKey?
+    private var focusAwaited = false
     private var titlePending = false
     private let metadata = MetadataStore()
     private let thumbnails = ThumbnailStore()
@@ -97,6 +103,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         pipeline.onFailed = { [weak self] in self?.frameFailed($0) }
         pipeline.onStale = { [weak self] _ in self?.session.requestScan() }
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
+        pipeline.onFocus = { [weak self] in self?.focusArrived($0) }
         pipeline.onEvicted = { [weak self] in
             if self?.comparison != nil { self?.displayComparison() }
         }
@@ -173,6 +180,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
         case .zoomChanged:
+            if !view.isZoomed { stopFollowingFocus() }
             display()
             replan()
         case .selectSlot(let slot): selectSlot(slot)
@@ -200,6 +208,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .delete: deleteCurrent()
         case .undo: undo()
         case .toggleZoom: toggleZoom()
+        case .zoomToFocus: zoomToFocus()
         case .toggleInfo: setInfoVisible(!infoVisible)
         case .revealInFinder: revealInFinder()
         case .exit:
@@ -232,6 +241,63 @@ final class ViewerController: NSObject, NSWindowDelegate {
     func toggleZoom() {
         let point = view.window.map { view.convert($0.mouseLocationOutsideOfEventStream, from: nil) }
         view.toggleZoom(at: point.flatMap { view.bounds.contains($0) ? $0 : nil })
+    }
+
+    /// Same key to leave: like Z, the zoom toggles.
+    func zoomToFocus() {
+        if followsFocus && view.isZoomed {
+            view.exitZoom()
+            return
+        }
+        guard session.list.current != nil else {
+            NSSound.beep()
+            return
+        }
+        followsFocus = true
+        centreOnFocus(level: 1)
+    }
+
+    /// Centres the current photo on its AF position, or on the middle of the image when
+    /// there is none, and says so: the zoom must not pretend to know where the focus is.
+    private func centreOnFocus(level: CGFloat?) {
+        guard let current = session.list.current else { return }
+        focusCentred = current
+        let focus = pipeline.cameraFocus(current)
+        focusAwaited = focus == nil
+        let middle = CGPoint(x: 0.5, y: 0.5)
+        switch focus {
+        case .point(let point):
+            view.setFocusMarker(point.normalized, note: nil)
+            view.zoom(onNormalized: point.normalized, level: level)
+        case .manual:
+            view.setFocusMarker(nil, note: "Mise au point manuelle : centre")
+            view.zoom(onNormalized: middle, level: level)
+        case .absent:
+            view.setFocusMarker(nil, note: "Pas de point AF : centre")
+            view.zoom(onNormalized: middle, level: level)
+        case nil:
+            view.setFocusMarker(nil, note: nil)
+            view.zoom(onNormalized: middle, level: level)
+        }
+    }
+
+    private func stopFollowingFocus() {
+        guard followsFocus else { return }
+        followsFocus = false
+        focusCentred = nil
+        focusAwaited = false
+        view.setFocusMarker(nil, note: nil)
+    }
+
+    /// The header was read after the photo appeared: move to it, unless the user has
+    /// started looking around on their own.
+    private func focusArrived(_ photo: PhotoKey) {
+        guard followsFocus, focusAwaited, photo == session.list.current, photo == focusCentred else { return }
+        if view.movedByUser {
+            focusAwaited = false
+            return
+        }
+        centreOnFocus(level: nil)
     }
 
     func deleteCurrent() {
@@ -360,6 +426,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         scheduleTitleUpdate()
+        if followsFocus, view.isZoomed, let current = session.list.current, current != focusCentred {
+            centreOnFocus(level: nil)
+        }
         scheduleStripUpdate()
         guard let current = session.list.current else {
             visiblePhoto = nil
@@ -765,7 +834,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             leaveComparison()
         case .revealInFinder:
             revealInFinder()
-        case .toggleInfo, .toggleStrip:
+        case .toggleInfo, .toggleStrip, .zoomToFocus:
             break
         }
     }
@@ -867,17 +936,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 alert("\(photo.name) n'a pas été mise à la corbeille", info: failure.explanation)
             }
         case .restoreFailed(let name, let message):
-            alert("Impossible de restaurer \(name)", info: "\(message)\nLe fichier est resté dans la corbeille.")
+            // Restores also start from the history window: the alert goes where the user is.
+            alert("Impossible de restaurer \(name)", info: message, in: NSApp.keyWindow)
         case .deleteFailed(let name, let message):
             alert("Impossible de supprimer \(name)", info: message)
+        case .historyNotSaved(let message):
+            alert("L'historique des suppressions n'est pas enregistré", info: "\(message)\n\nLes suppressions continuent de fonctionner et ⌘Z reste possible, mais elles n'apparaîtront plus dans l'historique après avoir quitté.")
         }
     }
 
-    private func alert(_ title: String, info: String) {
+    private func alert(_ title: String, info: String, in host: NSWindow? = nil) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = info
-        alert.beginSheetModal(for: window)
+        let target = host.flatMap { $0.attachedSheet == nil && !($0 is NSPanel) ? $0 : nil } ?? window
+        alert.beginSheetModal(for: target)
     }
 
     /// Volumes without a Trash: the file is kept unless the user confirms this one deletion.

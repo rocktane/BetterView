@@ -320,4 +320,89 @@ final class LibrarySessionTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(names(session), ["b.arw", "d.arw"])
     }
+
+    // MARK: Undo defects
+
+    private func makeOtherFolder() throws -> URL {
+        let other = folder.deletingLastPathComponent().appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data("z".utf8).write(to: other.appendingPathComponent("z.arw"))
+        return other
+    }
+
+    /// Deleting in A, opening B, then ⌘Z: the file goes back to A on disk, never into B's list.
+    func testUndoAfterOpeningAnotherFolderRestoresOnDiskOnly() async throws {
+        let session = LibrarySession(fileOps: ops())
+        await openFolder(session)
+        session.trashCurrent(direction: 1)
+        await spin { !session.hasPendingIO }
+        let other = try makeOtherFolder()
+        session.open([other])
+        await spin { session.list.count == 1 }
+        XCTAssertTrue(session.undo())
+        await spin { !session.hasPendingIO }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("a.arw")), Data("a".utf8))
+        XCTAssertEqual(names(session), ["z.arw"])
+        XCTAssertEqual(session.list.current?.name, "z.arw")
+    }
+
+    /// A deletion of A that fails after B is opened must not put A's photo into B.
+    func testFailedTrashAfterOpeningAnotherFolderStaysOutOfIt() async throws {
+        let gate = Gate()
+        var fileOps = ops()
+        fileOps.trash = { _ in
+            gate.wait()
+            throw CocoaError(.fileWriteVolumeReadOnly)
+        }
+        let session = LibrarySession(fileOps: fileOps)
+        await openFolder(session)
+        var failed = false
+        session.onEvent = { if case .trashFailed = $0 { failed = true } }
+        session.trashCurrent(direction: 1)
+        let other = try makeOtherFolder()
+        session.open([other])
+        await spin { session.list.count == 1 }
+        gate.release()
+        await spin { failed }
+        XCTAssertEqual(names(session), ["z.arw"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("a.arw").path))
+    }
+
+    /// A refused restore stays undoable: once the path is free, ⌘Z tries again.
+    func testFailedRestoreCanBeRetried() async throws {
+        let session = LibrarySession(fileOps: ops())
+        await openFolder(session)
+        var failures = 0
+        session.onEvent = { if case .restoreFailed = $0 { failures += 1 } }
+        session.trashCurrent(direction: 1)
+        await spin { !session.hasPendingIO }
+        let path = folder.appendingPathComponent("a.arw")
+        try Data("new".utf8).write(to: path)
+        XCTAssertTrue(session.undo())
+        await spin { failures == 1 && !session.hasPendingIO }
+        try FileManager.default.removeItem(at: path)
+        XCTAssertTrue(session.undo(), "the failed restore must still be undoable")
+        await spin { !session.hasPendingIO && session.list.photos.contains { $0.name == "a.arw" } }
+        XCTAssertEqual(try Data(contentsOf: path), Data("a".utf8))
+        XCTAssertEqual(failures, 1)
+    }
+
+    /// Another file at the same Trash URL is not ours: it must not be restored under the photo's name.
+    func testRestoreRefusesAnotherFileAtTheTrashURL() async throws {
+        let session = LibrarySession(fileOps: ops())
+        await openFolder(session)
+        var failed = false
+        session.onEvent = { if case .restoreFailed = $0 { failed = true } }
+        session.trashCurrent(direction: 1)
+        await spin { !session.hasPendingIO }
+        let trashed = trash.appendingPathComponent("a.arw")
+        try FileManager.default.removeItem(at: trashed)
+        try Data("intruder".utf8).write(to: trashed)
+        XCTAssertTrue(session.undo())
+        await spin { failed && !session.hasPendingIO }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.appendingPathComponent("a.arw").path))
+        XCTAssertEqual(try Data(contentsOf: trashed), Data("intruder".utf8))
+        XCTAssertFalse(session.list.photos.contains { $0.name == "a.arw" })
+    }
 }
