@@ -4,7 +4,7 @@ import AppKit
 enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case next, previous, jumpForward, jumpBackward, first, last
     case delete, undo
-    case toggleZoom, toggleInfo, revealInFinder, exit
+    case toggleZoom, zoomToFocus, toggleInfo, revealInFinder, exit
     case toggleStrip, compare, keepSelected
 
     var id: String { rawValue }
@@ -20,6 +20,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .delete: "Mettre à la corbeille"
         case .undo: "Annuler la suppression"
         case .toggleZoom: "100 % ou ajusté"
+        case .zoomToFocus: "100 % sur le point AF enregistré"
         case .toggleInfo: "Informations"
         case .revealInFinder: "Afficher dans le Finder"
         case .exit: "Quitter le zoom ou la comparaison"
@@ -51,6 +52,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .delete: [.code(51), .code(117), .character("x"), .code(51, modifiers: .command)]
         case .undo: [.character("z", modifiers: .command)]
         case .toggleZoom: [.character("z")]
+        case .zoomToFocus: [.character("a")]
         case .toggleInfo: [.character("i")]
         case .revealInFinder: [.character("r")]
         case .exit: [.code(53)]

@@ -71,7 +71,7 @@ extension Decoders {
     /// ImageIO's RAW plugin stays unloaded here too.
     static func thumbnail(_ photo: PhotoKey) -> CGImage? {
         autoreleasepool { () -> CGImage? in
-            if let parsed = ARWPreview.read(photo.url),
+            if let parsed = ARWPreview.read(photo.url)?.preview,
                let source = CGImageSourceCreateWithData(parsed.jpeg as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
                let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                    kCGImageSourceCreateThumbnailFromImageAlways: true,

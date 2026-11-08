@@ -57,6 +57,7 @@ Conclusions :
 | F | Rendu RAW 100 % | 96 Mo | 329 ms | Zoom |
 
 - S est calculé par image (dans le worker, depuis l'extent orienté de CIRAWFilter) : facteur = min(1, écranL/imageL, écranH/imageH). Une photo portrait ne coûte donc que 10 Mo. Indépendant de la taille de fenêtre, donc pas de re-rendu au redimensionnement ; changement d'écran = nouvelle clé.
+- La lecture de P rapporte aussi la position AF enregistrée par le boîtier (voir « Point AF »), sans lecture de plus.
 - P affiché est signalé par un petit marqueur discret : ne pas juger la netteté dessus. Le rendu Sony et le rendu Apple diffèrent (couleurs) : un saut visuel P→S est accepté, et rare hors défilement rapide. Pas de fondu, pour ne pas ajouter de latence.
 - Formats sans aperçu exploitable : pas de P, passage direct à S. Format non décodable : écran d'erreur avec le nom du fichier, navigation et suppression restent possibles.
 
@@ -111,6 +112,8 @@ Répétition de touche (`NSEvent.isARepeat`) : seul P est planifié autour du co
 
 Démarrage : l'affichage du fichier demandé et l'initialisation du `CIContext` partent **en parallèle** hors main ; un travail RAW attend simplement que le contexte soit prêt, ce qui marche aussi pour un fichier sans aperçu. `CIContext` partagé (Metal, `cacheIntermediates: false`, sortie P3). `autoreleasepool` autour de chaque travail.
 
+Le travail P rend aussi la position AF lue dans le même en-tête ; le main la range dans une table `PhotoKey → CameraFocus` (quelques octets par photo) **avant** d'insérer la frame, pour que la vue puisse centrer la photo dès son apparition. Si S est déjà en cache sans que P ait jamais été lu (rare), le planificateur lance à la place de P un travail « en-tête seul » sur la voie fast (64 Kio, pas de décodage).
+
 Validation d'un travail (P et RAW, y compris avant tout encodage disque) : le worker relit la révision (un `stat`) **avant et après** le décodage. Si l'une des deux diffère de la clé du travail, il renvoie `.stale`, ce qui déclenche un rescan, sans résultat ni écriture disque. Le main insère le résultat sous la clé du travail ; il n'affiche que si cette clé est celle de la photo courante, et que la configuration de rendu (dimension cible) est toujours valable.
 
 ### FrameCache
@@ -128,6 +131,19 @@ Pression mémoire (`DispatchSource.makeMemoryPressureSource`), qui agit sur **l'
 
 ### Affichage
 
+`ViewerView` : NSView layer-hosting, un seul `CALayer` image, `contents` assigné dans une `CATransaction` sans action. `contentsGravity` et géométrie calculés sur les dimensions logiques natives, ce qui permet de permuter P/S/F sans saut de géométrie. Zoom : transformation de layer, F remplace S à son arrivée. Grossissement > 100 % en `nearest`. Le zoom et sa position sont conservés entre photos pour comparer la mise au point. La position demandée est bornée aux bords **pour la mise en page seulement** : P n'a souvent pas la taille de la photo (sur l'A7C, le SubIFD qui la donne est au-delà des 64 Kio lus, P garde donc la taille du JPEG, 1616×1080), et borner la position mémorisée sur cette taille la détruisait avant l'arrivée de S. Seul le déplacement à la main mémorise une position bornée. IOSurface étiquetée en P3 : `IOSurfaceSetValue(surface, kIOSurfaceColorSpace, CGColorSpaceCopyPropertyList(p3))`, vérifiée visuellement en M0.
+
+### Point AF
+
+Commande A : 100 % sur la position AF enregistrée par le boîtier. Le zoom Z (centré sur le curseur) ne change pas.
+
+- **Source.** MakerNote Sony, tag `0x2027` FocusLocation : largeur, hauteur, x, y en 16 bits non signés, en coordonnées capteur (paysage, origine en haut à gauche). Chemin : IFD0 → IFD EXIF (`0x8769`) → MakerNote (`0x927C`). Sur l'A7C, le MakerNote n'a pas d'en-tête et ses offsets comptent depuis le début du fichier ; un en-tête `SONY DSC ` ou `SONY CAM ` (anciens boîtiers) est sauté avec les mêmes offsets ; tout autre en-tête est refusé. Le tag `0x201B` FocusMode (0 = manuel) est lu au passage. Tout est en clair : les blocs chiffrés (`0x2010`, `0x9050`, `0x94xx`) ne servent pas. ImageIO n'expose pas cette valeur. Une valeur hors des 64 Kio déjà lus est traitée comme absente : jamais de lecture en plus.
+- **Orientation.** Conversion vers l'image droite : 1 → (x, y) ; 3 → (L − x, H − y) ; 6 → (H − y, x) ; 8 → (y, L − x), puis normalisation. CIRAWFilter rend les ARW de l'A7C en 6000×4000 (ou 4000×6000) orientés, origine 0, sans recadrage : exactement le repère de FocusLocation (`DefaultCropSize` = 6000×4000 dans un capteur de 6048×4024). La position normalisée retombe donc sur le même pixel, quelle que soit l'échelle de la frame affichée.
+- **Mode suivi.** A active un mode qui dure tant que le zoom est actif : chaque photo affichée (navigation, suppression, ouverture) est centrée sur sa propre position AF, au grossissement courant, ce qui permet de comparer la netteté d'une rafale au point visé. Déplacer ou pincer ne quitte pas le mode ; la photo suivante se recentre sur son point AF. A une seconde fois, Z, Échap, double-clic ou pincement jusqu'à l'ajusté : retour à l'ajusté et fin du mode. Si la position n'est pas encore lue (photo jamais préparée), la vue se centre provisoirement au milieu, puis se recentre à l'arrivée de l'en-tête (≈ 15-30 ms, avec P), sauf si l'utilisateur a déjà déplacé l'image.
+- **Absence.** Pas de position (autre format, tag absent) ou mise au point manuelle : zoom au centre, et une mention dans le badge (« Pas de point AF : centre », « Mise au point manuelle : centre »). Pas de bip : en mode suivi, il sonnerait à chaque photo, et le centre est aussi le repli du boîtier.
+- **Repère.** Un cercle fin blanc, 22 pt, avec ombre, affiché seulement dans ce mode. Pas de vert ni de cadre AF : rien ne doit laisser croire que la mise au point y est garantie.
+- **Centre exact.** Sur 562 ARW réels, 71 ont exactement (3000, 2000) : 56 en zone AF « Centre » (attendu), 2 en suivi des visages avec la zone « Centre », 13 en « Large », mode où les mêmes valeurs reviennent souvent (x = 1818, 2053, 3000, 3946, 4181 ; y = 1341, 1500, 2000, 2658), comme des positions de collimateurs dont le centre ferait partie. Rien ne montre un repli faute de position : le centre est traité comme une vraie position. Le zoom serait de toute façon identique.
+- **Ce que la valeur ne dit pas.** Exemple observé (A7C03320, suivi des visages, 3 visages détectés) : la position enregistrée tombe au-dessus d'une tête, hors des cadres de visage que le boîtier a lui-même enregistrés. La vue montre la valeur du boîtier telle quelle.
 **Forme de la fenêtre** (`WindowShape`, `ViewerController.applyWindowShape`) : la fenêtre prend le ratio de la photo, ce qui supprime les bordures sans rien recadrer. Un rendu lui donne toujours sa forme exacte ; un aperçu, dont la taille vient d'un en-tête légèrement différent, ne la change que si le ratio s'écarte de plus de 1 %. Elle ne change pas pendant un zoom, pour comparer la mise au point sans que rien ne bouge. L'image couvre toujours la vue (le plus grand des deux rapports), donc un arrondi ne peut pas ouvrir de bande. Le tier S reste ajusté à l'écran : une photo portrait est affichée à sa pleine définition de rendu.
 
 **Fenêtre seule** : aucun plein écran, natif ou non, et donc aucune touche pour y aller. La barre de titre est invisible. Glisser la photo déplace la fenêtre, sauf en zoom où cela déplace l'image. La fenêtre conserve sa hauteur d'une orientation à l'autre, seule sa largeur change, et les contraintes du bandeau restent sous les priorités de la fenêtre, pour que le texte ne lui impose pas de largeur minimale.
@@ -136,7 +152,7 @@ Pression mémoire (`DispatchSource.makeMemoryPressureSource`), qui agit sur **l'
 
 **Informations** : `MetadataStore` lit l'EXIF hors main, un fichier à la fois, le plus récent d'abord, et anticipe sur les photos voisines. Pour les `.arw`, lecture directe des 64 premiers Ko (`PhotoMetadata.parse`), sans charger le plugin RAW d'ImageIO ; repli sur ImageIO sinon. Vérifié sur 133 fichiers réels par `--verify-previews` : valeurs identiques à ImageIO. La date reste celle de l'appareil, l'EXIF n'ayant pas de fuseau.
 
-`ViewerView` : NSView layer-hosting, un seul `CALayer` image, `contents` assigné dans une `CATransaction` sans action. `contentsGravity` et géométrie calculés sur les dimensions logiques natives, ce qui permet de permuter P/S/F sans saut de géométrie. Zoom : transformation de layer, F remplace S à son arrivée. Grossissement > 100 % en `nearest`. Le zoom et sa position sont conservés entre photos pour comparer la mise au point. IOSurface étiquetée en P3 : `IOSurfaceSetValue(surface, kIOSurfaceColorSpace, CGColorSpaceCopyPropertyList(p3))`, vérifiée visuellement en M0.
+
 
 ### Bande d'aperçu
 
@@ -263,6 +279,8 @@ L'architecture v3 a été relue et validée avant le code. Ces écarts viennent 
 | F du courant planifié dès 500 ms, avant la fenêtre S | Zoom après 1,2 s sur une photo : 280 → 1,2 ms. |
 | Préchauffage Core Image décalé de 300 ms | Il concurrençait le premier aperçu : lancement de 330-500 à 250-296 ms. Un rendu qui arrive avant initialise le contexte lui-même : pas de dépendance circulaire (A3). |
 | Option « supprimer aussi JPEG/XMP » retirée | Réussites partielles non gérées. |
+| Position AF lue dans l'en-tête déjà lu pour P, conservée par `PhotoKey` | 562 ARW réels de l'A7C : 562 positions, 0 écart avec `exiftool` (position, orientation, mode AF), 0 écart de proportions avec l'extent de CIRAWFilter (`--verify-af`). Contrôle visuel en paysage et en orientations 3, 6 et 8. Bench inchangé (ci-dessous). |
+| Position de zoom bornée pour l'affichage seulement | Avec P à 1616×1080, la position du point AF était ramenée au centre avant l'arrivée de S. |
 
 Résultats de `--bench` (Release, M1 Pro 16 Go, 133 ARW sur SSD interne, cache disque vide au départ) :
 
@@ -281,8 +299,18 @@ Résultats de `--bench` (Release, M1 Pro 16 Go, 133 ARW sur SSD interne, cache d
 | Empreinte au repos (3 s) | 2,1 Go | 1,6 Go pour 1,44 Go de frames | Atteint |
 | Pic d'empreinte, pendant les rendus | non fixé | 4,2 Go, transitoire | À surveiller |
 
+Point AF, `--bench` relancé (Release, mêmes 133 ARW, machine partagée avec d'autres compilations) en alternant `main` et la branche, deux passes chacun : navigation au p99 0,7-2,2 ms contre 0,7-2,1 ms, arrivées en S 100 % dans les deux cas, touche maintenue 38,7 % S et 0 écran vide dans les deux, saut sans cache p95 464-521 ms contre 491-566 ms. Le lancement varie de 216 à 622 ms d'une passe à l'autre pour les deux versions (machine chargée) : pas d'écart attribuable. Une passe isolée de la branche, sous forte charge extérieure, a été écartée (saut à 2,5 s).
 Fenêtre à la forme de la photo, avec une immersion plein écran depuis retirée (mesures à refaire), même machine, même dossier, version précédente puis version actuelle (`--bench`, un passage chacun) : navigation à 1 photo/s p99 1,0 → 3,0 ms (le changement de forme de la fenêtre, objectif de 8 ms tenu), touche maintenue p99 2,0 → 1,9 ms, suppression p99 1,0 → 1,3 ms, lancement 358 → 218 ms. Zoom immédiat p50 452 → 742 ms sur 6 mesures seulement : écart non expliqué, à reconfirmer.
 
 Bande d'aperçu affichée, même machine, même dossier, `main` puis cette version (`--bench`, un passage chacun, donc comparaison indicative) : navigation à 1 photo/s p99 9,7 → 5,0 ms, touche maintenue p99 2,5 → 2,1 ms, suppression p99 2,2 → 2,5 ms, empreinte au repos 1,67 → 1,60 Go. Aucune dégradation visible ; l'écart à 1 photo/s reste dans le bruit d'un passage unique.
 
 Non mesuré : latence jusqu'à l'image réellement présentée à l'écran (seul le commit l'est), lecture à froid, carte SD, volume SMB, écran 6K.
+
+
+### Validation après intégration du zoom AF (2026-11-08)
+
+135 tests passent après fusion de `main` (raccourcis configurables, bande et comparaison). Council GPT-6.1 Sol medium : APPROVE sur `db5d743`, seconde instance du même modèle autorisée explicitement. A rejoint `ShortcutAction` ; la comparaison conserve son zoom synchronisé et ignore cette action AF, réservée à la vue normale.
+
+Sur les 403 ARW actuellement présents dans `~/Pictures`, `--verify-af` retrouve 403 positions (68 au centre), aucune incohérence avec l’extent Apple. Comparaison séparée avec ExifTool : aucun écart de position, orientation ou mode AF.
+
+Bench Release sur ces 403 fichiers : après une première passe perturbée (saut sans cache p95 1059 ms), une passe de référence `main`, puis une seconde passe AF donnent respectivement un p99 de navigation à 1 photo/s de 5,5 et 5,6 ms, touche maintenue 2,2 et 2,1 ms, saut sans cache p95 613 et 593 ms. Aucun écran vide ; arrivées S/F 100 % à 1 et 3 photos/s. La seconde passe AF démarre en 378 ms et tient 1762 Mo au repos. Les premiers lancements des deux binaires neufs ont pris environ 20 s ; un contrôle de lancement AF suivant prend 403 ms. Ces délais initiaux restent inexpliqués et ne sont pas spécifiques à la branche. Mesures indicatives sur une machine partagée ; aucune régression reproductible identifiée.

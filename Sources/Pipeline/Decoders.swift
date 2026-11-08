@@ -22,16 +22,22 @@ enum Decoders {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { _ = context }
     }
 
-    /// The JPEG embedded in the RAW. Returns nil when the file has none worth showing.
-    static func preview(_ photo: PhotoKey) -> Frame? {
-        directPreview(photo) ?? imageIOPreview(photo)
+    /// The JPEG embedded in the RAW, nil when the file has none worth showing, and the AF
+    /// position the camera recorded, read from the same 64 KiB.
+    static func preview(_ photo: PhotoKey) -> (frame: Frame?, focus: CameraFocus) {
+        let header = ARWPreview.read(photo.url)
+        let frame = header?.preview.flatMap { directPreview($0, photo) } ?? imageIOPreview(photo)
+        return (frame, header?.focus ?? .absent)
     }
 
     /// Fast path for Sony files, which never loads ImageIO's RAW plugin.
     static func directPreview(_ photo: PhotoKey) -> Frame? {
+        ARWPreview.read(photo.url)?.preview.flatMap { directPreview($0, photo) }
+    }
+
+    private static func directPreview(_ parsed: ARWPreview, _ photo: PhotoKey) -> Frame? {
         autoreleasepool { () -> Frame? in
-            guard let parsed = ARWPreview.read(photo.url),
-                  let source = CGImageSourceCreateWithData(parsed.jpeg as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+            guard let source = CGImageSourceCreateWithData(parsed.jpeg as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
                   max(image.width, image.height) >= 640,
                   let box = ARWPreview.materialize(image, orientation: parsed.orientation)

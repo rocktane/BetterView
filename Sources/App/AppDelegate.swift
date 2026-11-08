@@ -145,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.last),
             .separator(),
             action(.toggleZoom),
+            action(.zoomToFocus),
             action(.toggleInfo),
             action(.toggleStrip),
             .separator(),

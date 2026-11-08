@@ -4,6 +4,10 @@ if let at = CommandLine.arguments.firstIndex(of: "--verify-previews"), at + 1 < 
     Benchmark.verifyPreviews(folder: URL(fileURLWithPath: CommandLine.arguments[at + 1]))
     exit(0)
 }
+if let at = CommandLine.arguments.firstIndex(of: "--verify-af"), at + 1 < CommandLine.arguments.count {
+    Benchmark.verifyFocus(folder: URL(fileURLWithPath: CommandLine.arguments[at + 1]))
+    exit(0)
+}
 let appDelegate = AppDelegate()
 let benchmark = Benchmark.fromArguments()
 NSApplication.shared.delegate = appDelegate

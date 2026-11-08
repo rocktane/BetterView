@@ -254,6 +254,34 @@ final class PipelineFlowTests: XCTestCase {
         await settle(pipeline)
     }
 
+    func testPreviewJobRecordsTheFocusOnce() async throws {
+        let pipeline = makePipeline()
+        let key = try writeJPEG("a.arw")
+        var reported: [PhotoKey] = []
+        pipeline.onFocus = { reported.append($0) }
+        XCTAssertNil(pipeline.cameraFocus(key), "unknown before the header is read")
+        pipeline.plan(photos: [key], input: PlanInput(count: 1, current: 0))
+        await settle(pipeline)
+        XCTAssertEqual(pipeline.cameraFocus(key), CameraFocus.absent, "read, and not a Sony TIFF")
+        XCTAssertEqual(reported, [key])
+    }
+
+    func testScreenTierCachedStillGetsTheFocusRead() async throws {
+        let pipeline = makePipeline()
+        let key = try writeJPEG("a.arw")
+        let screen = Frame(key: FrameKey(photo: key, tier: .screen), surface: PixelFormat.makeSurface(width: 64, height: 64)!,
+                           nativeSize: CGSize(width: 64, height: 64))
+        pipeline.cache.insert(screen)
+        var frames: [Tier] = []
+        pipeline.onFrame = { frames.append($0.key.tier) }
+        var input = PlanInput(count: 1, current: 0)
+        input.focused = false
+        pipeline.plan(photos: [key], input: input)
+        await settle(pipeline)
+        XCTAssertNotNil(pipeline.cameraFocus(key))
+        XCTAssertFalse(frames.contains(.preview), "the header alone, without decoding the preview")
+    }
+
     func testWindowAlwaysFitsBudget() {
         let pipeline = makePipeline()
         pipeline.setTarget(CGSize(width: 6016, height: 3384))
@@ -332,11 +360,11 @@ final class ARWPreviewTests: XCTestCase {
         file.append(Data(count: 200 - file.count))
         file.append(contentsOf: [0xFF, 0xD8, 0xFF, 0xD9])
         try file.write(to: url)
-        XCTAssertEqual(ARWPreview.read(url)?.jpeg, Data([0xFF, 0xD8, 0xFF, 0xD9]))
+        XCTAssertEqual(ARWPreview.read(url)?.preview?.jpeg, Data([0xFF, 0xD8, 0xFF, 0xD9]))
 
         file[200] = 0
         try file.write(to: url)
-        XCTAssertNil(ARWPreview.read(url), "no JPEG signature at that offset")
+        XCTAssertNil(ARWPreview.read(url)?.preview, "no JPEG signature at that offset")
     }
 
     /// Source: 4x2, left half red and right half blue, with the bottom-left pixel marked.

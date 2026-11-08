@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 
 /// `BetterView --bench <folder> [--limit n]`: replays usage on real files in the real app and
 /// prints the numbers from docs/ARCHITECTURE.md section 7.
@@ -36,7 +37,7 @@ final class Benchmark {
         for name in names {
             let path = folder.appendingPathComponent(name).path
             guard let key = PhotoKey.read(path: path),
-                  let parsed = ARWPreview.read(key.url),
+                  let parsed = ARWPreview.read(key.url)?.preview,
                   let direct = Decoders.directPreview(key),
                   let reference = Decoders.imageIOPreview(key),
                   direct.surface.width == reference.surface.width,
@@ -89,6 +90,49 @@ final class Benchmark {
         }
         return a.date == b.date && a.iso == b.iso && close(a.exposure, b.exposure)
             && close(a.fNumber, b.fNumber) && close(a.focalLength, b.focalLength)
+    }
+
+    /// Prints the AF position read by the app for each ARW, raw then upright, and checks it
+    /// against the oriented extent of CIRAWFilter, which is what the viewer shows. Only reads.
+    /// Lines start with "AF" and match `exiftool -T -FocusLocation` for comparison.
+    nonisolated static func verifyFocus(folder: URL) {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+            .filter { $0.lowercased().hasSuffix(".arw") }.sorted()
+        var points = 0, centres = 0, manual = 0, missing = 0, misaligned = 0
+        for name in names {
+            let url = folder.appendingPathComponent(name)
+            let head = (try? FileHandle(forReadingFrom: url)).flatMap { handle in
+                defer { try? handle.close() }
+                return try? handle.read(upToCount: 64 * 1024)
+            }
+            guard let head, let record = FocusRecord.parse(header: head) else {
+                missing += 1
+                print("AF\t\(name)\tnone")
+                continue
+            }
+            var line = "AF\t\(name)\t\(record.width) \(record.height) \(record.x) \(record.y)\torientation \(record.orientation)\tmode \(record.focusMode.map(String.init) ?? "-")"
+            switch record.focus {
+            case .point(let point):
+                points += 1
+                if point.isCentre { centres += 1 }
+                let extent = autoreleasepool { CIRAWFilter(imageURL: url)?.outputImage?.extent.size }
+                let n = point.normalized
+                line += String(format: "\tupright %d %d %d %d (%.4f, %.4f)", point.width, point.height, point.x, point.y, n.x, n.y)
+                if let extent {
+                    line += String(format: "\textent %.0f×%.0f", extent.width, extent.height)
+                    // Same proportions, so the normalised position lands on the same pixel.
+                    let aligned = abs(extent.width / extent.height - Double(point.width) / Double(point.height)) < 0.002
+                    if !aligned {
+                        misaligned += 1
+                        line += "\tMISALIGNED"
+                    }
+                }
+            case .manual: manual += 1
+            case .absent: missing += 1
+            }
+            print(line)
+        }
+        print("verified \(names.count) files: \(points) AF positions (\(centres) at the exact centre), \(manual) manual, \(missing) without, \(misaligned) misaligned with the render")
     }
 
     static func fromArguments() -> Benchmark? {

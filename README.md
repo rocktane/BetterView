@@ -32,6 +32,7 @@ Ils se changent dans les Réglages (⌘,), avec plusieurs touches possibles par 
 | ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille, puis afficher la photo suivante |
 | ⌘Z | Annuler la suppression |
 | Z | 100 % ou ajusté |
+| A | 100 % sur le point AF enregistré, ou ajusté |
 | I | Informations |
 | R | Afficher dans le Finder |
 | Échap | Quitter le zoom, puis la comparaison |
@@ -51,6 +52,8 @@ Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à l
 
 Maintenir une touche de suppression ne supprime qu'une seule photo. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
 
+A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repère : un petit cercle) ; tant que ce zoom reste actif, chaque photo s'ouvre sur sa propre position AF, au même grossissement. C'est l'endroit visé par l'autofocus, pas une garantie de netteté. Sans position enregistrée, le zoom se fait au centre et le dit.
+
 ## Développement
 
 ```sh
@@ -63,6 +66,7 @@ Mesures sur de vrais fichiers, sans jamais toucher au dossier (build Release) :
 ```sh
 BetterView.app/Contents/MacOS/BetterView --bench <dossier>
 BetterView.app/Contents/MacOS/BetterView --verify-previews <dossier>
+BetterView.app/Contents/MacOS/BetterView --verify-af <dossier>
 ```
 
 Architecture, décisions et résultats mesurés : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

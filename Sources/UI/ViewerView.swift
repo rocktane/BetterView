@@ -22,9 +22,18 @@ final class ViewerView: NSView {
     private var center = CGPoint(x: 0.5, y: 0.5)
     private var nativeSize: CGSize = .zero
     private var shownSurface: IOSurface?
+    /// The user dragged or scrolled since the view was last centred by code.
+    private(set) var movedByUser = false
+    /// Normalised, y down, nil when hidden.
+    private var focusMarker: CGPoint?
+    private var focusNote: String?
+    private var tierBadge: String?
 
     private let host = NSView()
     private let imageLayer = CALayer()
+    /// A thin ring: it marks where the camera aimed, nothing about sharpness.
+    private let markerLayer = CALayer()
+    private static let markerSize: CGFloat = 22
     private let messageLabel = ViewerView.label(size: 15, weight: .medium)
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
     private let infoPanel = ViewerView.panel()
@@ -37,7 +46,6 @@ final class ViewerView: NSView {
     /// Everything written over the photo only shows while the pointer is on it.
     private(set) var isHovered = false
     private var hasInfo = false
-    private var badgeText: String?
 
     var isZoomed: Bool { zoom != nil }
 
@@ -86,6 +94,17 @@ final class ViewerView: NSView {
         imageLayer.minificationFilter = .linear
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.addSublayer(imageLayer)
+        markerLayer.bounds = CGRect(x: 0, y: 0, width: Self.markerSize, height: Self.markerSize)
+        markerLayer.cornerRadius = Self.markerSize / 2
+        markerLayer.borderWidth = 1.5
+        markerLayer.borderColor = NSColor(white: 1, alpha: 0.75).cgColor
+        markerLayer.shadowColor = NSColor.black.cgColor
+        markerLayer.shadowOpacity = 0.8
+        markerLayer.shadowRadius = 1.5
+        markerLayer.shadowOffset = .zero
+        markerLayer.isHidden = true
+        markerLayer.actions = ["position": NSNull(), "hidden": NSNull()]
+        root.addSublayer(markerLayer)
 
         for label in [messageLabel, badgeLabel] { addSubview(label) }
         addSubview(infoPanel)
@@ -153,8 +172,8 @@ final class ViewerView: NSView {
             CATransaction.flush()
         }
         setLabel(messageLabel, nil)
-        badgeText = frame.key.tier == .preview ? "Aperçu" : nil
-        applyOverlayVisibility()
+        tierBadge = frame.key.tier == .preview ? "Aperçu" : nil
+        updateBadge()
     }
 
     /// Shows no pixels at all: a photo must never appear under another photo's name.
@@ -166,8 +185,8 @@ final class ViewerView: NSView {
         CATransaction.commit()
         CATransaction.flush()
         setLabel(messageLabel, text)
-        badgeText = nil
-        applyOverlayVisibility()
+        tierBadge = nil
+        updateBadge()
     }
 
     /// The lines keep their place while the shooting information is loading.
@@ -189,7 +208,24 @@ final class ViewerView: NSView {
         let showInfo = hasInfo && isHovered
         if infoPanel.isHidden == showInfo { infoPanel.isHidden = !showInfo }
         if positionPanel.isHidden == showInfo { positionPanel.isHidden = !showInfo }
-        setLabel(badgeLabel, isHovered ? badgeText : nil)
+        updateBadge()
+    }
+
+    /// A ring on the AF position, normalised with y down, or nil to hide it; and a short
+    /// note when there is no position to show.
+    func setFocusMarker(_ point: CGPoint?, note: String?) {
+        focusMarker = point
+        focusNote = note
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateGeometry()
+        CATransaction.commit()
+        updateBadge()
+    }
+
+    private func updateBadge() {
+        let parts = [tierBadge, focusNote].compactMap { $0 }
+        setLabel(badgeLabel, parts.isEmpty || (!isHovered && focusNote == nil) ? nil : parts.joined(separator: "  ·  "))
     }
 
     private func setLabel(_ label: NSTextField, _ text: String?) {
@@ -225,20 +261,28 @@ final class ViewerView: NSView {
         let scale = zoom.map { $0 * pointsPerPixel } ?? fitScale
         let size = CGSize(width: nativeSize.width * scale, height: nativeSize.height * scale)
         if zoom == nil { center = CGPoint(x: 0.5, y: 0.5) }
-        clampCenter(for: size)
+        // Clamped for this layout only: a preview's size can be smaller than the photo's, and
+        // the point asked for must survive until the rendered frame arrives.
+        let shown = clamped(center, for: size)
         let origin = CGPoint(
-            x: (bounds.width / 2 - center.x * size.width).rounded(),
-            y: (bounds.height / 2 - center.y * size.height).rounded()
+            x: (bounds.width / 2 - shown.x * size.width).rounded(),
+            y: (bounds.height / 2 - shown.y * size.height).rounded()
         )
         imageLayer.frame = CGRect(origin: origin, size: size)
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
+        if let focusMarker, zoom != nil {
+            markerLayer.position = CGPoint(x: origin.x + focusMarker.x * size.width,
+                                           y: origin.y + (1 - focusMarker.y) * size.height)
+            markerLayer.isHidden = false
+        } else {
+            markerLayer.isHidden = true
+        }
     }
 
-    private func clampCenter(for size: CGSize) {
+    private func clamped(_ point: CGPoint, for size: CGSize) -> CGPoint {
         let halfX = min(0.5, bounds.width / 2 / max(size.width, 1))
         let halfY = min(0.5, bounds.height / 2 / max(size.height, 1))
-        center.x = min(max(center.x, halfX), 1 - halfX)
-        center.y = min(max(center.y, halfY), 1 - halfY)
+        return CGPoint(x: min(max(point.x, halfX), 1 - halfX), y: min(max(point.y, halfY), 1 - halfY))
     }
 
     // MARK: Hover
@@ -278,6 +322,20 @@ final class ViewerView: NSView {
             zoom = 1
         }
         applyZoomChange()
+    }
+
+    /// Zooms on a point given as a fraction of the image, y down: to `level`, or keeping
+    /// the current zoom when nil (100 % if not zoomed).
+    func zoom(onNormalized point: CGPoint, level: CGFloat?) {
+        let wasZoomed = zoom != nil
+        center = CGPoint(x: min(max(point.x, 0), 1), y: 1 - min(max(point.y, 0), 1))
+        zoom = level ?? zoom ?? 1
+        movedByUser = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateGeometry()
+        CATransaction.commit()
+        if !wasZoomed { onCommand(.zoomChanged) }
     }
 
     func exitZoom() {
@@ -334,8 +392,12 @@ final class ViewerView: NSView {
     private func pan(dx: CGFloat, dy: CGFloat) {
         let rect = imageLayer.frame
         guard rect.width > 0, rect.height > 0 else { return }
+        // Panning starts from what is on screen and stops at the edges.
+        center = clamped(center, for: rect.size)
         center.x -= dx / rect.width
         center.y += dy / rect.height
+        center = clamped(center, for: rect.size)
+        movedByUser = true
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         updateGeometry()
