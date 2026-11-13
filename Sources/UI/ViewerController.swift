@@ -114,6 +114,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
+        strip.onSizeChanged = { [weak self] in self?.scheduleStripUpdate() }
+        strip.viewer = window
+        strip.viewerFrame = { [weak self] in self?.stripHolderFrame }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
@@ -726,10 +729,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         strip.setVisible(true)
+        // Also after the first shape, given while the window was still the welcome one.
+        strip.followViewer()
         let photos = session.list.photos
         let center = browsedIndex() ?? index
         // More than the strip can show even with portrait photos: it cuts the rest at its edges.
-        let shown = StripView.window(around: center, count: photos.count, reach: Self.stripReach)
+        let stripReach = max(Self.stripReach, strip.reach)
+        let shown = StripView.window(around: center, count: photos.count, reach: stripReach)
         let cells = shown.map { at -> StripCell in
             let photo = photos[at]
             let selected = selection.contains(photo)
@@ -742,8 +748,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
-        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
-        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
+        let ahead = (1...(2 * stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
+        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= stripReach + Self.thumbnailMargin || shown.contains($0) }
+        thumbnails.pixels = strip.thumbnailPixels
         thumbnails.request(wanted.map { photos[$0] })
 
         let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
@@ -971,6 +978,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func updateComparisonRow() {
         guard let model = comparison else { return }
         let members = model.members
+        // Its own size, smaller than a stretched strip's: a large group stays within budget.
+        thumbnails.pixels = ThumbnailStore.pixels(forHeight: comparisonView.row.metrics.height, scale: window.backingScaleFactor)
         thumbnails.request(members)
         let cells = members.map { photo -> StripCell in
             let inSlot = model.shown.contains(photo)
@@ -1197,17 +1206,26 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if comparison != nil { comparisonView.refreshHover() } else { view.refreshHover() }
     }
 
+    /// The window's frame while it can hold the strip: a photo's shape, on screen.
+    private var stripHolderFrame: CGRect? {
+        guard window.isVisible, !window.isMiniaturized, comparison == nil, !welcoming else { return nil }
+        return window.frame
+    }
+
+    func windowWillClose(_ notification: Notification) { strip.setVisible(false) }
     func windowDidMiniaturize(_ notification: Notification) { updateStrip() }
     func windowDidDeminiaturize(_ notification: Notification) { updateStrip() }
 
     /// A size the user chose stays for the next photos, whatever their orientation.
     func windowDidResize(_ notification: Notification) {
+        strip.followViewer()
         guard !applyingShape, comparison == nil, !welcoming else { return }
         chosenHeight = window.frame.height
         shapeCenter = nil
     }
 
     func windowDidMove(_ notification: Notification) {
+        strip.followViewer()
         guard !applyingShape, comparison == nil else { return }
         // The photo opens where the small window was taken.
         shapeCenter = welcoming ? CGPoint(x: window.frame.midX, y: window.frame.midY) : nil

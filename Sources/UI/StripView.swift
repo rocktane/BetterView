@@ -35,8 +35,20 @@ final class StripView: NSView {
     /// Set for a view that moves its window: called with the pointer's travel since the press,
     /// in screen points, then with nil when the drag ends.
     var onDrag: ((CGPoint?) -> Void)?
+    /// Set for a view whose window can be stretched: called with the sides pressed (two at a
+    /// corner) and the pointer's travel since the press, in screen points, then with nil.
+    var onResize: (((sides: StripResize.Sides, travel: CGPoint)?) -> Void)?
+    /// The pointer on screen. Read rather than taken from the event: the window moves under it.
+    var pointerLocation: () -> CGPoint = { NSEvent.mouseLocation }
 
-    private let metrics: Metrics
+    /// Changed by a strip stretched taller or shorter: the redraw comes with the new frame.
+    var metrics: Metrics {
+        didSet {
+            // A swipe in progress keeps its place among photos of the new size.
+            if oldValue.height > 0 { scrollShift *= metrics.height / oldValue.height }
+            needsLayout = true
+        }
+    }
     private let host = NSView()
     private let content = CALayer()
     private let fade = CAGradientLayer()
@@ -49,6 +61,10 @@ final class StripView: NSView {
     private var groupTips: [String] = []
     private var pressStart: CGPoint?
     private var dragging = false
+    /// The side whose grip the press started on, if any: that press stretches the strip.
+    private var pressSides: StripResize.Sides?
+    private var resizing = false
+    private var resizeCursorSides: StripResize.Sides?
     private var hoverTracking: NSTrackingArea?
     /// How far a swipe has carried the photos from their place, in points, right positive.
     private var scrollShift: CGFloat = 0
@@ -74,6 +90,13 @@ final class StripView: NSView {
         let size = min(2 * reach + 1, count)
         let lower = min(max(index - reach, 0), count - size)
         return lower...(lower + size - 1)
+    }
+
+    /// How many photos each side of the middle one fill `width` even if they are all portrait,
+    /// plus one cut by the edge.
+    static func reach(width: CGFloat, metrics: Metrics) -> Int {
+        let narrowest = (metrics.height * 2 / 3).rounded() + metrics.gap
+        return Int((width / 2 / narrowest).rounded(.up)) + 1
     }
 
     /// For tests: where each cell is drawn, and the outer edge of the group outlines.
@@ -333,6 +356,17 @@ final class StripView: NSView {
         updateTips()
     }
 
+    /// Redrawn in the same transaction as the new size: a strip being stretched keeps the
+    /// current photo in its middle at every step, with nothing stretched or left blank.
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        guard changed else { return }
+        host.frame = bounds
+        redraw()
+        updateTips()
+    }
+
     // MARK: Scrolling
 
     /// A swipe slides the photos under the fingers; past halfway to a neighbour, that photo
@@ -410,32 +444,117 @@ final class StripView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let hoverTracking { removeTrackingArea(hoverTracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways], owner: self)
         addTrackingArea(area)
         hoverTracking = area
     }
 
-    override func mouseEntered(with event: NSEvent) { onHoverChanged() }
-    override func mouseExited(with event: NSEvent) { onHoverChanged() }
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged()
+        updateResizeCursor(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged()
+        if !resizing { setResizeCursor(nil) }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateResizeCursor(at: convert(event.locationInWindow, from: nil))
+    }
+
+    /// The sides whose grips hold `point`: a thin band inside each side, over the faded edges
+    /// and the margins around the photos. Near a corner, both sides it joins.
+    private func gripSides(at point: CGPoint) -> StripResize.Sides? {
+        guard onResize != nil, bounds.contains(point) || point.x == bounds.maxX || point.y == bounds.maxY else { return nil }
+        let grip = StripResize.grip, corner = Self.cornerGrip
+        let nearX = point.x < grip.width || point.x > bounds.width - grip.width
+        let nearY = point.y < grip.height || point.y > bounds.height - grip.height
+        guard nearX || nearY else { return nil }
+        var sides: StripResize.Sides = []
+        if nearX || point.x < corner || point.x > bounds.width - corner {
+            sides.insert(point.x < bounds.midX ? .left : .right)
+        }
+        if nearY || point.y < corner || point.y > bounds.height - corner {
+            sides.insert(point.y < bounds.midY ? .bottom : .top)
+        }
+        return sides
+    }
+
+    /// How far from a corner a side's grip takes the other side along: the rounded corner.
+    private static let cornerGrip: CGFloat = 14
+
+    private func updateResizeCursor(at point: CGPoint) {
+        guard !resizing, pressStart == nil else { return }
+        setResizeCursor(gripSides(at: point))
+    }
+
+    /// Set by hand: the strip's panel never becomes key, so cursor rects would not apply.
+    private func setResizeCursor(_ sides: StripResize.Sides?) {
+        guard sides != resizeCursorSides else { return }
+        resizeCursorSides = sides
+        guard let sides else {
+            NSCursor.arrow.set()
+            return
+        }
+        if #available(macOS 15, *) {
+            let position: NSCursor.FrameResizePosition
+            switch (sides.contains(.left), sides.contains(.right), sides.contains(.bottom), sides.contains(.top)) {
+            case (true, _, true, _): position = .bottomLeft
+            case (true, _, _, true): position = .topLeft
+            case (_, true, true, _): position = .bottomRight
+            case (_, true, _, true): position = .topRight
+            case (true, _, _, _): position = .left
+            case (_, true, _, _): position = .right
+            case (_, _, true, _): position = .bottom
+            default: position = .top
+            }
+            NSCursor.frameResize(position: position, directions: .all).set()
+        } else if sides.isDisjoint(with: [.left, .right]) {
+            NSCursor.resizeUpDown.set()
+        } else {
+            NSCursor.resizeLeftRight.set()
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
-        pressStart = NSEvent.mouseLocation
+        pressStart = pointerLocation()
         dragging = false
+        resizing = false
+        pressSides = gripSides(at: convert(event.locationInWindow, from: nil))
     }
 
     /// Dragging from anywhere, thumbnails included, moves the strip: the thumbnails cover most
     /// of it, and a press that does not travel is still a click.
     override func mouseDragged(with event: NSEvent) {
-        guard let onDrag, let pressStart else { return }
-        let now = NSEvent.mouseLocation
+        guard let pressStart else { return }
+        let now = pointerLocation()
         let travel = CGPoint(x: now.x - pressStart.x, y: now.y - pressStart.y)
+        // From a grip, the press stretches the strip instead of moving it; it still clicks
+        // if it does not travel.
+        if let pressSides, let onResize {
+            if !resizing, hypot(travel.x, travel.y) < 4 { return }
+            resizing = true
+            onResize((pressSides, travel))
+            return
+        }
+        guard let onDrag else { return }
         if !dragging, hypot(travel.x, travel.y) < 4 { return }
         dragging = true
         onDrag(travel)
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer { pressStart = nil }
+        defer {
+            pressStart = nil
+            pressSides = nil
+        }
+        if resizing {
+            resizing = false
+            onResize?(nil)
+            setResizeCursor(gripSides(at: convert(event.locationInWindow, from: nil)))
+            return
+        }
         if dragging {
             dragging = false
             onDrag?(nil)
