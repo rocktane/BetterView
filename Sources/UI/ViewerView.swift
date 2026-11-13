@@ -11,6 +11,8 @@ enum ViewerCommand {
     case zoomChanged
     /// In the comparison: this slot takes the focus.
     case selectSlot(Int)
+    /// In the comparison: a button of this slot, showing this photo, was pressed.
+    case slotAction(ShortcutAction, slot: Int, photo: PhotoKey?)
 }
 
 /// Shows one IOSurface in a layer and handles geometry and input. No app logic here.

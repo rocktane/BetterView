@@ -529,3 +529,54 @@ final class StripLayoutTests: XCTestCase {
         XCTAssertEqual(frames.first!.minX - 0, 820 - frames.last!.maxX, accuracy: 1)
     }
 }
+
+@MainActor
+final class ComparisonHoverTests: XCTestCase {
+    private func makeView(pointer: @escaping () -> CGPoint?) -> ComparisonView {
+        let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+        view.pointerInWindow = pointer
+        return view
+    }
+
+    func testTheButtonsFollowThePointerNotTheFocus() {
+        var pointer: CGPoint?
+        let view = makeView { pointer }
+        view.arrange(layout: [0, 1, 2, 3], focus: 0, photos: photos("a", "b", "c", "d"))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.slotsWithActions, [], "nothing until the pointer is on a photo")
+        pointer = view.slotCenter(2)
+        view.refreshHover()
+        XCTAssertEqual(view.slotsWithActions, [2], "the hovered photo, not the focused one")
+        view.hover(atWindowPoint: view.slotCenter(1))
+        XCTAssertEqual(view.slotsWithActions, [1])
+        view.hover(atWindowPoint: nil)
+        XCTAssertEqual(view.slotsWithActions, [])
+    }
+
+    func testTheGridChangingUnderAStillPointerIsReadAgain() {
+        var pointer: CGPoint?
+        let view = makeView { pointer }
+        view.arrange(layout: [0, 1, 2, 3], focus: 0, photos: photos("a", "b", "c", "d"))
+        view.layoutSubtreeIfNeeded()
+        // Bottom left in the 2 x 2 grid: the third photo.
+        pointer = view.slotCenter(2)
+        view.refreshHover()
+        XCTAssertEqual(view.slotsWithActions, [2])
+        // Two photos left, side by side: the same point is now on the first one.
+        view.arrange(layout: [0, 1], focus: 0, photos: [photo("a"), photo("b"), nil, nil])
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.slotsWithActions, [0], "read again from where the pointer really is")
+    }
+
+    func testAnEmptiedSlotLosesItsButtons() {
+        var pointer: CGPoint?
+        let view = makeView { pointer }
+        view.arrange(layout: [0, 1, 2, 3], focus: 0, photos: photos("a", "b", "c", "d"))
+        view.layoutSubtreeIfNeeded()
+        pointer = view.slotCenter(3)
+        view.refreshHover()
+        XCTAssertEqual(view.slotsWithActions, [3])
+        view.arrange(layout: [0, 1, 2, 3], focus: 0, photos: [photo("a"), photo("b"), photo("c"), nil])
+        XCTAssertEqual(view.slotsWithActions, [], "the cell stays, empty, without buttons")
+    }
+}

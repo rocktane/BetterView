@@ -218,6 +218,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             display()
             replan()
         case .selectSlot(let slot): selectSlot(slot)
+        case .slotAction(let action, let slot, let photo): performOnSlot(action, slot: slot, photo: photo)
         }
     }
 
@@ -960,6 +961,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
         focusChanged()
     }
 
+    /// A button over a photo: that photo takes the focus, then the action runs with the
+    /// guards of the keyboard. Nothing happens if the slot no longer shows that photo.
+    private func performOnSlot(_ action: ShortcutAction, slot: Int, photo: PhotoKey?) {
+        guard let model = comparison, photo != nil, model.slots.indices.contains(slot), model.slots[slot] == photo else {
+            NSSound.beep()
+            return
+        }
+        if model.focus != slot { selectSlot(slot) }
+        guard comparison?.focus == slot else { return }
+        performInComparison(action)
+    }
+
     private func focusChanged() {
         syncListToFocus()
         displayComparison()
@@ -1136,7 +1149,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         session.requestScan()
-        view.refreshHover()
+        if comparison != nil { comparisonView.refreshHover() } else { view.refreshHover() }
     }
 
     func windowDidMiniaturize(_ notification: Notification) { updateStrip() }

@@ -183,11 +183,18 @@ private final class ComparisonSlotView: NSView {
         }
     }
 
-    func setFocused(_ focused: Bool, showsActions: Bool) {
-        focusLayer.isHidden = !focused
-        trashButton.isHidden = !(focused && showsActions)
-        keepButton.isHidden = !(focused && showsActions)
+    func setFocused(_ focused: Bool) {
+        if focusLayer.isHidden == focused { focusLayer.isHidden = !focused }
     }
+
+    /// The actions follow the pointer, not the focus.
+    func setActionsVisible(_ visible: Bool) {
+        for button in [trashButton, keepButton] where button.isHidden == visible {
+            button.isHidden = !visible
+        }
+    }
+
+    var actionsVisible: Bool { !trashButton.isHidden && !keepButton.isHidden }
 
     func updateImage(zoom: CGFloat?, pointsPerPixel: CGFloat, center: CGPoint) {
         CATransaction.begin()
@@ -251,6 +258,9 @@ final class ComparisonView: NSView {
     private var slotViews: [ComparisonSlotView] = []
     private var layoutSlots: [Int] = []
     private var focus = 0
+    /// The slot under the pointer: it carries the buttons. The keyboard keeps acting on `focus`.
+    private(set) var hoveredSlot: Int?
+    private var hoverTracking: NSTrackingArea?
     private let titleLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
     private let rowNote = NSTextField(labelWithString: "")
@@ -264,11 +274,13 @@ final class ComparisonView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor(white: 0.07, alpha: 1).cgColor
-        for _ in 0..<ComparisonModel.slotCount {
+        for index in 0..<ComparisonModel.slotCount {
             let slot = ComparisonSlotView()
-            slot.trashButton.target = self
+            for button in [slot.trashButton, slot.keepButton] {
+                button.target = self
+                button.tag = index
+            }
             slot.trashButton.action = #selector(trashPressed)
-            slot.keepButton.target = self
             slot.keepButton.action = #selector(keepPressed)
             addSubview(slot)
             slotViews.append(slot)
@@ -307,8 +319,16 @@ final class ComparisonView: NSView {
 
     private var pointsPerPixel: CGFloat { 1 / (window?.backingScaleFactor ?? 2) }
 
-    @objc private func trashPressed() { onCommand(.perform(.delete, repeating: false)) }
-    @objc private func keepPressed() { onCommand(.perform(.keepSelected, repeating: false)) }
+    @objc private func trashPressed(_ sender: NSButton) { slotButtonPressed(.delete, slot: sender.tag) }
+    @objc private func keepPressed(_ sender: NSButton) { slotButtonPressed(.keepSelected, slot: sender.tag) }
+
+    /// The button acts on its own slot, which then takes the focus. As in the viewer, a
+    /// double-click counts as one click: the second one would hit the photo that just took
+    /// the place of the deleted one.
+    private func slotButtonPressed(_ action: ShortcutAction, slot: Int) {
+        if let event = NSApp.currentEvent, event.clickCount > 1 { return }
+        onCommand(.slotAction(action, slot: slot, photo: slotViews[slot].photo))
+    }
 
     // MARK: Content
 
@@ -317,6 +337,7 @@ final class ComparisonView: NSView {
         center = CGPoint(x: 0.5, y: 0.5)
         toastPanel.isHidden = true
         for slot in slotViews { slot.setPhoto(nil) }
+        setHovered(nil)
     }
 
     func setTitle(_ text: String) {
@@ -332,9 +353,11 @@ final class ComparisonView: NSView {
             slot.setPhoto(photos[index])
             let drawn = layout.contains(index) && photos[index] != nil
             if slot.isHidden == drawn { slot.isHidden = !drawn }
-            slot.setFocused(index == focus, showsActions: true)
+            slot.setFocused(index == focus)
         }
         if changed { needsLayout = true }
+        // A slot emptied or filled under a pointer that does not move sends no event.
+        refreshHover()
     }
 
     func showFrame(_ frame: Frame, slot: Int) {
@@ -343,6 +366,12 @@ final class ComparisonView: NSView {
     }
 
     func showMessage(_ text: String, slot: Int) { slotViews[slot].showMessage(text) }
+
+    /// Which slots show their buttons.
+    var slotsWithActions: [Int] { slotViews.indices.filter { slotViews[$0].actionsVisible } }
+
+    /// Middle of a slot, in this view's coordinates.
+    func slotCenter(_ slot: Int) -> CGPoint { CGPoint(x: slotViews[slot].frame.midX, y: slotViews[slot].frame.midY) }
 
     func setCaption(slot: Int, number: Int, name: String, settings: String) {
         slotViews[slot].setCaption(number: number, name: name, settings: settings)
@@ -406,6 +435,8 @@ final class ComparisonView: NSView {
             slotViews[slot].frame = frames[position]
         }
         updateImages()
+        // The slots moved under the pointer: entering, a grid going from 4 to 2, a new size.
+        refreshHover()
         toastLabel.sizeToFit()
         let toastSize = CGSize(width: toastLabel.frame.width + 24, height: toastLabel.frame.height + 8)
         toastPanel.frame = CGRect(x: (bounds.midX - toastSize.width / 2).rounded(), y: area.minY + 12, width: toastSize.width, height: toastSize.height)
@@ -420,6 +451,48 @@ final class ComparisonView: NSView {
 
     private func slot(at point: CGPoint) -> Int? {
         layoutSlots.first { !slotViews[$0].isHidden && slotViews[$0].frame.contains(point) }
+    }
+
+    // MARK: Hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverTracking = area
+        refreshHover()
+    }
+
+    override func mouseEntered(with event: NSEvent) { hover(atWindowPoint: event.locationInWindow) }
+    override func mouseMoved(with event: NSEvent) { hover(atWindowPoint: event.locationInWindow) }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
+
+    /// Where the pointer really is, in window coordinates, or nil when it is not on this
+    /// window or another window is in front of it there. Replaced by tests.
+    lazy var pointerInWindow: () -> CGPoint? = { [weak self] in
+        guard let window = self?.window,
+              NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
+        else { return nil }
+        return window.mouseLocationOutsideOfEventStream
+    }
+
+    /// Reads where the pointer really is: the slots can change under a pointer that does not
+    /// move, which sends no event.
+    func refreshHover() {
+        hover(atWindowPoint: pointerInWindow())
+    }
+
+    /// A point given by a pointer event of this window: the pointer is on it.
+    func hover(atWindowPoint windowPoint: CGPoint?) {
+        setHovered(windowPoint.flatMap { slot(at: convert($0, from: nil)) })
+    }
+
+    private func setHovered(_ slot: Int?) {
+        hoveredSlot = slot
+        for (index, view) in slotViews.enumerated() {
+            view.setActionsVisible(index == slot && !view.isHidden && view.photo != nil)
+        }
     }
 
     // MARK: Zoom and pan
@@ -501,6 +574,7 @@ final class ComparisonView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        hover(atWindowPoint: event.locationInWindow)
         guard zoom != nil else { return }
         pan(dx: event.deltaX, dy: event.deltaY)
     }
