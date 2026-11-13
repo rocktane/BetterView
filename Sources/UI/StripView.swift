@@ -2,11 +2,13 @@ import AppKit
 import QuartzCore
 
 struct StripCell {
-    enum Mark { case none, current, selected }
+    enum Mark { case none, current }
 
     var photo: PhotoKey
     var image: CGImage?
     var mark = Mark.none
+    /// A blue check in the corner: it shows on the current photo's white border too.
+    var selected = false
     var opacity: Float = 1
 }
 
@@ -24,7 +26,8 @@ final class StripView: NSView {
     }
 
     private(set) var cells: [StripCell] = []
-    var onClick: (PhotoKey, _ extending: Bool) -> Void = { _, _ in }
+    /// The modifiers held: Shift and Command select rather than go to the photo.
+    var onClick: (PhotoKey, NSEvent.ModifierFlags) -> Void = { _, _ in }
     var onHoverChanged: () -> Void = {}
     /// Set for a view that scrolls: called with how many photos the swipe carried past the
     /// middle, forward positive. The strip expects to be given them centred.
@@ -38,6 +41,7 @@ final class StripView: NSView {
     private let content = CALayer()
     private let fade = CAGradientLayer()
     private var images: [CALayer] = []
+    private var checks: [CALayer] = []
     private var frames: [CGRect] = []
     private let outlines = CAShapeLayer()
     private var anchor: Int?
@@ -85,6 +89,31 @@ final class StripView: NSView {
     /// thick, so that it never reaches a neighbour across a gap.
     private static let outlineOffset: CGFloat = 1
     private static let outlineWidth: CGFloat = 1.5
+    private static let checkSize: CGFloat = 16
+
+    /// A blue disc with a white check and a thin dark ring, drawn once at twice its size.
+    private static let checkImage: CGImage? = {
+        let pixels = Int(checkSize * 2)
+        guard let context = CGContext(
+            data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        let side = CGFloat(pixels)
+        context.scaleBy(x: side / 16, y: side / 16)
+        context.setFillColor(NSColor(white: 0, alpha: 0.35).cgColor)
+        context.fillEllipse(in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        context.setFillColor(NSColor(red: 0.2, green: 0.5, blue: 1, alpha: 1).cgColor)
+        context.fillEllipse(in: CGRect(x: 1, y: 1, width: 14, height: 14))
+        context.setStrokeColor(NSColor.white.cgColor)
+        context.setLineWidth(1.8)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.move(to: CGPoint(x: 4.6, y: 8.2))
+        context.addLine(to: CGPoint(x: 7, y: 5.7))
+        context.addLine(to: CGPoint(x: 11.4, y: 10.4))
+        context.strokePath()
+        return context.makeImage()
+    }()
 
     init(metrics: Metrics) {
         self.metrics = metrics
@@ -227,6 +256,13 @@ final class StripView: NSView {
             layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
             content.insertSublayer(layer, below: outlines)
             images.append(layer)
+            let check = CALayer()
+            check.contents = Self.checkImage
+            check.contentsScale = 2
+            check.isHidden = true
+            check.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
+            layer.addSublayer(check)
+            checks.append(check)
         }
         for (position, layer) in images.enumerated() {
             guard position < cells.count, frames[position].maxX > 0, frames[position].minX < bounds.width else {
@@ -245,9 +281,14 @@ final class StripView: NSView {
             case .current:
                 layer.borderWidth = 2
                 layer.borderColor = NSColor.white.cgColor
-            case .selected:
-                layer.borderWidth = 2
-                layer.borderColor = NSColor(red: 0.42, green: 0.66, blue: 1, alpha: 1).cgColor
+            }
+            let check = checks[position]
+            if check.isHidden == cell.selected { check.isHidden = !cell.selected }
+            if cell.selected {
+                // Inside the white border, in the top right corner.
+                let size = min(Self.checkSize, metrics.height * 0.4)
+                let inset: CGFloat = 4
+                check.frame = CGRect(x: frames[position].width - size - inset, y: frames[position].height - size - inset, width: size, height: size)
             }
         }
         // One rounded outline around each group, concentric with the thumbnails' corners.
@@ -392,7 +433,7 @@ final class StripView: NSView {
         }
         let point = convert(event.locationInWindow, from: nil)
         if let at = frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) }), point.x >= 0, point.x <= bounds.width {
-            onClick(cells[at].photo, event.modifierFlags.contains(.shift))
+            onClick(cells[at].photo, event.modifierFlags.intersection([.shift, .command]))
         }
     }
 }

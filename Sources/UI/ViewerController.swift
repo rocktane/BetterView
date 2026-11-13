@@ -38,8 +38,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The photo a swipe brought to the middle of the strip, while the current photo is still
     /// the one given: any move of the current photo brings the strip back to it.
     private var stripBrowse: (center: PhotoKey, current: PhotoKey)?
-    /// Photos picked by Shift-click, by path, to compare instead of the burst.
-    private var stripSelection: Set<String> = []
+    /// Photos picked to compare instead of the burst, or to delete together.
+    private var selection = PhotoSelection()
 
     /// Set while comparing, when the comparison view has the window.
     private var comparison: ComparisonModel?
@@ -109,7 +109,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
-        strip.view.onClick = { [weak self] photo, extending in self?.stripClicked(photo, extending: extending) }
+        strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
         thumbnails.onLoaded = { [weak self] _ in self?.scheduleStripUpdate() }
@@ -169,7 +169,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         leaveComparison()
         showWindow()
         visiblePhoto = nil
-        stripSelection = []
+        selection.clear()
         for url in urls {
             NSDocumentController.shared.noteNewRecentDocumentURL(url)
         }
@@ -237,15 +237,23 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .previous: step(-1, repeating: isRepeat)
         case .jumpForward: step(10, repeating: isRepeat)
         case .jumpBackward: step(-10, repeating: isRepeat)
+        case .first: go(to: 0)
+        case .last: go(to: session.list.count - 1)
+        case .extendNext: extendSelection(by: 1, repeating: isRepeat)
+        case .extendPrevious: extendSelection(by: -1, repeating: isRepeat)
+        case .toggleSelection: toggleCurrentSelection()
         case .delete: deleteCurrent()
         case .undo: undo()
         case .toggleZoom: toggleZoom()
         case .zoomToFocus: zoomToFocus()
+        case .zoomIn: view.stepZoom(by: 1, at: pointerInView())
+        case .zoomOut: view.stepZoom(by: -1, at: pointerInView())
+        case .zoomFit: view.exitZoom()
         case .toggleInfo: setInfoVisible(!infoVisible)
         case .revealInFinder: revealInFinder()
         case .exit:
-            if !stripSelection.isEmpty {
-                stripSelection = []
+            if !selection.isEmpty {
+                selection.clear()
                 scheduleStripUpdate()
             }
             view.exitZoom()
@@ -257,6 +265,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     func step(_ delta: Int, repeating isRepeat: Bool = false) {
         guard let index = session.list.index else { return }
+        selection.endRun()
         direction = delta < 0 ? -1 : 1
         repeating = isRepeat
         guard session.move(to: index + delta) else { return }
@@ -264,15 +273,49 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     private func jump(to index: Int, direction: Int) {
+        selection.endRun()
         self.direction = direction
         repeating = false
         guard session.move(to: index) else { return }
         didNavigate()
     }
 
+    private func go(to target: Int) {
+        guard let index = session.list.index, target >= 0 else { return }
+        jump(to: target, direction: target < index ? -1 : 1)
+    }
+
+    // MARK: Selection
+
+    /// As ⇧→ in the Finder: moves on, and selects from where the run started to here,
+    /// the photo left included.
+    private func extendSelection(by delta: Int, repeating isRepeat: Bool) {
+        guard let index = session.list.index else { return }
+        let target = min(max(index + delta, 0), session.list.count - 1)
+        selection.extend(from: index, to: target, in: session.list.photos)
+        direction = delta < 0 ? -1 : 1
+        repeating = isRepeat
+        if session.move(to: target) {
+            didNavigate()
+        } else {
+            scheduleStripUpdate()
+        }
+    }
+
+    private func toggleCurrentSelection() {
+        guard let current = session.list.current else { return }
+        selection.toggle(current)
+        scheduleStripUpdate()
+    }
+
     func toggleZoom() {
+        view.toggleZoom(at: pointerInView())
+    }
+
+    /// Where the pointer is over the photo, if it is: keyboard zooms start there.
+    private func pointerInView() -> CGPoint? {
         let point = view.window.map { view.convert($0.mouseLocationOutsideOfEventStream, from: nil) }
-        view.toggleZoom(at: point.flatMap { view.bounds.contains($0) ? $0 : nil })
+        return point.flatMap { view.bounds.contains($0) ? $0 : nil }
     }
 
     /// Same key to leave: like Z, the zoom toggles.
@@ -333,6 +376,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     func deleteCurrent() {
+        let selected = selection.photos(in: session.list.photos)
+        if selected.count > 1 {
+            deleteSelection(selected)
+            return
+        }
         // Whatever is deleted must be what the user is looking at.
         guard let current = session.list.current, visiblePhoto == current else {
             NSSound.beep()
@@ -347,6 +395,53 @@ final class ViewerController: NSObject, NSWindowDelegate {
         // The next photo in the folder, unless the user asked to keep the direction of travel.
         if !Preferences.deleteFollowsDirection { direction = 1 }
         session.trashCurrent(direction: direction)
+    }
+
+    /// Several selected photos go together, as one gesture for ⌘Z. They are not all on
+    /// screen, so the user confirms first, unless they chose not to be asked.
+    private func deleteSelection(_ photos: [PhotoKey]) {
+        guard window.attachedSheet == nil else { return }
+        let deletable = photos.filter { session.protection(of: $0).isEmpty }
+        let kept = photos.count - deletable.count
+        guard !deletable.isEmpty else {
+            view.flash(kept > 1 ? "Photos protégées : suppression refusée" : "Photo protégée : suppression refusée")
+            return
+        }
+        let count = deletable.count
+        var message = "\(count) photo\(count > 1 ? "s" : "") à la corbeille"
+        if kept > 0 { message += "  ·  \(kept) protégée\(kept > 1 ? "s" : "") conservée\(kept > 1 ? "s" : "")" }
+        let trash = { [weak self] in
+            guard let self else { return }
+            guard self.session.trash(deletable) else {
+                NSSound.beep()
+                self.session.requestScan()
+                return
+            }
+            self.selection.clear()
+            self.scheduleStripUpdate()
+            let undoKey = self.view.shortcuts.keys(for: .undo).first?.label
+            self.view.flash(undoKey.map { "\(message)  ·  \($0) pour annuler" } ?? message)
+        }
+        guard Preferences.confirmsMultipleDelete else {
+            trash()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Mettre \(count) photos à la corbeille ?"
+        var info = "Les photos sélectionnées ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        if kept > 0 { info += "\n\n\(kept) photo\(kept > 1 ? "s protégées restent" : " protégée reste") dans le dossier." }
+        alert.informativeText = info
+        alert.addButton(withTitle: "Mettre à la corbeille")
+        alert.addButton(withTitle: "Annuler")
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Ne plus demander"
+        alert.beginSheetModal(for: window) { response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn else { return }
+                if alert.suppressionButton?.state == .on { Preferences.confirmsMultipleDelete = false }
+                trash()
+            }
+        }
     }
 
     func undo() {
@@ -603,7 +698,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             updateComparisonRow()
             return
         }
-        guard stripVisible, !view.isZoomed, window.isVisible, !window.isMiniaturized,
+        guard stripVisible, window.isVisible, !window.isMiniaturized,
               session.list.count > 1, let index = session.list.index
         else {
             strip.setVisible(false)
@@ -616,11 +711,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let shown = StripView.window(around: center, count: photos.count, reach: Self.stripReach)
         let cells = shown.map { at -> StripCell in
             let photo = photos[at]
-            let selected = stripSelection.contains(photo.path)
+            let selected = selection.contains(photo)
             return StripCell(
                 photo: photo,
                 image: thumbnails.image(for: photo),
-                mark: at == index ? .current : (selected ? .selected : .none),
+                mark: at == index ? .current : .none,
+                selected: selected,
                 opacity: at == index || selected ? 1 : stripOtherOpacity
             )
         }
@@ -677,19 +773,20 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private static let stripReach = 14
     private static let thumbnailMargin = 6
 
-    private func selectedPhotos() -> [PhotoKey] {
-        guard !stripSelection.isEmpty else { return [] }
-        return session.list.photos.filter { stripSelection.contains($0.path) }
-    }
-
-    private func stripClicked(_ photo: PhotoKey, extending: Bool) {
-        if extending {
-            if !stripSelection.insert(photo.path).inserted { stripSelection.remove(photo.path) }
+    /// As in the Finder: Shift selects up to the thumbnail, Command adds or removes it.
+    /// Neither changes the photo shown; a plain click goes to it.
+    private func stripClicked(_ photo: PhotoKey, modifiers: NSEvent.ModifierFlags) {
+        let photos = session.list.photos
+        guard let at = photos.firstIndex(of: photo), let index = session.list.index else { return }
+        if modifiers.contains(.command) {
+            selection.toggle(photo)
             updateStrip()
-            return
+        } else if modifiers.contains(.shift) {
+            selection.extend(from: index, to: at, in: photos)
+            updateStrip()
+        } else if at != index {
+            jump(to: at, direction: at < index ? -1 : 1)
         }
-        guard let at = session.list.photos.firstIndex(of: photo), let index = session.list.index, at != index else { return }
-        jump(to: at, direction: at < index ? -1 : 1)
     }
 
     // MARK: Comparison
@@ -697,7 +794,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The Shift-clicked photos, or else the burst around the current photo, or else the
     /// current photo and the next.
     private func photosToCompare() -> [PhotoKey] {
-        let picked = selectedPhotos()
+        let picked = selection.photos(in: session.list.photos)
         if picked.count >= 2 { return picked }
         guard let index = session.list.index else { return [] }
         let photos = session.list.photos
@@ -721,7 +818,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         // The large window must not come back as the viewer's at the next launch.
         window.setFrameAutosaveName("")
         comparison = model
-        stripSelection = []
+        selection.clear()
         strip.setVisible(false)
         comparedVisible = []
         comparisonView.reset()
@@ -897,7 +994,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             leaveComparison()
         case .revealInFinder:
             revealInFinder()
-        case .toggleInfo, .toggleStrip, .zoomToFocus:
+        case .toggleInfo, .toggleStrip, .zoomToFocus, .first, .last, .extendNext, .extendPrevious,
+             .toggleSelection, .zoomIn, .zoomOut, .zoomFit:
             break
         }
     }

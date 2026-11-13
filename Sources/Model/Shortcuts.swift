@@ -4,14 +4,16 @@ import AppKit
 /// from here. Adding a command: a case, its line in `spec`, and what it does in
 /// `ViewerController.perform` (the compiler asks for the last two).
 enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
-    case next, previous, jumpForward, jumpBackward
+    case next, previous, jumpForward, jumpBackward, first, last
+    case extendNext, extendPrevious, toggleSelection
     case delete, undo, revealInFinder
-    case toggleZoom, zoomToFocus, toggleInfo, toggleStrip, exit
+    case toggleZoom, zoomToFocus, zoomIn, zoomOut, zoomFit, toggleInfo, toggleStrip, exit
     case compare, keepSelected
 
     /// Groups of the shortcuts settings, in display order.
     enum Group: String, CaseIterable, Sendable {
         case navigation = "Navigation"
+        case selection = "Sélection"
         case sorting = "Tri"
         case display = "Affichage"
         case comparison = "Comparaison"
@@ -33,11 +35,20 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .previous: Spec(title: "Photo précédente", group: .navigation, keys: [.code(123), .code(126)], repeats: true)
         case .jumpForward: Spec(title: "Avancer de 10 photos", group: .navigation, keys: [.code(121)], repeats: true)
         case .jumpBackward: Spec(title: "Reculer de 10 photos", group: .navigation, keys: [.code(116)], repeats: true)
+        case .first: Spec(title: "Première photo", group: .navigation, keys: [.code(115)])
+        case .last: Spec(title: "Dernière photo", group: .navigation, keys: [.code(119)])
+        case .extendNext: Spec(title: "Étendre la sélection vers la suivante", group: .selection, keys: [.code(124, modifiers: .shift), .code(125, modifiers: .shift)], repeats: true)
+        case .extendPrevious: Spec(title: "Étendre la sélection vers la précédente", group: .selection, keys: [.code(123, modifiers: .shift), .code(126, modifiers: .shift)], repeats: true)
+        case .toggleSelection: Spec(title: "Sélectionner ou désélectionner la photo", group: .selection, keys: [.character("s")])
         case .delete: Spec(title: "Mettre à la corbeille", group: .sorting, keys: [.code(51), .code(117), .character("x"), .code(51, modifiers: .command)])
         case .undo: Spec(title: "Annuler la suppression", group: .sorting, keys: [.character("z", modifiers: .command)])
         case .revealInFinder: Spec(title: "Afficher dans le Finder", group: .sorting, keys: [.character("r")])
         case .toggleZoom: Spec(title: "100 % ou ajusté", group: .display, keys: [.character("z")])
         case .zoomToFocus: Spec(title: "100 % sur le point AF enregistré", group: .display, keys: [.character("a")])
+        // ⌘+ is ⇧⌘= on most layouts, AZERTY included; on AZERTY, 0 is ⇧à, and ⌘à alone fits too.
+        case .zoomIn: Spec(title: "Zoom avant", group: .display, keys: [.character("+", modifiers: .command), .character("+", modifiers: [.command, .shift]), .character("=", modifiers: .command)], repeats: true)
+        case .zoomOut: Spec(title: "Zoom arrière", group: .display, keys: [.character("-", modifiers: .command)], repeats: true)
+        case .zoomFit: Spec(title: "Ajuster à la fenêtre", group: .display, keys: [.character("0", modifiers: .command), .character("0", modifiers: [.command, .shift]), .character("à", modifiers: .command)])
         case .toggleInfo: Spec(title: "Informations", group: .display, keys: [.character("i")])
         case .toggleStrip: Spec(title: "Bande d'aperçu", group: .display, keys: [.character("b")])
         case .exit: Spec(title: "Quitter le zoom ou la comparaison", group: .display, keys: [.code(53)])

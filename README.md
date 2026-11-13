@@ -28,28 +28,41 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 |---|---|
 | ← → (ou ↑ ↓), Espace | Précédente, suivante |
 | Page préc., Page suiv. | Reculer, avancer de 10 photos |
-| ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille, puis afficher la photo suivante |
+| Début, Fin | Première, dernière photo |
+| ⇧→ ⇧← (ou ⇧↓ ⇧↑) | Étendre la sélection à la photo suivante, précédente |
+| S | Sélectionner ou désélectionner la photo |
+| ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille la photo, ou les photos sélectionnées, puis afficher la suivante |
 | ⌘Z | Annuler la suppression |
 | Z | 100 % ou ajusté |
 | A | 100 % sur le point AF enregistré, ou ajusté |
+| ⌘+ (ou ⌘=), ⌘− | Zoom avant, arrière : 25, 50, 100, 200, 400, 800 % |
+| ⌘0 (ou ⌘à en AZERTY) | Ajuster à la fenêtre |
 | I | Informations |
 | R | Afficher dans le Finder |
-| Échap | Quitter le zoom, puis la comparaison |
+| Échap | Vider la sélection et quitter le zoom, puis la comparaison |
 | B | Afficher ou masquer la bande d'aperçu |
 | C | Comparer les photos, ou quitter la comparaison |
 | ↩ | Dans la comparaison : garder la photo choisie |
 
-Non modifiables : double-clic (100 % ou ajusté), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W, ⌘Q, et ⌘Y (suppressions du dossier : aperçu et restauration d'une photo précise, sans annuler les suivantes). Dans la comparaison, les touches 1 à 4 choisissent une photo.
+Non modifiables : clic (100 % ou ajusté, à l'endroit cliqué ; un double-clic compte pour un seul clic), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W, ⌘Q, et ⌘Y (suppressions du dossier : aperçu et restauration d'une photo précise, sans annuler les suivantes). Dans la comparaison, les touches 1 à 4 choisissent une photo.
+
+## Sélection
+
+On sélectionne au clavier comme dans le Finder. ⇧→ passe à la photo suivante et la sélectionne avec celle qu'on quitte ; en revenant avec ⇧←, la sélection se réduit au lieu de grandir. S, comme ⌘+clic dans la bande, ajoute ou retire la photo affichée, et la prochaine série ⇧→ part de là. Changer de photo sans Maj garde la sélection, et Échap la vide.
+
+Quand au moins deux photos sont sélectionnées, ⌫ les met toutes à la corbeille, après confirmation (on peut cocher « Ne plus demander », ou décocher l'option dans Réglages > Général). Avec une seule photo sélectionnée, ⌫ supprime la photo affichée, comme d'habitude. Les photos protégées restent dans le dossier, et ⌘Z remet tout le groupe d'un coup.
 
 ## Bande d'aperçu et comparaison
 
-La bande est une pellicule : chaque vignette a la forme de sa photo, la photo courante reste au milieu, et la bande cesse de défiler aux extrémités du dossier pour rester remplie. Défilement à deux doigts ou molette : parcourir la bande sans changer de photo ; elle revient sur la photo courante dès qu'on change de photo. Clic : aller à cette photo. Maj+clic : la sélectionner pour la comparer. Glisser, y compris depuis une vignette : déplacer la bande. Les rafales sont entourées ; au survol, une bulle donne leur nombre de photos. L'opacité des autres vignettes se règle dans Réglages (⌘,) > Général. La bande disparaît pendant un zoom et sa position est conservée.
+La bande est une pellicule : chaque vignette a la forme de sa photo, la photo courante reste au milieu, et la bande cesse de défiler aux extrémités du dossier pour rester remplie. Défilement à deux doigts ou molette : parcourir la bande sans changer de photo ; elle revient sur la photo courante dès qu'on change de photo. Clic : aller à cette photo. Comme dans le Finder, Maj+clic sélectionne toutes les photos jusqu'à celle-ci, et ⌘+clic ajoute ou retire une seule photo, sans changer la photo affichée. Les photos sélectionnées portent une pastille ✓ bleue. Glisser, y compris depuis une vignette : déplacer la bande. Les rafales sont entourées ; au survol, une bulle donne leur nombre de photos. L'opacité des autres vignettes se règle dans Réglages (⌘,) > Général. La bande reste affichée pendant un zoom.
 
 `C` compare, dans cet ordre de préférence : les photos sélectionnées, la rafale de la photo courante (photos consécutives prises à 2 s d'écart au plus), ou la photo courante et la suivante.
 
 Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à la corbeille, et la photo suivante du groupe prend sa place sans que les autres bougent. ↩ garde la photo choisie et met à la corbeille les autres photos affichées, jamais celles encore en attente. ⌘Z annule tout le geste d'un coup. Quand il ne reste qu'une photo, on revient à la vue normale, où ⌘Z reste possible.
 
-Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation : maintenir une touche de suppression ne supprime qu'une seule photo, quelle que soit la touche choisie. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
+Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation et le zoom : maintenir une touche de suppression ne supprime qu'une seule photo, quelle que soit la touche choisie. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
+
+Un clic zoome à 100 % à l'endroit cliqué, un autre revient à l'ajustement ; glisser déplace alors l'image. Pendant un zoom, son niveau s'affiche en haut à droite de la photo.
 
 A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repère : un petit cercle) ; tant que ce zoom reste actif, chaque photo s'ouvre sur sa propre position AF, au même grossissement. C'est l'endroit visé par l'autofocus, pas une garantie de netteté. Sans position enregistrée, le zoom se fait au centre et le dit.
 

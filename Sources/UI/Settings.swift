@@ -7,6 +7,7 @@ enum Preferences {
     fileprivate static let handlersKey = "previousHandlers"
     static let infoVisibleKey = "infoVisible"
     static let deleteFollowsDirectionKey = "deleteFollowsDirection"
+    static let confirmsMultipleDeleteKey = "confirmsMultipleDelete"
     static let stripVisibleKey = "stripVisible"
     static let stripDimmingKey = "stripOtherOpacity"
     private static let stripPlacementKey = "stripPlacement"
@@ -27,6 +28,12 @@ enum Preferences {
     }
 
     static var deleteFollowsDirection: Bool { UserDefaults.standard.bool(forKey: deleteFollowsDirectionKey) }
+
+    /// Asked before several selected photos go to the Trash at once. One photo never asks.
+    static var confirmsMultipleDelete: Bool {
+        get { UserDefaults.standard.object(forKey: confirmsMultipleDeleteKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: confirmsMultipleDeleteKey) }
+    }
 
     static var stripVisible: Bool {
         get { UserDefaults.standard.object(forKey: stripVisibleKey) as? Bool ?? true }
@@ -219,6 +226,7 @@ struct GeneralSettingsView: View {
     @ObservedObject var cache: CacheSettings
     @AppStorage("settingsShowsFormats") private var showsFormats = false
     @AppStorage(Preferences.deleteFollowsDirectionKey) private var deleteFollowsDirection = false
+    @AppStorage(Preferences.confirmsMultipleDeleteKey) private var confirmsMultipleDelete = true
     @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
     @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
     @AppStorage(Preferences.stripDimmingKey) private var stripOtherOpacity = 0.7
@@ -245,6 +253,7 @@ struct GeneralSettingsView: View {
                 }
                 .onChange(of: stripOtherOpacity) { _, value in onStripOpacityChange(value) }
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
+                Toggle("Demander avant de supprimer plusieurs photos sélectionnées", isOn: $confirmsMultipleDelete)
             }
 
             Section {
@@ -483,7 +492,7 @@ struct ShortcutsSettingsView: View {
                     .disabled(ShortcutAction.allCases.allSatisfy { !store.map.isCustomized($0) })
                 }
             } footer: {
-                Text("Cliquer sur un raccourci pour le changer, le survoler pour le retirer. Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation. Souris et trackpad : double-clic pour 100 %, pincement pour zoomer, glisser pour se déplacer.")
+                Text("Cliquer sur un raccourci pour le changer, le survoler pour le retirer. Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation et le zoom. Souris et trackpad : clic pour 100 % ou ajusté, pincement pour zoomer, glisser pour se déplacer. Bande d'aperçu : Maj+clic sélectionne jusqu'à la vignette, ⌘+clic ajoute ou retire une photo.")
                     .settingsFooter()
             }
         }

@@ -21,15 +21,13 @@ final class ShortcutDecisionTests: XCTestCase {
         XCTAssertEqual(Set(ShortcutAction.allCases.map(\.spec.group)), Set(ShortcutAction.Group.allCases), "no empty group")
     }
 
-    func testFirstAndLastAreGone() {
-        XCTAssertNil(ShortcutAction(rawValue: "first"))
-        XCTAssertNil(ShortcutAction(rawValue: "last"))
-        XCTAssertEqual(ShortcutMap.defaults.decide(.code(115), isRepeat: false), .pass)
-        XCTAssertEqual(ShortcutMap.defaults.decide(.code(119), isRepeat: false), .pass)
-        // Keys stored by an older build for those commands are ignored.
+    func testFirstAndLastAreHomeAndEnd() {
+        XCTAssertEqual(ShortcutMap.defaults.decide(.code(115), isRepeat: false), .perform(.first, repeating: false))
+        XCTAssertEqual(ShortcutMap.defaults.decide(.code(119), isRepeat: false), .perform(.last, repeating: false))
+        // Keys stored by an older build that had them are taken back as they were.
         let stored = try! JSONEncoder().encode(["first": [KeyBinding.code(115)], "delete": [KeyBinding.character("d")]])
         let map = ShortcutMap.decoded(from: stored)
-        XCTAssertEqual(map.decide(.code(115), isRepeat: false), .pass)
+        XCTAssertEqual(map.decide(.code(115), isRepeat: false), .perform(.first, repeating: false))
         XCTAssertEqual(map.decide(.character("d"), isRepeat: false), .perform(.delete, repeating: false))
     }
 
@@ -51,7 +49,7 @@ final class ShortcutDecisionTests: XCTestCase {
                 XCTAssertEqual(decision, action.repeats ? .perform(action, repeating: true) : .swallow, "\(action) \(binding.label)")
             }
         }
-        XCTAssertEqual(Set(ShortcutAction.allCases.filter(\.repeats)), [.next, .previous, .jumpForward, .jumpBackward])
+        XCTAssertEqual(Set(ShortcutAction.allCases.filter(\.repeats)), [.next, .previous, .jumpForward, .jumpBackward, .extendNext, .extendPrevious, .zoomIn, .zoomOut])
     }
 
     func testDeleteActsOnceWhateverKeyItIsGiven() {
