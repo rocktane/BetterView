@@ -39,6 +39,36 @@ enum ComparisonGeometry {
     }
 }
 
+/// The look of the buttons drawn over a photo, in one place. Filled, with a thin light edge and
+/// a shadow: readable over a dark photo as over a bright one.
+struct ComparisonActionStyle {
+    var fill: NSColor
+    var text: NSColor
+    var edge = NSColor(white: 1, alpha: 0.55)
+
+    static let trash = ComparisonActionStyle(fill: NSColor(srgbRed: 0.84, green: 0.16, blue: 0.14, alpha: 1), text: .white)
+    static let keep = ComparisonActionStyle(fill: NSColor(white: 0.97, alpha: 1), text: .black)
+
+    func apply(to button: NSButton) {
+        button.isBordered = false
+        button.wantsLayer = true
+        guard let layer = button.layer else { return }
+        layer.backgroundColor = fill.cgColor
+        layer.cornerRadius = 5
+        layer.borderWidth = 0.5
+        layer.borderColor = edge.cgColor
+        layer.masksToBounds = false
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.55
+        layer.shadowRadius = 3
+        layer.shadowOffset = CGSize(width: 0, height: -1)
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: text,
+        ])
+    }
+}
+
 /// One photo of the comparison. Its pixels only ever come from a frame carrying its own key.
 private final class ComparisonSlotView: NSView {
     private let host = NSView()
@@ -92,19 +122,8 @@ private final class ComparisonSlotView: NSView {
         message.alignment = .center
         message.isHidden = true
         addSubview(message)
-        // Drawn by hand: they must stay readable over any photo.
-        for (button, background, text) in [
-            (trashButton, NSColor(white: 0, alpha: 0.75), NSColor.white),
-            (keepButton, NSColor(white: 0.95, alpha: 1), NSColor.black),
-        ] {
-            button.isBordered = false
-            button.wantsLayer = true
-            button.layer?.backgroundColor = background.cgColor
-            button.layer?.cornerRadius = 5
-            button.attributedTitle = NSAttributedString(string: button.title, attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: text,
-            ])
+        for (button, style) in [(trashButton, ComparisonActionStyle.trash), (keepButton, .keep)] {
+            style.apply(to: button)
             button.refusesFirstResponder = true
             button.isHidden = true
             addSubview(button)
