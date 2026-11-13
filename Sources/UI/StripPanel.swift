@@ -299,6 +299,15 @@ final class StripPanel {
     weak var viewer: NSWindow?
     var viewerFrame: () -> CGRect? = { nil }
     private var backingObserver: NSObjectProtocol?
+    /// Whether the photo's window has the focus: the app active and that window key. The
+    /// strip shows only then, so it never floats over another app or over another window
+    /// of this one (settings, deletion history, a sheet).
+    lazy var viewerHasFocus: () -> Bool = { [weak self] in
+        NSApp.isActive && self?.viewer?.isKeyWindow == true
+    }
+    /// The viewer wants the strip shown; it shows when the focus allows.
+    private var wanted = false
+    private var focusObservers: [NSObjectProtocol] = []
 
     init(placement: StripPlacement? = Preferences.stripPlacement, size: StripSize? = Preferences.stripSize) {
         self.placement = placement ?? StripPlacement()
@@ -310,7 +319,9 @@ final class StripPanel {
             defer: true
         )
         panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = true
+        // Hidden by the focus rule below, not by AppKit: AppKit would show it again on
+        // reactivation, before the photo's window is key, or without it being key at all.
+        panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -332,6 +343,17 @@ final class StripPanel {
         backingObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeBackingPropertiesNotification, object: panel, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.onSizeChanged() }
         }
+        let center = NotificationCenter.default
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+                     NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            focusObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyVisibility() }
+            })
+        }
+    }
+
+    isolated deinit {
+        for observer in focusObservers + [backingObserver].compactMap({ $0 }) { NotificationCenter.default.removeObserver(observer) }
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -348,9 +370,17 @@ final class StripPanel {
 
     var isHeldByViewer: Bool { placement.window != nil }
 
+    /// Asks for the strip, or not. It shows only while the photo's window has the focus, and
+    /// comes and goes with it from then on, without ever taking the keyboard.
     func setVisible(_ visible: Bool) {
-        guard visible != panel.isVisible else { return }
-        if visible {
+        wanted = visible
+        applyVisibility()
+    }
+
+    private func applyVisibility() {
+        let shown = wanted && viewerHasFocus()
+        guard shown != panel.isVisible else { return }
+        if shown {
             fitToScreen()
             panel.orderFront(nil)
         } else {
