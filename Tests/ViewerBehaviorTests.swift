@@ -28,6 +28,8 @@ final class ViewerBehaviorTests: XCTestCase {
             deletePermanently: { try FileManager.default.removeItem(at: $0) }
         ))
         controller = ViewerController(session: session, diskDirectory: root.appendingPathComponent("cache"))
+        // The default, whatever the user chose in the app's settings.
+        controller.keepsZoomAcrossPhotos = { false }
         controller.session.open([folder])
         await spin { self.controller.session.list.count == 4 }
     }
@@ -73,13 +75,30 @@ final class ViewerBehaviorTests: XCTestCase {
         await spin { !self.controller.session.hasPendingIO }
     }
 
-    func testTheAFModeStaysAt100PercentOnEachPhoto() {
+    func testTheAFModeEndsOnAnotherPhotoByDefault() {
         controller.zoomToFocus()
         XCTAssertTrue(controller.followsFocus)
+        controller.step(1)
+        XCTAssertFalse(controller.view.isZoomed)
+        XCTAssertFalse(controller.followsFocus, "the next A starts it again")
+    }
+
+    func testTheSettingKeepsTheZoomAndItsPosition() {
+        controller.keepsZoomAcrossPhotos = { true }
+        controller.view.zoom(onNormalized: CGPoint(x: 0.2, y: 0.3), level: 2.5)
+        controller.step(1)
+        XCTAssertEqual(controller.view.zoom, 2.5)
+        controller.perform(.last)
+        XCTAssertEqual(controller.view.zoom, 2.5, "a jump too")
+    }
+
+    func testTheSettingKeepsTheAFModeOnEachPhoto() {
+        controller.keepsZoomAcrossPhotos = { true }
+        controller.zoomToFocus()
         controller.view.zoom(onNormalized: CGPoint(x: 0.5, y: 0.5), level: 2.5)
         controller.step(1)
         XCTAssertTrue(controller.followsFocus)
-        XCTAssertEqual(controller.view.zoom, 1, "a pinch does not carry over to the next photo")
+        XCTAssertEqual(controller.view.zoom, 2.5, "as before: the zoom carries over, recentred on the AF position")
         controller.zoomToFocus()
         XCTAssertFalse(controller.view.isZoomed)
         XCTAssertFalse(controller.followsFocus)

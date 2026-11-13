@@ -28,9 +28,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The photo last centred on its AF position, and whether that position was unknown.
     private var focusCentred: PhotoKey?
     private var focusAwaited = false
-    /// Whether the AF mode survives a change of photo, at 100 % on each photo's own AF
-    /// position. Set to false, any change of photo goes back to the fit, AF mode included.
-    private static let focusFollowsAcrossPhotos = true
+    /// The setting « Conserver le zoom en changeant de photo », off by default: then any change
+    /// of photo goes back to the fit, AF mode included. Replaced by tests.
+    var keepsZoomAcrossPhotos: () -> Bool = { Preferences.keepsZoomAcrossPhotos }
     /// The file last displayed: another one brings the zoom back to the fit.
     private var displayedPath: String?
     private var titlePending = false
@@ -571,13 +571,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let photoChanged = session.list.current?.path != displayedPath
         displayedPath = session.list.current?.path
         if view.isZoomed {
-            if photoChanged && !(followsFocus && Self.focusFollowsAcrossPhotos) {
+            if photoChanged && !keepsZoomAcrossPhotos() {
                 // Each photo opens fitted, in its own window shape.
                 stopFollowingFocus()
                 view.resetZoom()
             } else if followsFocus, let current = session.list.current, current != focusCentred {
-                // A new photo starts at 100 % again; the same file, rewritten, keeps the zoom.
-                centreOnFocus(level: photoChanged ? 1 : nil)
+                // Kept on purpose: each photo opens on its own AF position, at the same zoom.
+                centreOnFocus(level: nil)
             }
         }
         scheduleStripUpdate()

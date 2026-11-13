@@ -62,9 +62,9 @@ Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à l
 
 Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation et le zoom : maintenir une touche de suppression ne supprime qu'une seule photo, quelle que soit la touche choisie. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
 
-Un clic zoome à 100 % à l'endroit cliqué, un autre revient à l'ajustement ; glisser déplace alors l'image. Pendant un zoom, son niveau s'affiche en haut à droite de la photo. Changer de photo (navigation, saut, clic dans la bande, suppression) revient à l'ajusté, et la fenêtre reprend la forme de la nouvelle photo.
+Un clic zoome à 100 % à l'endroit cliqué, un autre revient à l'ajustement ; glisser déplace alors l'image. Pendant un zoom, son niveau s'affiche en haut à droite de la photo. Changer de photo (navigation, saut, clic dans la bande, suppression) revient à l'ajusté, et la fenêtre reprend la forme de la nouvelle photo. Réglages > Général > « Conserver le zoom en changeant de photo » garde au contraire le zoom et sa position d'une photo à l'autre.
 
-A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repère : un petit cercle) ; tant que ce zoom reste actif, chaque photo s'ouvre à 100 % sur sa propre position AF (un pincement ne passe pas à la photo suivante). C'est l'endroit visé par l'autofocus, pas une garantie de netteté. Sans position enregistrée, le zoom se fait au centre et le dit.
+A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repère : un petit cercle). Changer de photo revient à l'ajusté ; avec « Conserver le zoom en changeant de photo », chaque photo s'ouvre au contraire sur sa propre position AF, au même grossissement. C'est l'endroit visé par l'autofocus, pas une garantie de netteté. Sans position enregistrée, le zoom se fait au centre et le dit.
 
 ## Développement
 

@@ -8,6 +8,7 @@ enum Preferences {
     static let infoVisibleKey = "infoVisible"
     static let deleteFollowsDirectionKey = "deleteFollowsDirection"
     static let confirmsMultipleDeleteKey = "confirmsMultipleDelete"
+    static let keepsZoomAcrossPhotosKey = "keepsZoomAcrossPhotos"
     static let stripVisibleKey = "stripVisible"
     static let stripDimmingKey = "stripOtherOpacity"
     private static let stripPlacementKey = "stripPlacement"
@@ -28,6 +29,10 @@ enum Preferences {
     }
 
     static var deleteFollowsDirection: Bool { UserDefaults.standard.bool(forKey: deleteFollowsDirectionKey) }
+
+    /// Off by default: another photo opens fitted. On, the zoom and its position carry over,
+    /// and the AF mode recentres each photo on its own AF position.
+    static var keepsZoomAcrossPhotos: Bool { UserDefaults.standard.bool(forKey: keepsZoomAcrossPhotosKey) }
 
     /// Asked before several selected photos go to the Trash at once. One photo never asks.
     static var confirmsMultipleDelete: Bool {
@@ -227,6 +232,7 @@ struct GeneralSettingsView: View {
     @AppStorage("settingsShowsFormats") private var showsFormats = false
     @AppStorage(Preferences.deleteFollowsDirectionKey) private var deleteFollowsDirection = false
     @AppStorage(Preferences.confirmsMultipleDeleteKey) private var confirmsMultipleDelete = true
+    @AppStorage(Preferences.keepsZoomAcrossPhotosKey) private var keepsZoomAcrossPhotos = false
     @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
     @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
     @AppStorage(Preferences.stripDimmingKey) private var stripOtherOpacity = 0.7
@@ -252,6 +258,7 @@ struct GeneralSettingsView: View {
                     }
                 }
                 .onChange(of: stripOtherOpacity) { _, value in onStripOpacityChange(value) }
+                Toggle("Conserver le zoom en changeant de photo", isOn: $keepsZoomAcrossPhotos)
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
                 Toggle("Demander avant de supprimer plusieurs photos sélectionnées", isOn: $confirmsMultipleDelete)
             }
