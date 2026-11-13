@@ -41,7 +41,8 @@ final class ViewerView: NSView {
     private let messageLabel = ViewerView.label(size: 15, weight: .medium)
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
     /// The zoom level, shown for as long as the view is zoomed, pointer on the photo or not.
-    private let zoomLabel = ViewerView.label(size: 11, weight: .semibold)
+    private let zoomPanel = ViewerView.panel()
+    private let zoomLabel = ViewerView.label(size: 13, weight: .semibold)
     private let infoPanel = ViewerView.panel()
     private let infoNameLabel = ViewerView.label(size: 15, weight: .semibold)
     private let infoSettingsLabel = ViewerView.label(size: 13, weight: .regular)
@@ -125,8 +126,10 @@ final class ViewerView: NSView {
         root.addSublayer(markerLayer)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
-        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        let badges = NSStackView(views: [badgeLabel, lockBadge, zoomLabel])
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        zoomLabel.isHidden = false
+        zoomPanel.addSubview(zoomLabel)
+        let badges = NSStackView(views: [badgeLabel, lockBadge, zoomPanel])
         badges.orientation = .horizontal
         badges.spacing = 6
         badges.translatesAutoresizingMaskIntoConstraints = false
@@ -164,6 +167,10 @@ final class ViewerView: NSView {
             infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
             positionPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             positionPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            zoomLabel.topAnchor.constraint(equalTo: zoomPanel.topAnchor, constant: 5),
+            zoomLabel.bottomAnchor.constraint(equalTo: zoomPanel.bottomAnchor, constant: -5),
+            zoomLabel.leadingAnchor.constraint(equalTo: zoomPanel.leadingAnchor, constant: 10),
+            zoomLabel.trailingAnchor.constraint(equalTo: zoomPanel.trailingAnchor, constant: -10),
             positionLabel.topAnchor.constraint(equalTo: positionPanel.topAnchor, constant: 6),
             positionLabel.bottomAnchor.constraint(equalTo: positionPanel.bottomAnchor, constant: -6),
             positionLabel.leadingAnchor.constraint(equalTo: positionPanel.leadingAnchor, constant: 10),
@@ -322,7 +329,11 @@ final class ViewerView: NSView {
         )
         imageLayer.frame = CGRect(origin: origin, size: size)
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
-        setLabel(zoomLabel, zoom.map { "\(Int(($0 * 100).rounded())) %" })
+        if let zoom {
+            let text = "\(Int((zoom * 100).rounded())) %"
+            if zoomLabel.stringValue != text { zoomLabel.stringValue = text }
+        }
+        if zoomPanel.isHidden != (zoom == nil) { zoomPanel.isHidden = zoom == nil }
         if let focusMarker, zoom != nil {
             markerLayer.position = CGPoint(x: origin.x + focusMarker.x * size.width,
                                            y: origin.y + (1 - focusMarker.y) * size.height)
