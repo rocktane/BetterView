@@ -109,7 +109,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
-        strip.onWidthChanged = { [weak self] in self?.scheduleStripUpdate() }
+        strip.onSizeChanged = { [weak self] in self?.scheduleStripUpdate() }
         strip.viewer = window
         strip.viewerFrame = { [weak self] in self?.stripHolderFrame }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
@@ -729,6 +729,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         // Nearest first, and beyond the edges, so that moving along finds them ready.
         let ahead = (1...(2 * stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
         let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= stripReach + Self.thumbnailMargin || shown.contains($0) }
+        thumbnails.pixels = strip.thumbnailPixels
         thumbnails.request(wanted.map { photos[$0] })
 
         let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
@@ -939,6 +940,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func updateComparisonRow() {
         guard let model = comparison else { return }
         let members = model.members
+        // Its own size, smaller than a stretched strip's: a large group stays within budget.
+        thumbnails.pixels = ThumbnailStore.pixels(forHeight: comparisonView.row.metrics.height, scale: window.backingScaleFactor)
         thumbnails.request(members)
         let cells = members.map { photo -> StripCell in
             let inSlot = model.shown.contains(photo)

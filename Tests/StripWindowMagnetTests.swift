@@ -103,9 +103,10 @@ final class StripWindowMagnetTests: XCTestCase {
 
     func testAStripHeldByTheWindowStretchesAroundItsCentreOrFromASide() {
         let centred = StripPlacement(origin: nil, docked: true, centeredX: true, window: StripWindowHold(centered: true))
-        XCTAssertEqual(StripResize.anchor(for: centred, side: .right, screen: screen, visible: visible), .center)
+        XCTAssertEqual(StripResize.anchors(for: centred, sides: .right, screen: screen, visible: visible).x, .center)
+        XCTAssertEqual(StripResize.anchors(for: centred, sides: .bottom, screen: screen, visible: visible).y, .upper, "hanging from the window, it grows downwards")
         let aside = StripPlacement(origin: nil, docked: true, centeredX: true, window: StripWindowHold(centered: false, offset: 40))
-        XCTAssertEqual(StripResize.anchor(for: aside, side: .right, screen: screen, visible: visible), .minX, "the screen's centre no longer holds it")
+        XCTAssertEqual(StripResize.anchors(for: aside, sides: .right, screen: screen, visible: visible).x, .lower, "the screen's centre no longer holds it")
     }
 
     func testPlacementWithAHoldSurvivesARoundTripAndOldOnesStillLoad() throws {
