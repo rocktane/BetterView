@@ -11,6 +11,7 @@ enum Preferences {
     static let stripVisibleKey = "stripVisible"
     static let stripDimmingKey = "stripOtherOpacity"
     private static let stripPlacementKey = "stripPlacement"
+    private static let stripSizeKey = "stripSize"
 
     static var diskCacheGigabytes: Int {
         get {
@@ -53,6 +54,14 @@ enum Preferences {
             UserDefaults.standard.data(forKey: stripPlacementKey).flatMap { try? JSONDecoder().decode(StripPlacement.self, from: $0) }
         }
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: stripPlacementKey) }
+    }
+
+    /// nil until the user first moves or stretches the strip.
+    static var stripSize: StripSize? {
+        get {
+            UserDefaults.standard.data(forKey: stripSizeKey).flatMap { try? JSONDecoder().decode(StripSize.self, from: $0) }
+        }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: stripSizeKey) }
     }
 }
 

@@ -6,7 +6,7 @@ Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite po
 - Suppression en une touche, vers la corbeille, annulable avec ⌘Z ; historique des suppressions du dossier avec aperçu (⌘Y).
 - Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo. Elle se déplace en glissant la photo.
 - Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs.
-- Une bande d'aperçu flottante, détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant et s'aimante au Dock et au centre de l'écran.
+- Une bande d'aperçu flottante, détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant, s'aimante au Dock et au centre de l'écran, et s'élargit en tirant son bord gauche ou droit.
 - Une vue Comparer pour garder la meilleure de plusieurs photos : jusqu'à 4 côte à côte, zoom à 100 % synchronisé, et corbeille directement depuis cette vue.
 - Aucune dépendance, aucun catalogue : un dossier, des photos.
 
@@ -54,7 +54,7 @@ Quand au moins deux photos sont sélectionnées, ⌫ les met toutes à la corbei
 
 ## Bande d'aperçu et comparaison
 
-La bande est une pellicule : chaque vignette a la forme de sa photo, la photo courante reste au milieu, et la bande cesse de défiler aux extrémités du dossier pour rester remplie. Défilement à deux doigts ou molette : parcourir la bande sans changer de photo ; elle revient sur la photo courante dès qu'on change de photo. Clic : aller à cette photo. Comme dans le Finder, Maj+clic sélectionne toutes les photos jusqu'à celle-ci, et ⌘+clic ajoute ou retire une seule photo, sans changer la photo affichée. Les photos sélectionnées portent une pastille ✓ bleue. Glisser, y compris depuis une vignette : déplacer la bande. Les rafales sont entourées ; au survol, une bulle donne leur nombre de photos. L'opacité des autres vignettes se règle dans Réglages (⌘,) > Général. La bande reste affichée pendant un zoom.
+La bande est une pellicule : chaque vignette a la forme de sa photo, la photo courante reste au milieu, et la bande cesse de défiler aux extrémités du dossier pour rester remplie. Défilement à deux doigts ou molette : parcourir la bande sans changer de photo ; elle revient sur la photo courante dès qu'on change de photo. Clic : aller à cette photo. Comme dans le Finder, Maj+clic sélectionne toutes les photos jusqu'à celle-ci, et ⌘+clic ajoute ou retire une seule photo, sans changer la photo affichée. Les photos sélectionnées portent une pastille ✓ bleue. Glisser, y compris depuis une vignette : déplacer la bande. Tirer son bord gauche ou droit (le curseur change) : l'élargir ou la rétrécir pour voir plus ou moins de photos ; une bande centrée reste centrée, et sa largeur est gardée d'un lancement à l'autre. Les rafales sont entourées ; au survol, une bulle donne leur nombre de photos. L'opacité des autres vignettes se règle dans Réglages (⌘,) > Général. La bande reste affichée pendant un zoom.
 
 `C` compare, dans cet ordre de préférence : les photos sélectionnées, la rafale de la photo courante (photos consécutives prises à 2 s d'écart au plus), ou la photo courante et la suivante.
 

@@ -109,6 +109,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
+        strip.onWidthChanged = { [weak self] in self?.scheduleStripUpdate() }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
@@ -708,7 +709,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let photos = session.list.photos
         let center = browsedIndex() ?? index
         // More than the strip can show even with portrait photos: it cuts the rest at its edges.
-        let shown = StripView.window(around: center, count: photos.count, reach: Self.stripReach)
+        let stripReach = max(Self.stripReach, strip.reach)
+        let shown = StripView.window(around: center, count: photos.count, reach: stripReach)
         let cells = shown.map { at -> StripCell in
             let photo = photos[at]
             let selected = selection.contains(photo)
@@ -721,8 +723,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
-        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
-        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
+        let ahead = (1...(2 * stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
+        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= stripReach + Self.thumbnailMargin || shown.contains($0) }
         thumbnails.request(wanted.map { photos[$0] })
 
         let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
