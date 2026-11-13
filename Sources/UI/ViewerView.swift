@@ -442,6 +442,18 @@ final class ViewerView: NSView {
         applyZoomChange()
     }
 
+    /// Back to the fit without reporting it: the caller is already displaying another photo
+    /// and plans after that.
+    func resetZoom() {
+        guard zoom != nil else { return }
+        zoom = nil
+        movedByUser = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateGeometry()
+        CATransaction.commit()
+    }
+
     private func imagePoint(at point: CGPoint) -> CGPoint {
         let rect = imageLayer.frame
         guard rect.width > 0, rect.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
