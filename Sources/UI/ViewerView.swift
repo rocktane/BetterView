@@ -50,7 +50,8 @@ final class ViewerView: NSView {
     private let infoSettingsLabel = ViewerView.label(size: 13, weight: .regular)
     private let infoDateLabel = ViewerView.label(size: 13, weight: .regular)
     private let positionPanel = ViewerView.panel()
-    private let positionLabel = ViewerView.label(size: 17, weight: .semibold)
+    /// Set in the name's font: same size, same weight.
+    private let positionLabel = ViewerView.label(size: 15, weight: .semibold)
     private var hoverTracking: NSTrackingArea?
     /// Everything written over the photo only shows while the pointer is on it.
     private(set) var isHovered = false
@@ -143,6 +144,7 @@ final class ViewerView: NSView {
         addSubview(infoPanel)
         addSubview(positionPanel)
         positionLabel.isHidden = false
+        positionLabel.font = infoNameLabel.font
         positionLabel.setContentCompressionResistancePriority(.dragThatCannotResizeWindow - 5, for: .horizontal)
         positionPanel.addSubview(positionLabel)
         for label in [infoNameLabel, infoSettingsLabel, infoDateLabel] {
