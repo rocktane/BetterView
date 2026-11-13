@@ -40,6 +40,8 @@ final class ViewerView: NSView {
     private static let markerSize: CGFloat = 22
     private let messageLabel = ViewerView.label(size: 15, weight: .medium)
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
+    /// The zoom level, shown for as long as the view is zoomed, pointer on the photo or not.
+    private let zoomLabel = ViewerView.label(size: 11, weight: .semibold)
     private let infoPanel = ViewerView.panel()
     private let infoNameLabel = ViewerView.label(size: 15, weight: .semibold)
     private let infoSettingsLabel = ViewerView.label(size: 13, weight: .regular)
@@ -123,7 +125,8 @@ final class ViewerView: NSView {
         root.addSublayer(markerLayer)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
-        let badges = NSStackView(views: [badgeLabel, lockBadge])
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        let badges = NSStackView(views: [badgeLabel, lockBadge, zoomLabel])
         badges.orientation = .horizontal
         badges.spacing = 6
         badges.translatesAutoresizingMaskIntoConstraints = false
@@ -319,6 +322,7 @@ final class ViewerView: NSView {
         )
         imageLayer.frame = CGRect(origin: origin, size: size)
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
+        setLabel(zoomLabel, zoom.map { "\(Int(($0 * 100).rounded())) %" })
         if let focusMarker, zoom != nil {
             markerLayer.position = CGPoint(x: origin.x + focusMarker.x * size.width,
                                            y: origin.y + (1 - focusMarker.y) * size.height)
@@ -387,6 +391,36 @@ final class ViewerView: NSView {
         if !wasZoomed { onCommand(.zoomChanged) }
     }
 
+    /// Steps of ⌘+ and ⌘−. Below the fit, or past the last step down, the view fits again.
+    static let zoomSteps: [CGFloat] = [0.25, 0.5, 1, 2, 4, 8]
+
+    /// The next step up or down from where the view is, kept on the point under the pointer
+    /// when the zoom starts there, as Z does.
+    func stepZoom(by direction: Int, at point: CGPoint?) {
+        guard shownSurface != nil else { return }
+        let fit = fitZoom
+        let current = zoom ?? fit
+        let next = direction > 0
+            ? Self.zoomSteps.first { $0 > current * 1.01 && $0 > fit * 1.01 }
+            : Self.zoomSteps.last { $0 < current * 0.99 }
+        guard let next else {
+            if direction < 0 { exitZoom() }
+            return
+        }
+        guard next > fit * 1.01 else {
+            exitZoom()
+            return
+        }
+        let wasZoomed = zoom != nil
+        if !wasZoomed, let point { center = imagePoint(at: point) }
+        zoom = next
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateGeometry()
+        CATransaction.commit()
+        if !wasZoomed { onCommand(.zoomChanged) }
+    }
+
     func exitZoom() {
         guard zoom != nil else { return }
         zoom = nil
@@ -433,11 +467,6 @@ final class ViewerView: NSView {
         pan(dx: event.scrollingDeltaX * multiplier, dy: event.scrollingDeltaY * multiplier)
     }
 
-    override func mouseDragged(with event: NSEvent) {
-        guard zoom != nil else { return }
-        pan(dx: event.deltaX, dy: event.deltaY)
-    }
-
     private func pan(dx: CGFloat, dy: CGFloat) {
         let rect = imageLayer.frame
         guard rect.width > 0, rect.height > 0 else { return }
@@ -453,28 +482,39 @@ final class ViewerView: NSView {
         CATransaction.commit()
     }
 
+    /// A click toggles 100 % on the point clicked, as in Lightroom; a double-click counts as
+    /// its first click only. Dragging moves the window, or the image once zoomed. With
+    /// nothing to show, a click asks to open something.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        if event.clickCount == 2 {
-            toggleZoom(at: convert(event.locationInWindow, from: nil))
-        } else if zoom == nil, let window {
-            // Dragging the photo moves the window; once zoomed, it moves the image instead.
-            // With nothing to show, a press that does not travel is a click, which opens.
-            guard opensOnClick else {
-                window.performDrag(with: event)
+        guard event.clickCount == 1, let window else { return }
+        let start = event.locationInWindow
+        var moved = false
+        while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+            if next.type == .leftMouseUp {
+                if !moved { clicked(at: convert(start, from: nil)) }
                 return
             }
-            let start = event.locationInWindow
-            while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
-                if next.type == .leftMouseUp {
-                    onCommand(.clicked)
-                    return
-                }
-                if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 3 {
+            if !moved {
+                guard hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 3 else { continue }
+                moved = true
+                guard zoom != nil else {
                     window.performDrag(with: event)
                     return
                 }
+                // The travel so far, then each move: the image follows the pointer from the press.
+                pan(dx: next.locationInWindow.x - start.x, dy: start.y - next.locationInWindow.y)
+                continue
             }
+            pan(dx: next.deltaX, dy: next.deltaY)
+        }
+    }
+
+    private func clicked(at point: CGPoint) {
+        if opensOnClick {
+            onCommand(.clicked)
+        } else if shownSurface != nil {
+            toggleZoom(at: point)
         }
     }
 
