@@ -110,6 +110,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
         strip.onWidthChanged = { [weak self] in self?.scheduleStripUpdate() }
+        strip.viewer = window
+        strip.viewerFrame = { [weak self] in self?.stripHolderFrame }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
@@ -706,6 +708,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         strip.setVisible(true)
+        // Also after the first shape, given while the window was still the welcome one.
+        strip.followViewer()
         let photos = session.list.photos
         let center = browsedIndex() ?? index
         // More than the strip can show even with portrait photos: it cuts the rest at its edges.
@@ -1141,17 +1145,26 @@ final class ViewerController: NSObject, NSWindowDelegate {
         view.refreshHover()
     }
 
+    /// The window's frame while it can hold the strip: a photo's shape, on screen.
+    private var stripHolderFrame: CGRect? {
+        guard window.isVisible, !window.isMiniaturized, comparison == nil, !welcoming else { return nil }
+        return window.frame
+    }
+
+    func windowWillClose(_ notification: Notification) { strip.setVisible(false) }
     func windowDidMiniaturize(_ notification: Notification) { updateStrip() }
     func windowDidDeminiaturize(_ notification: Notification) { updateStrip() }
 
     /// A size the user chose stays for the next photos, whatever their orientation.
     func windowDidResize(_ notification: Notification) {
+        strip.followViewer()
         guard !applyingShape, comparison == nil, !welcoming else { return }
         chosenHeight = window.frame.height
         shapeCenter = nil
     }
 
     func windowDidMove(_ notification: Notification) {
+        strip.followViewer()
         guard !applyingShape, comparison == nil else { return }
         // The photo opens where the small window was taken.
         shapeCenter = welcoming ? CGPoint(x: window.frame.midX, y: window.frame.midY) : nil
