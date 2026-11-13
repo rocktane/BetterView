@@ -84,4 +84,63 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertFalse(controller.view.isZoomed)
         XCTAssertFalse(controller.followsFocus)
     }
+
+    // MARK: Overlays on hover
+
+    private var closeButton: NSButton { controller.window.standardWindowButton(.closeButton)! }
+
+    private func buttonShown(_ button: NSButton) -> Bool { !button.isHidden && button.alphaValue == 1 }
+
+    /// A window that changes shape under a still pointer asks again where it is. The answer
+    /// is the same as before, but the buttons were hidden meanwhile (a late fade, AppKit):
+    /// asking again must show them, not only a change of answer.
+    func testAskingAgainShowsWhatDriftedAway() {
+        var pointer: CGPoint?
+        controller.view.pointerInWindow = { pointer }
+        pointer = CGPoint(x: controller.view.bounds.midX, y: controller.view.bounds.midY)
+        controller.view.refreshHover()
+        XCTAssertTrue(controller.view.isHovered)
+        XCTAssertTrue(buttonShown(closeButton))
+        closeButton.isHidden = true
+        controller.view.refreshHover()
+        XCTAssertTrue(buttonShown(closeButton), "the pointer did not leave: the buttons are shown again")
+    }
+
+    /// Another window was found under the pointer (a tooltip, the app switcher, a banner):
+    /// everything hid. It went away without any event. The next move on the photo shows it all.
+    func testAMoveOnThePhotoShowsEverythingAgain() {
+        controller.view.pointerInWindow = { nil }
+        controller.view.refreshHover()
+        XCTAssertFalse(controller.view.isHovered)
+        XCTAssertTrue(closeButton.isHidden || closeButton.alphaValue == 0)
+        controller.view.pointerMoved(toWindowPoint: CGPoint(x: controller.view.bounds.midX, y: controller.view.bounds.midY))
+        XCTAssertTrue(controller.view.isHovered)
+        XCTAssertTrue(buttonShown(closeButton))
+    }
+
+    func testTheInformationFollowsTheSameRule() {
+        let view = ViewerView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentView = view
+        view.pointerInWindow = { CGPoint(x: 450, y: 300) }
+        view.setInfo(name: "A.arw", settings: "", date: "", position: "1 / 4")
+        view.refreshHover()
+        XCTAssertTrue(view.overlaysShown)
+        view.pointerInWindow = { nil }
+        view.refreshHover()
+        XCTAssertFalse(view.isHovered)
+        view.pointerMoved(toWindowPoint: CGPoint(x: 450, y: 300))
+        XCTAssertTrue(view.overlaysShown, "shown at once, whatever the fade-out left")
+    }
+
+    /// A fade-out still running when the pointer comes back must not hide the view at its end.
+    func testALateFadeOutDoesNotHideAViewShownSince() async {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        view.wantsLayer = true
+        view.fade(visible: false)
+        view.fade(visible: true)
+        try? await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(view.isHidden)
+        XCTAssertEqual(view.alphaValue, 1)
+    }
 }

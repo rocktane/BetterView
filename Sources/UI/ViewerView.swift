@@ -358,27 +358,49 @@ final class ViewerView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let hoverTracking { removeTrackingArea(hoverTracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        // Moves too: whatever went wrong before, moving the pointer on the photo shows it all.
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(area)
         hoverTracking = area
         // The window can change shape under a pointer that does not move, which sends no event.
         refreshHover()
     }
 
-    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseEntered(with event: NSEvent) { pointerMoved(toWindowPoint: event.locationInWindow) }
+    override func mouseMoved(with event: NSEvent) { pointerMoved(toWindowPoint: event.locationInWindow) }
     override func mouseExited(with event: NSEvent) { refreshHover() }
 
+    /// Where the pointer really is, in window coordinates, or nil when it is not on this
+    /// window or another window is in front of it there. Replaced by tests.
+    lazy var pointerInWindow: () -> CGPoint? = { [weak self] in
+        guard let window = self?.window,
+              NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
+        else { return nil }
+        return window.mouseLocationOutsideOfEventStream
+    }
+
     /// Asks where the pointer really is. Over another window in front, it is not on the photo.
+    /// Applied again even when nothing seems to have changed: the overlays may have drifted.
     func refreshHover() {
-        guard let window else { return }
-        let inWindow = window.mouseLocationOutsideOfEventStream
-        let inside = bounds.contains(convert(inWindow, from: nil))
-            && NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
-        guard inside != isHovered else { return }
+        guard window != nil else { return }
+        setHovered(pointerInWindow().map { bounds.contains(convert($0, from: nil)) } ?? false)
+    }
+
+    /// A pointer event of this window: the pointer is there, whatever another window's
+    /// number said before (a tooltip, the app switcher, a system banner).
+    func pointerMoved(toWindowPoint point: CGPoint) {
+        setHovered(bounds.contains(convert(point, from: nil)))
+    }
+
+    /// Idempotent: a few property reads when everything is already as it should be.
+    private func setHovered(_ inside: Bool) {
         isHovered = inside
         applyOverlayVisibility()
         onCommand(.hoverChanged(inside))
     }
+
+    /// What the pointer shows, as it really is on screen: for the tests.
+    var overlaysShown: Bool { !infoPanel.isHidden && infoPanel.alphaValue == 1 && !positionPanel.isHidden && positionPanel.alphaValue == 1 }
 
     // MARK: Zoom and pan
 
@@ -586,17 +608,30 @@ final class ViewerView: NSView {
     }
 }
 
+/// The last fade asked of each view: an older fade-out that ends late must not hide a view
+/// shown again since, whatever its alpha reads at that moment.
+private nonisolated(unsafe) var fadeGenerationKey: UInt8 = 0
+
 extension NSView {
+    private var fadeGeneration: Int {
+        get { objc_getAssociatedObject(self, &fadeGenerationKey) as? Int ?? 0 }
+        set { objc_setAssociatedObject(self, &fadeGenerationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
     /// Overlays shown on hover: they appear almost at once, and leave a little more slowly.
     /// A view that has faded out is hidden, so it takes no clicks.
     func fade(visible: Bool) {
         let target: CGFloat = visible ? 1 : 0
+        // Showing always cancels a pending hide, even when the view already looks right.
+        if visible { fadeGeneration += 1 }
         // The animator sets the value at once: a view already headed there is left alone.
         if visible ? (!isHidden && alphaValue == 1) : (isHidden || alphaValue == 0) { return }
         if visible, isHidden {
             alphaValue = 0
             isHidden = false
         }
+        if !visible { fadeGeneration += 1 }
+        let generation = fadeGeneration
         NSAnimationContext.runAnimationGroup { context in
             context.duration = visible ? 0.08 : 0.22
             context.timingFunction = CAMediaTimingFunction(name: visible ? .easeOut : .easeInEaseOut)
@@ -604,8 +639,9 @@ extension NSView {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 // Shown again meanwhile: it stays.
-                guard let self, !visible, self.alphaValue == 0 else { return }
+                guard let self, !visible, self.fadeGeneration == generation else { return }
                 self.isHidden = true
+                self.alphaValue = 0
             }
         }
     }
