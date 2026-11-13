@@ -34,7 +34,7 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 | ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille la photo, ou les photos sélectionnées, puis afficher la suivante |
 | ⌘Z | Annuler la suppression |
 | Z | 100 % ou ajusté |
-| A | 100 % sur le point AF enregistré, ou ajusté |
+| A | 100 % sur le point AF enregistré, ou ajusté (dans la comparaison : chaque photo sur le sien) |
 | ⌘+ (ou ⌘=), ⌘− | Zoom avant, arrière : 25, 50, 100, 200, 400, 800 % |
 | ⌘0 (ou ⌘à en AZERTY) | Ajuster à la fenêtre |
 | I | Informations |
@@ -59,6 +59,8 @@ La bande est une pellicule : chaque vignette a la forme de sa photo, la photo co
 `C` compare, dans cet ordre de préférence : les photos sélectionnées, la rafale de la photo courante (photos consécutives prises à 2 s d'écart au plus), ou la photo courante et la suivante.
 
 Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à la corbeille, et la photo suivante du groupe prend sa place sans que les autres bougent. ↩ garde la photo choisie et met à la corbeille les autres photos affichées, jamais celles encore en attente. ⌘Z annule tout le geste d'un coup. Quand il ne reste qu'une photo, on revient à la vue normale, où ⌘Z reste possible. Les boutons « Corbeille » et « Garder celle-ci » apparaissent sur la photo survolée, sans clic, et agissent sur elle : elle devient la photo choisie, puis l'action s'applique. Le clavier, lui, agit toujours sur la photo choisie (cadre blanc), que le survol ne déplace pas.
+
+Dans la comparaison, Z zoome à 100 % au même endroit sur toutes les photos. A les zoome à 100 % chacune sur son propre point AF, avec le petit cercle ; glisser, défiler ou pincer déplace ensuite toutes les photos du même écart, et une photo qui en remplace une autre s'ouvre sur son point AF avec ce même écart. Une photo sans point AF, ou en mise au point manuelle, est centrée au milieu et le dit. A une seconde fois, Z ou Échap reviennent à l'ajusté.
 
 Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation et le zoom : maintenir une touche de suppression ne supprime qu'une seule photo, quelle que soit la touche choisie. Une photo protégée dans le boîtier ou verrouillée dans le Finder (ou sans droit d'écriture) porte un petit cadenas : la suppression la refuse aussitôt avec un bref bandeau, aussi dans la comparaison, et BetterView ne retire jamais cette protection. La suppression définitive n'est proposée que sur un volume sans corbeille, avec confirmation à chaque fois. Le marqueur « Aperçu » signale le JPEG embarqué, trop petit pour juger la netteté : le rendu RAW le remplace dès qu'il est prêt.
 

@@ -21,6 +21,33 @@ enum ComparisonGeometry {
         }
     }
 
+    /// AF mode: a slot looks at its own anchor (normalised, y up), moved by the offset common
+    /// to every slot, in image pixels. Same zoom everywhere, so the same offset is the same
+    /// distance on screen in every slot.
+    static func center(anchor: CGPoint, offset: CGVector, native: CGSize) -> CGPoint {
+        guard native.width > 0, native.height > 0 else { return anchor }
+        return CGPoint(x: anchor.x + offset.dx / native.width, y: anchor.y + offset.dy / native.height)
+    }
+
+    /// The common offset held to what at least one photo can still show. A photo at its edge
+    /// stays there (each one is clamped for display only) without stopping the others, and a
+    /// pan is never spent past every edge.
+    static func clampedOffset(_ offset: CGVector, photos: [(anchor: CGPoint, native: CGSize, slot: CGSize)], zoom: CGFloat, pointsPerPixel: CGFloat) -> CGVector {
+        var low = CGVector(dx: CGFloat.infinity, dy: CGFloat.infinity)
+        var high = CGVector(dx: -CGFloat.infinity, dy: -CGFloat.infinity)
+        let scale = zoom * pointsPerPixel
+        for photo in photos where photo.native.width > 0 && photo.native.height > 0 {
+            let halfX = min(0.5, photo.slot.width / 2 / max(photo.native.width * scale, 1))
+            let halfY = min(0.5, photo.slot.height / 2 / max(photo.native.height * scale, 1))
+            low.dx = min(low.dx, (halfX - photo.anchor.x) * photo.native.width)
+            high.dx = max(high.dx, (1 - halfX - photo.anchor.x) * photo.native.width)
+            low.dy = min(low.dy, (halfY - photo.anchor.y) * photo.native.height)
+            high.dy = max(high.dy, (1 - halfY - photo.anchor.y) * photo.native.height)
+        }
+        guard low.dx <= high.dx, low.dy <= high.dy else { return offset }
+        return CGVector(dx: min(max(offset.dx, low.dx), high.dx), dy: min(max(offset.dy, low.dy), high.dy))
+    }
+
     /// The photo's rectangle in a slot. `zoom` nil fits it whole with bars around it; otherwise
     /// `zoom` is image pixels per screen pixel, with `center` (normalised, y up) in the middle.
     static func imageFrame(slot: CGSize, native: CGSize, zoom: CGFloat?, pointsPerPixel: CGFloat, center: CGPoint) -> CGRect {
@@ -74,6 +101,8 @@ private final class ComparisonSlotView: NSView {
     private let host = NSView()
     private let imageLayer = CALayer()
     private let focusLayer = CALayer()
+    /// Where the camera aimed, in AF mode only.
+    private let markerLayer = CALayer.focusMarker()
     private let captionPanel = NSView()
     private let caption = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
@@ -102,6 +131,7 @@ private final class ComparisonSlotView: NSView {
         focusLayer.borderColor = NSColor.white.cgColor
         focusLayer.borderWidth = 2
         focusLayer.actions = ["bounds": NSNull(), "position": NSNull(), "hidden": NSNull()]
+        root.addSublayer(markerLayer)
         root.addSublayer(focusLayer)
 
         captionPanel.wantsLayer = true
@@ -196,14 +226,24 @@ private final class ComparisonSlotView: NSView {
 
     var actionsVisible: Bool { !trashButton.isHidden && !keepButton.isHidden }
 
-    func updateImage(zoom: CGFloat?, pointsPerPixel: CGFloat, center: CGPoint) {
+    /// `marker`: the AF position, normalised with y up, or nil for no ring.
+    func updateImage(zoom: CGFloat?, pointsPerPixel: CGFloat, center: CGPoint, marker: CGPoint? = nil) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.frame = ComparisonGeometry.imageFrame(slot: bounds.size, native: nativeSize, zoom: zoom, pointsPerPixel: pointsPerPixel, center: center)
+        let frame = ComparisonGeometry.imageFrame(slot: bounds.size, native: nativeSize, zoom: zoom, pointsPerPixel: pointsPerPixel, center: center)
+        imageLayer.frame = frame
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
         focusLayer.frame = bounds
+        if let marker, zoom != nil, frame.width > 0 {
+            markerLayer.position = CGPoint(x: frame.minX + marker.x * frame.width, y: frame.minY + marker.y * frame.height)
+            markerLayer.isHidden = false
+        } else {
+            markerLayer.isHidden = true
+        }
         CATransaction.commit()
     }
+
+    var showsMarker: Bool { !markerLayer.isHidden }
 
     /// Photo coordinates under a point of this slot, normalised, y up.
     func imagePoint(at point: CGPoint) -> CGPoint? {
@@ -254,6 +294,24 @@ final class ComparisonView: NSView {
     private(set) var zoom: CGFloat?
     /// Photo point kept in the middle of every slot, normalised, y up.
     private var center = CGPoint(x: 0.5, y: 0.5)
+
+    /// AF mode (A): each slot looks at its own AF position. Set while that zoom lasts.
+    private struct FocusAnchor {
+        let photo: PhotoKey
+        /// Where the slot looks before the common offset, normalised, y up.
+        var point: CGPoint
+        /// The AF position itself, for the ring.
+        var marker: CGPoint?
+        /// The header was read: the position is known, or known to be missing.
+        var known: Bool
+        /// Moved by the user since the anchor was set: a late header no longer recentres it.
+        var moved = false
+    }
+    private var focusAnchors: [Int: FocusAnchor]?
+    /// Common to every slot in AF mode, in image pixels, y up.
+    private(set) var focusOffset = CGVector.zero
+
+    var followsFocus: Bool { focusAnchors != nil }
 
     private var slotViews: [ComparisonSlotView] = []
     private var layoutSlots: [Int] = []
@@ -335,6 +393,7 @@ final class ComparisonView: NSView {
     func reset() {
         zoom = nil
         center = CGPoint(x: 0.5, y: 0.5)
+        stopFollowingFocus()
         toastPanel.isHidden = true
         for slot in slotViews { slot.setPhoto(nil) }
         setHovered(nil)
@@ -362,7 +421,7 @@ final class ComparisonView: NSView {
 
     func showFrame(_ frame: Frame, slot: Int) {
         slotViews[slot].show(frame)
-        slotViews[slot].updateImage(zoom: zoom, pointsPerPixel: pointsPerPixel, center: center)
+        updateImage(slot)
     }
 
     func showMessage(_ text: String, slot: Int) { slotViews[slot].showMessage(text) }
@@ -408,6 +467,7 @@ final class ComparisonView: NSView {
             "\(key(.delete))  Corbeille",
             "\(key(.keepSelected))  Garder celle-ci",
             "\(key(.toggleZoom))  100 % synchronisé",
+            "\(key(.zoomToFocus))  100 % sur le point AF",
             "\(key(.undo))  Annuler",
             "\(key(.exit))  Retour",
         ].joined(separator: "      ")
@@ -444,7 +504,17 @@ final class ComparisonView: NSView {
     }
 
     private func updateImages() {
-        for slot in slotViews where !slot.isHidden {
+        for index in slotViews.indices where !slotViews[index].isHidden {
+            updateImage(index)
+        }
+    }
+
+    private func updateImage(_ index: Int) {
+        let slot = slotViews[index]
+        if let anchor = focusAnchors?[index] {
+            let shown = ComparisonGeometry.center(anchor: anchor.point, offset: focusOffset, native: slot.nativeSize)
+            slot.updateImage(zoom: zoom, pointsPerPixel: pointsPerPixel, center: shown, marker: anchor.marker)
+        } else {
             slot.updateImage(zoom: zoom, pointsPerPixel: pointsPerPixel, center: center)
         }
     }
@@ -501,6 +571,7 @@ final class ComparisonView: NSView {
         if zoom != nil {
             zoom = nil
             center = CGPoint(x: 0.5, y: 0.5)
+            stopFollowingFocus()
         } else {
             zoom = 1
             if let windowPoint { aim(atWindowPoint: windowPoint) }
@@ -513,6 +584,58 @@ final class ComparisonView: NSView {
         guard zoom != nil else { return }
         toggleZoom(atWindowPoint: nil)
     }
+
+    /// A: 100 % with every slot on its own AF position. The positions come next, slot by
+    /// slot, through `setFocus`; until then a slot looks at its middle.
+    func zoomOnFocus() {
+        let wasZoomed = zoom != nil
+        zoom = 1
+        center = CGPoint(x: 0.5, y: 0.5)
+        focusAnchors = [:]
+        focusOffset = .zero
+        updateImages()
+        if !wasZoomed { onCommand(.zoomChanged) }
+    }
+
+    private func stopFollowingFocus() {
+        focusAnchors = nil
+        focusOffset = .zero
+    }
+
+    /// AF mode: what the header of this slot's photo says, nil while it is not read yet. A
+    /// new photo in the slot looks at its own position, plus the offset common to all. A
+    /// position read late recentres the slot, unless the user moved the photos since.
+    func setFocus(_ focus: CameraFocus?, photo: PhotoKey?, slot: Int) {
+        guard var anchors = focusAnchors else { return }
+        guard let photo else {
+            if anchors.removeValue(forKey: slot) != nil { focusAnchors = anchors }
+            return
+        }
+        var point: CGPoint?
+        if case .point(let found) = focus {
+            point = CGPoint(x: found.normalized.x, y: 1 - found.normalized.y)
+        }
+        let middle = CGPoint(x: 0.5, y: 0.5)
+        if var anchor = anchors[slot], anchor.photo == photo {
+            guard !anchor.known, focus != nil else { return }
+            anchor.known = true
+            anchor.marker = point
+            if !anchor.moved { anchor.point = point ?? middle }
+            anchors[slot] = anchor
+        } else {
+            anchors[slot] = FocusAnchor(photo: photo, point: point ?? middle, marker: point, known: focus != nil)
+        }
+        focusAnchors = anchors
+        if !slotViews[slot].isHidden { updateImage(slot) }
+    }
+
+    /// For the tests: the point in the middle of a slot and whether its ring shows.
+    func shownCenter(slot: Int) -> CGPoint? {
+        guard let anchor = focusAnchors?[slot] else { return nil }
+        return ComparisonGeometry.center(anchor: anchor.point, offset: focusOffset, native: slotViews[slot].nativeSize)
+    }
+
+    func showsMarker(slot: Int) -> Bool { slotViews[slot].showsMarker }
 
     /// Before zooming: the photo point under the pointer becomes the one everybody looks at.
     private func aim(atWindowPoint windowPoint: CGPoint) {
@@ -531,6 +654,7 @@ final class ComparisonView: NSView {
         if updated <= fitZoom {
             zoom = nil
             center = CGPoint(x: 0.5, y: 0.5)
+            stopFollowingFocus()
         } else {
             if !wasZoomed { aim(atWindowPoint: event.locationInWindow) }
             zoom = min(updated, 8)
@@ -545,7 +669,27 @@ final class ComparisonView: NSView {
         pan(dx: event.scrollingDeltaX * multiplier, dy: event.scrollingDeltaY * multiplier)
     }
 
-    private func pan(dx: CGFloat, dy: CGFloat) {
+    func pan(dx: CGFloat, dy: CGFloat) {
+        if let anchors = focusAnchors, let zoom {
+            // Every photo moves by the same distance from its own AF position.
+            let scale = zoom * pointsPerPixel
+            let photos = anchors.compactMap { slot, anchor -> (anchor: CGPoint, native: CGSize, slot: CGSize)? in
+                let view = slotViews[slot]
+                return view.isHidden ? nil : (anchor.point, view.nativeSize, view.bounds.size)
+            }
+            // From what is on screen, as in the viewer: an offset past every edge is not kept.
+            var offset = ComparisonGeometry.clampedOffset(focusOffset, photos: photos, zoom: zoom, pointsPerPixel: pointsPerPixel)
+            offset.dx -= dx / scale
+            offset.dy += dy / scale
+            focusOffset = ComparisonGeometry.clampedOffset(offset, photos: photos, zoom: zoom, pointsPerPixel: pointsPerPixel)
+            focusAnchors = anchors.mapValues { anchor in
+                var moved = anchor
+                moved.moved = true
+                return moved
+            }
+            updateImages()
+            return
+        }
         let size = slotViews[focus].imageSize
         guard size.width > 0, size.height > 0 else { return }
         let bounds = slotViews[focus].bounds.size

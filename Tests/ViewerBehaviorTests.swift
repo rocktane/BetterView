@@ -162,4 +162,24 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertFalse(view.isHidden)
         XCTAssertEqual(view.alphaValue, 1)
     }
+
+    // MARK: AF in the comparison
+
+    func testAInTheComparisonFollowsEachAFPositionAndTogglesBack() {
+        controller.perform(.compare)
+        XCTAssertNil(controller.comparisonView.zoom)
+        controller.perform(.zoomToFocus)
+        XCTAssertEqual(controller.comparisonView.zoom, 1)
+        XCTAssertTrue(controller.comparisonView.followsFocus)
+        controller.perform(.zoomToFocus)
+        XCTAssertNil(controller.comparisonView.zoom, "same key to leave")
+        XCTAssertFalse(controller.comparisonView.followsFocus)
+        controller.perform(.toggleZoom)
+        XCTAssertFalse(controller.comparisonView.followsFocus, "Z keeps one point for all")
+        controller.perform(.zoomToFocus)
+        XCTAssertTrue(controller.comparisonView.followsFocus, "from Z to A")
+        controller.perform(.exit)
+        XCTAssertNil(controller.comparisonView.zoom)
+        XCTAssertFalse(controller.comparisonView.followsFocus)
+    }
 }

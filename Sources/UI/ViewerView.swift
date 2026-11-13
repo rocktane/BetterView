@@ -38,8 +38,7 @@ final class ViewerView: NSView {
     private let host = NSView()
     private let imageLayer = CALayer()
     /// A thin ring: it marks where the camera aimed, nothing about sharpness.
-    private let markerLayer = CALayer()
-    private static let markerSize: CGFloat = 22
+    private let markerLayer = CALayer.focusMarker()
     private let messageLabel = ViewerView.label(size: 15, weight: .medium)
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
     /// The zoom level, shown for as long as the view is zoomed, pointer on the photo or not.
@@ -116,16 +115,6 @@ final class ViewerView: NSView {
         imageLayer.minificationFilter = .linear
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.addSublayer(imageLayer)
-        markerLayer.bounds = CGRect(x: 0, y: 0, width: Self.markerSize, height: Self.markerSize)
-        markerLayer.cornerRadius = Self.markerSize / 2
-        markerLayer.borderWidth = 1.5
-        markerLayer.borderColor = NSColor(white: 1, alpha: 0.75).cgColor
-        markerLayer.shadowColor = NSColor.black.cgColor
-        markerLayer.shadowOpacity = 0.8
-        markerLayer.shadowRadius = 1.5
-        markerLayer.shadowOffset = .zero
-        markerLayer.isHidden = true
-        markerLayer.actions = ["position": NSNull(), "hidden": NSNull()]
         root.addSublayer(markerLayer)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
@@ -611,6 +600,26 @@ final class ViewerView: NSView {
 /// The last fade asked of each view: an older fade-out that ends late must not hide a view
 /// shown again since, whatever its alpha reads at that moment.
 private nonisolated(unsafe) var fadeGenerationKey: UInt8 = 0
+
+extension CALayer {
+    /// The AF mark, in the viewer as in the comparison: a thin ring where the camera aimed,
+    /// saying nothing about sharpness. Hidden until placed.
+    static func focusMarker() -> CALayer {
+        let size: CGFloat = 22
+        let layer = CALayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        layer.cornerRadius = size / 2
+        layer.borderWidth = 1.5
+        layer.borderColor = NSColor(white: 1, alpha: 0.75).cgColor
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.8
+        layer.shadowRadius = 1.5
+        layer.shadowOffset = .zero
+        layer.isHidden = true
+        layer.actions = ["position": NSNull(), "hidden": NSNull()]
+        return layer
+    }
+}
 
 extension NSView {
     private var fadeGeneration: Int {

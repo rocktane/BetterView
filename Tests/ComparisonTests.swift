@@ -580,3 +580,119 @@ final class ComparisonHoverTests: XCTestCase {
         XCTAssertEqual(view.slotsWithActions, [], "the cell stays, empty, without buttons")
     }
 }
+
+final class ComparisonFocusGeometryTests: XCTestCase {
+    func testTheCommonOffsetIsTheSameDistanceEverywhere() {
+        let native = CGSize(width: 6000, height: 4000)
+        let a = ComparisonGeometry.center(anchor: CGPoint(x: 0.2, y: 0.7), offset: CGVector(dx: 600, dy: -400), native: native)
+        let b = ComparisonGeometry.center(anchor: CGPoint(x: 0.6, y: 0.3), offset: CGVector(dx: 600, dy: -400), native: native)
+        XCTAssertEqual(a.x, 0.3, accuracy: 1e-9)
+        XCTAssertEqual(a.y, 0.6, accuracy: 1e-9)
+        XCTAssertEqual(b.x, 0.7, accuracy: 1e-9)
+        XCTAssertEqual(b.y, 0.2, accuracy: 1e-9)
+    }
+
+    /// 6000 px at 100 % on a 2x screen: 3000 pt wide, a 600 pt slot shows a tenth of it.
+    func testOnePhotoAtItsEdgeDoesNotStopTheOthers() {
+        let native = CGSize(width: 6000, height: 4000)
+        let slot = CGSize(width: 600, height: 400)
+        let photos: [(anchor: CGPoint, native: CGSize, slot: CGSize)] = [
+            (CGPoint(x: 0.9, y: 0.5), native, slot),
+            (CGPoint(x: 0.3, y: 0.5), native, slot),
+        ]
+        // Each shows a tenth around its centre, so a centre stays within 0.1...0.9. Rightwards,
+        // the first can go nowhere and the second by 0.6 of its width: the second wins.
+        let held = ComparisonGeometry.clampedOffset(CGVector(dx: 10_000, dy: 0), photos: photos, zoom: 1, pointsPerPixel: 0.5)
+        XCTAssertEqual(held.dx, 0.6 * 6000, accuracy: 1e-6)
+        // Leftwards, the first goes furthest; past every edge, nothing more is kept.
+        let left = ComparisonGeometry.clampedOffset(CGVector(dx: -10_000, dy: 0), photos: photos, zoom: 1, pointsPerPixel: 0.5)
+        XCTAssertEqual(left.dx, (0.1 - 0.9) * 6000, accuracy: 1e-6)
+    }
+}
+
+@MainActor
+final class ComparisonFocusTests: XCTestCase {
+    private func frame(_ photo: PhotoKey) -> Frame {
+        let surface = PixelFormat.makeSurface(width: 60, height: 40)!
+        return Frame(key: FrameKey(photo: photo, tier: .screen), surface: surface, nativeSize: CGSize(width: 6000, height: 4000))
+    }
+
+    private func focus(x: Int, y: Int) -> CameraFocus {
+        .point(FocusPoint(sensorWidth: 6000, sensorHeight: 4000, x: x, y: y, orientation: 1)!)
+    }
+
+    private func makeView() -> ComparisonView {
+        let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+        view.pointerInWindow = { nil }
+        view.arrange(layout: [0, 1], focus: 0, photos: [photo("a"), photo("b"), nil, nil])
+        view.layoutSubtreeIfNeeded()
+        view.showFrame(frame(photo("a")), slot: 0)
+        view.showFrame(frame(photo("b")), slot: 1)
+        return view
+    }
+
+    func testEachPhotoLooksAtItsOwnAFPosition() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        XCTAssertEqual(view.zoom, 1)
+        view.setFocus(focus(x: 1500, y: 1000), photo: photo("a"), slot: 0)
+        view.setFocus(.manual, photo: photo("b"), slot: 1)
+        let a = try XCTUnwrap(view.shownCenter(slot: 0))
+        XCTAssertEqual(a.x, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(a.y, 0.75, accuracy: 1e-9, "y up: a point in the top quarter")
+        XCTAssertEqual(view.shownCenter(slot: 1), CGPoint(x: 0.5, y: 0.5), "manual focus: the middle")
+        XCTAssertTrue(view.showsMarker(slot: 0))
+        XCTAssertFalse(view.showsMarker(slot: 1), "no ring where the camera did not aim")
+    }
+
+    func testDraggingMovesEveryPhotoByTheSameDistance() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(focus(x: 2400, y: 2000), photo: photo("a"), slot: 0)
+        view.setFocus(focus(x: 3600, y: 2000), photo: photo("b"), slot: 1)
+        let before = (try XCTUnwrap(view.shownCenter(slot: 0)), try XCTUnwrap(view.shownCenter(slot: 1)))
+        view.pan(dx: -60, dy: 0)
+        let after = (try XCTUnwrap(view.shownCenter(slot: 0)), try XCTUnwrap(view.shownCenter(slot: 1)))
+        XCTAssertEqual(after.0.x - before.0.x, after.1.x - before.1.x, accuracy: 1e-9)
+        XCTAssertGreaterThan(after.0.x, before.0.x)
+    }
+
+    func testALatePositionRecentresUnlessThePhotosWereMoved() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(nil, photo: photo("a"), slot: 0)
+        view.setFocus(nil, photo: photo("b"), slot: 1)
+        XCTAssertEqual(view.shownCenter(slot: 0), CGPoint(x: 0.5, y: 0.5), "not read yet: the middle meanwhile")
+        view.setFocus(focus(x: 1500, y: 2000), photo: photo("a"), slot: 0)
+        XCTAssertEqual(try XCTUnwrap(view.shownCenter(slot: 0)).x, 0.25, accuracy: 1e-9)
+        view.pan(dx: -30, dy: 0)
+        let moved = try XCTUnwrap(view.shownCenter(slot: 1))
+        view.setFocus(focus(x: 4500, y: 2000), photo: photo("b"), slot: 1)
+        XCTAssertEqual(view.shownCenter(slot: 1), moved, "the user is looking around: it stays")
+        XCTAssertTrue(view.showsMarker(slot: 1), "the ring still shows where the camera aimed")
+    }
+
+    func testAReplacingPhotoOpensOnItsPositionPlusTheCommonOffset() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("a"), slot: 0)
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("b"), slot: 1)
+        view.pan(dx: -60, dy: 0)
+        let offset = view.focusOffset
+        XCTAssertNotEqual(offset.dx, 0)
+        view.arrange(layout: [0, 1], focus: 0, photos: [photo("a"), photo("c"), nil, nil])
+        view.showFrame(frame(photo("c")), slot: 1)
+        view.setFocus(focus(x: 1500, y: 2000), photo: photo("c"), slot: 1)
+        XCTAssertEqual(try XCTUnwrap(view.shownCenter(slot: 1)).x, 0.25 + offset.dx / 6000, accuracy: 1e-9)
+    }
+
+    func testLeavingTheZoomEndsTheAFMode() {
+        let view = makeView()
+        view.zoomOnFocus()
+        XCTAssertTrue(view.followsFocus)
+        view.toggleZoom(atWindowPoint: nil)
+        XCTAssertNil(view.zoom)
+        XCTAssertFalse(view.followsFocus)
+        XCTAssertFalse(view.showsMarker(slot: 0))
+    }
+}

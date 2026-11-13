@@ -8,7 +8,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
     let session: LibrarySession
     let pipeline: Pipeline
     let view = ViewerView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
-    private let comparisonView = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
+    let comparisonView = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
     private let strip = StripPanel()
     let window: NSWindow
 
@@ -346,19 +346,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let focus = pipeline.cameraFocus(current)
         focusAwaited = focus == nil
         let middle = CGPoint(x: 0.5, y: 0.5)
-        switch focus {
-        case .point(let point):
+        if case .point(let point) = focus {
             view.setFocusMarker(point.normalized, note: nil)
             view.zoom(onNormalized: point.normalized, level: level)
-        case .manual:
-            view.setFocusMarker(nil, note: "Mise au point manuelle : centre")
+        } else {
+            view.setFocusMarker(nil, note: Self.focusNote(focus))
             view.zoom(onNormalized: middle, level: level)
-        case .absent:
-            view.setFocusMarker(nil, note: "Pas de point AF : centre")
-            view.zoom(onNormalized: middle, level: level)
-        case nil:
-            view.setFocusMarker(nil, note: nil)
-            view.zoom(onNormalized: middle, level: level)
+        }
+    }
+
+    /// Said when the zoom falls back on the middle: it must not pretend to know the focus.
+    private static func focusNote(_ focus: CameraFocus?) -> String? {
+        switch focus {
+        case .manual: "Mise au point manuelle : centre"
+        case .absent: "Pas de point AF : centre"
+        case .point, nil: nil
         }
     }
 
@@ -373,6 +375,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The header was read after the photo appeared: move to it, unless the user has
     /// started looking around on their own.
     private func focusArrived(_ photo: PhotoKey) {
+        if let comparison {
+            if comparisonView.followsFocus, comparison.shown.contains(photo) { displayComparison() }
+            return
+        }
         guard followsFocus, focusAwaited, photo == session.list.current, photo == focusCentred else { return }
         if view.movedByUser {
             focusAwaited = false
@@ -908,30 +914,47 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.setTitle("Comparer  ·  \(left) photo\(left > 1 ? "s" : "") restante\(left > 1 ? "s" : "")")
         comparedVisible = []
         let zoomed = comparisonView.zoom
+        let followsFocus = comparisonView.followsFocus
         for (slot, entry) in model.slots.enumerated() {
-            guard let photo = entry else { continue }
+            guard let photo = entry else {
+                comparisonView.setFocus(nil, photo: nil, slot: slot)
+                continue
+            }
             let known = metadata.metadata(for: photo)
             let locked = !session.protection(of: photo).isEmpty
+            let note: String?
+            if followsFocus {
+                let focus = pipeline.cameraFocus(photo)
+                comparisonView.setFocus(focus, photo: photo, slot: slot)
+                note = Self.focusNote(focus)
+            } else {
+                note = nil
+            }
+            // The AF note stays on every state of the slot, next to the protection.
+            func badge(_ text: String?, locked: Bool) -> String? {
+                let parts = [text, note].compactMap { $0 }
+                return Self.badge(parts.isEmpty ? nil : parts.joined(separator: "  ·  "), locked: locked)
+            }
             comparisonView.setCaption(slot: slot, number: slot + 1, name: photo.name, settings: known?.settingsText ?? "")
             if let frame = pipeline.cache.best(photo, zoomed: zoomed != nil) {
                 comparisonView.showFrame(frame, slot: slot)
                 comparedVisible.insert(slot)
                 if frame.key.tier == .preview {
-                    comparisonView.setBadge(Self.badge("Aperçu", locked: locked), slot: slot)
+                    comparisonView.setBadge(badge("Aperçu", locked: locked), slot: slot)
                 } else if let zoomed {
                     // Under memory pressure, only the focused photo is rendered at 100 %.
                     let coming = pipeline.memoryLevel == .normal || slot == model.focus
-                    comparisonView.setBadge(Self.badge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), locked: locked), slot: slot)
+                    comparisonView.setBadge(badge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), locked: locked), slot: slot)
                 } else {
-                    comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
+                    comparisonView.setBadge(badge(nil, locked: locked), slot: slot)
                 }
             } else if pipeline.hasFailed(FrameKey(photo: photo, tier: .screen)) {
                 comparisonView.showMessage("Impossible de décoder \(photo.name)", slot: slot)
-                comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
+                comparisonView.setBadge(badge(nil, locked: locked), slot: slot)
                 comparedVisible.insert(slot)
             } else {
                 comparisonView.showMessage(photo.name, slot: slot)
-                comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
+                comparisonView.setBadge(badge(nil, locked: locked), slot: slot)
             }
         }
         metadata.request(model.shown + model.waiting.prefix(ComparisonModel.slotCount))
@@ -1021,7 +1044,15 @@ final class ViewerController: NSObject, NSWindowDelegate {
             leaveComparison()
         case .revealInFinder:
             revealInFinder()
-        case .toggleInfo, .toggleStrip, .zoomToFocus, .first, .last, .extendNext, .extendPrevious,
+        case .zoomToFocus:
+            // Same key to leave, as in the viewer.
+            if comparisonView.followsFocus {
+                comparisonView.exitZoom()
+            } else {
+                comparisonView.zoomOnFocus()
+                displayComparison()
+            }
+        case .toggleInfo, .toggleStrip, .first, .last, .extendNext, .extendPrevious,
              .toggleSelection, .zoomIn, .zoomOut, .zoomFit:
             break
         }
