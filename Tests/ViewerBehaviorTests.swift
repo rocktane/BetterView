@@ -62,11 +62,11 @@ final class ViewerBehaviorTests: XCTestCase {
     }
 
     func testDeletingWhileZoomedOpensTheNextFitted() async {
-        controller.view.toggleZoom(at: nil)
         let before = controller.session.list.current
         // Nothing decodes here: the error screen with its name makes the photo deletable.
         await spin { self.controller.visiblePhoto == before }
         controller.view.toggleZoom(at: nil)
+        XCTAssertTrue(controller.view.isZoomed)
         controller.deleteCurrent()
         XCTAssertNotEqual(controller.session.list.current, before)
         XCTAssertFalse(controller.view.isZoomed)
