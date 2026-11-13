@@ -686,6 +686,25 @@ final class ComparisonFocusTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(view.shownCenter(slot: 1)).x, 0.25 + offset.dx / 6000, accuracy: 1e-9)
     }
 
+    /// Zooming out narrows what each photo can show: the offset kept must not come back
+    /// past the edge when zooming in again.
+    func testAPinchOutHoldsTheOffsetToWhatCanStillBeShown() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("a"), slot: 0)
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("b"), slot: 1)
+        view.pan(dx: -100_000, dy: 0)
+        let atFull = view.focusOffset.dx
+        XCTAssertGreaterThan(atFull, 0)
+        view.pinch(by: -0.5, atWindowPoint: .zero)
+        XCTAssertEqual(view.zoom, 0.5)
+        let atHalf = view.focusOffset.dx
+        XCTAssertLessThan(atHalf, atFull, "the edge is closer at 50 %")
+        view.pinch(by: 1, atWindowPoint: .zero)
+        XCTAssertEqual(view.zoom, 1)
+        XCTAssertEqual(view.focusOffset.dx, atHalf, "zooming back in does not bring the excess back")
+    }
+
     func testLeavingTheZoomEndsTheAFMode() {
         let view = makeView()
         view.zoomOnFocus()

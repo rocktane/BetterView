@@ -597,6 +597,16 @@ final class ComparisonView: NSView {
         if !wasZoomed { onCommand(.zoomChanged) }
     }
 
+    /// Holds the common offset to what the photos on screen can show at the current zoom.
+    private func clampFocusOffset() {
+        guard let anchors = focusAnchors, let zoom else { return }
+        let photos = anchors.compactMap { slot, anchor -> (anchor: CGPoint, native: CGSize, slot: CGSize)? in
+            let view = slotViews[slot]
+            return view.isHidden ? nil : (anchor.point, view.nativeSize, view.bounds.size)
+        }
+        focusOffset = ComparisonGeometry.clampedOffset(focusOffset, photos: photos, zoom: zoom, pointsPerPixel: pointsPerPixel)
+    }
+
     private func stopFollowingFocus() {
         focusAnchors = nil
         focusOffset = .zero
@@ -646,18 +656,24 @@ final class ComparisonView: NSView {
     }
 
     override func magnify(with event: NSEvent) {
+        pinch(by: event.magnification, atWindowPoint: event.locationInWindow)
+    }
+
+    func pinch(by magnification: CGFloat, atWindowPoint windowPoint: CGPoint) {
         let slot = slotViews[focus]
         let wasZoomed = zoom != nil
         guard slot.nativeSize.width > 0, slot.nativeSize.height > 0 else { return }
         let fitZoom = min(slot.bounds.width / slot.nativeSize.width, slot.bounds.height / slot.nativeSize.height) / pointsPerPixel
-        let updated = (zoom ?? fitZoom) * (1 + event.magnification)
+        let updated = (zoom ?? fitZoom) * (1 + magnification)
         if updated <= fitZoom {
             zoom = nil
             center = CGPoint(x: 0.5, y: 0.5)
             stopFollowingFocus()
         } else {
-            if !wasZoomed { aim(atWindowPoint: event.locationInWindow) }
+            if !wasZoomed { aim(atWindowPoint: windowPoint) }
             zoom = min(updated, 8)
+            // Zooming out narrows what each photo can show: the kept offset follows.
+            clampFocusOffset()
         }
         updateImages()
         if wasZoomed != (zoom != nil) { onCommand(.zoomChanged) }
@@ -673,15 +689,11 @@ final class ComparisonView: NSView {
         if let anchors = focusAnchors, let zoom {
             // Every photo moves by the same distance from its own AF position.
             let scale = zoom * pointsPerPixel
-            let photos = anchors.compactMap { slot, anchor -> (anchor: CGPoint, native: CGSize, slot: CGSize)? in
-                let view = slotViews[slot]
-                return view.isHidden ? nil : (anchor.point, view.nativeSize, view.bounds.size)
-            }
             // From what is on screen, as in the viewer: an offset past every edge is not kept.
-            var offset = ComparisonGeometry.clampedOffset(focusOffset, photos: photos, zoom: zoom, pointsPerPixel: pointsPerPixel)
-            offset.dx -= dx / scale
-            offset.dy += dy / scale
-            focusOffset = ComparisonGeometry.clampedOffset(offset, photos: photos, zoom: zoom, pointsPerPixel: pointsPerPixel)
+            clampFocusOffset()
+            focusOffset.dx -= dx / scale
+            focusOffset.dy += dy / scale
+            clampFocusOffset()
             focusAnchors = anchors.mapValues { anchor in
                 var moved = anchor
                 moved.moved = true
