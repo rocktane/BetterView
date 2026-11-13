@@ -90,18 +90,26 @@ final class StripView: NSView {
     private static let outlineOffset: CGFloat = 1
     private static let outlineWidth: CGFloat = 1.5
     private static let checkSize: CGFloat = 16
+    /// Room around the disc for its shadow, at full size.
+    private static let checkMargin: CGFloat = 2
 
-    /// A blue disc with a white check and a thin dark ring, drawn once at twice its size.
+    /// A blue disc with a white check, a thin white ring and a soft shadow, drawn once at
+    /// twice its size.
     private static let checkImage: CGImage? = {
-        let pixels = Int(checkSize * 2)
+        let side = checkSize + 2 * checkMargin
+        let pixels = Int(side * 2)
         guard let context = CGContext(
             data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
-        let side = CGFloat(pixels)
-        context.scaleBy(x: side / 16, y: side / 16)
-        context.setFillColor(NSColor(white: 0, alpha: 0.35).cgColor)
+        context.scaleBy(x: 2, y: 2)
+        context.translateBy(x: checkMargin, y: checkMargin)
+        // The shadow's offset and blur ignore the scale: they are in pixels.
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -1), blur: 2.4, color: NSColor(white: 0, alpha: 0.45).cgColor)
+        context.setFillColor(NSColor.white.cgColor)
         context.fillEllipse(in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        context.restoreGState()
         context.setFillColor(NSColor(red: 0.2, green: 0.5, blue: 1, alpha: 1).cgColor)
         context.fillEllipse(in: CGRect(x: 1, y: 1, width: 14, height: 14))
         context.setStrokeColor(NSColor.white.cgColor)
@@ -288,7 +296,9 @@ final class StripView: NSView {
                 // Inside the white border, in the top right corner.
                 let size = min(Self.checkSize, metrics.height * 0.4)
                 let inset: CGFloat = 4
-                check.frame = CGRect(x: frames[position].width - size - inset, y: frames[position].height - size - inset, width: size, height: size)
+                let disc = CGRect(x: frames[position].width - size - inset, y: frames[position].height - size - inset, width: size, height: size)
+                let margin = Self.checkMargin * size / Self.checkSize
+                check.frame = disc.insetBy(dx: -margin, dy: -margin)
             }
         }
         // One rounded outline around each group, concentric with the thumbnails' corners.
