@@ -245,6 +245,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         guard comparison != nil else { return true }
         switch action {
         case .undo, .toggleZoom, .zoomToFocus, .exit, .compare: return true
+        // The photo under the pointer: still there when the menu is walked from the keyboard.
+        case .revealInFinder: return comparisonView.hoveredSlot != nil
         default: return false
         }
     }

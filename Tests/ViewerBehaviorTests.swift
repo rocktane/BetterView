@@ -238,6 +238,11 @@ final class ViewerBehaviorTests: XCTestCase {
         for action in [ShortcutAction.undo, .toggleZoom, .zoomToFocus, .exit, .compare] {
             XCTAssertTrue(controller.isAvailable(action), action.rawValue)
         }
+        controller.comparisonView.layoutSubtreeIfNeeded()
+        controller.comparisonView.hover(atWindowPoint: nil)
+        XCTAssertFalse(controller.isAvailable(.revealInFinder), "no photo under the pointer")
+        controller.comparisonView.hover(atWindowPoint: controller.comparisonView.slotCenter(0))
+        XCTAssertTrue(controller.isAvailable(.revealInFinder), "the photo under the pointer")
     }
 
     func testTheTrashButtonDeletesItsOwnPhoto() async {
