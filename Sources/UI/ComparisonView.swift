@@ -669,6 +669,8 @@ final class ComparisonView: NSView {
 
     func pinch(by magnification: CGFloat, atWindowPoint windowPoint: CGPoint) {
         let wasZoomed = zoom != nil
+        // Fitted already: pinching in has nothing to do, and must not zoom in.
+        if !wasZoomed && magnification <= 0 { return }
         // Back to the fit once every photo would fit its slot again.
         let fits = drawnSlots.compactMap { ComparisonGeometry.fitZoom(slot: $0.bounds.size, native: $0.nativeSize, pointsPerPixel: pointsPerPixel) }
         // A photo fits below its own fit zoom: all of them do below the smallest one.

@@ -739,6 +739,11 @@ final class ComparisonFocusTests: XCTestCase {
         view.showFrame(Frame(key: FrameKey(photo: photo("b"), tier: .screen), surface: small, nativeSize: CGSize(width: 3000, height: 2000)), slot: 1)
         // Slots of about 595 x 693 pt, 2 px per pt: fits at about 0.2 and 0.4. Spreading the
         // fingers from the fit starts from the larger: the smaller photo grows, never shrinks.
+        // Pinching in from the fit does nothing.
+        view.pinch(by: -0.05, atWindowPoint: .zero)
+        XCTAssertNil(view.zoom, "a pinch in leaves the fit alone")
+        view.pinch(by: 0, atWindowPoint: .zero)
+        XCTAssertNil(view.zoom)
         view.pinch(by: 0.05, atWindowPoint: .zero)
         let largestFit = ComparisonGeometry.fitZoom(slot: CGSize(width: 595.5, height: 693), native: CGSize(width: 3000, height: 2000), pointsPerPixel: 0.5) ?? 0
         XCTAssertGreaterThan(view.zoom ?? 0, largestFit)
