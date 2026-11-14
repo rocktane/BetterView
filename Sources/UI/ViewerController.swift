@@ -52,7 +52,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var preComparisonFrame: CGRect?
     private var preComparisonCenter: CGPoint?
     /// Slots whose content can legitimately be deleted: pixels, or an error with its name.
-    private var comparedVisible: Set<Int> = []
+    private(set) var comparedVisible: Set<Int> = []
+    /// The photos last laid out in the slots: one arriving (a deletion, a keep, an undo) ends
+    /// the AF zoom, as another photo does in the viewer.
+    private var comparisonShown: Set<PhotoKey> = []
     private let normalFullBudget: Int
 
     /// The shape the window currently has, and the size it keeps across shapes.
@@ -119,7 +122,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
         view.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
-        comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
         strip.onSizeChanged = { [weak self] in self?.scheduleStripUpdate() }
         strip.viewer = window
@@ -235,7 +237,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
             if !view.isZoomed { stopFollowingFocus() }
             display()
             replan()
-        case .selectSlot(let slot): selectSlot(slot)
         case .slotAction(let action, let slot, let photo): performOnSlot(action, slot: slot, photo: photo)
         }
     }
@@ -244,6 +245,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
         view.shortcuts = map
         comparisonView.shortcuts = map
         scheduleStripUpdate()
+    }
+
+    /// Whether the command does something where the user is: in the comparison, keeping and
+    /// deleting go through the buttons over a photo, and no key picks one. The menu greys the rest.
+    func isAvailable(_ action: ShortcutAction) -> Bool {
+        guard comparison != nil else { return true }
+        switch action {
+        case .undo, .toggleZoom, .zoomToFocus, .exit, .compare: return true
+        // The photo under the pointer: still there when the menu is walked from the keyboard.
+        case .revealInFinder: return comparisonView.hoveredSlot != nil
+        default: return false
+        }
     }
 
     func perform(_ action: ShortcutAction, repeating isRepeat: Bool = false) {
@@ -281,7 +294,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
             if !leavesSomething, fullScreen { leaveFullScreen() }
         case .toggleStrip: setStripVisible(!stripVisible)
         case .compare: enterComparison()
-        case .keepSelected: break
         }
     }
 
@@ -484,6 +496,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     func undo() {
         if !session.undo() { NSSound.beep() }
     }
+
+    var isInfoVisible: Bool { infoVisible }
 
     func setInfoVisible(_ visible: Bool) {
         infoVisible = visible
@@ -702,8 +716,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// for the next photos so it is normally there on arrival.
     private func updateInfo() {
         requestMetadata()
-        guard infoVisible, let current = session.list.current, let index = session.list.index else {
+        guard let current = session.list.current, let index = session.list.index else {
             view.hideInfo()
+            return
+        }
+        guard infoVisible else {
+            view.hideInfo(offeringToShow: true)
             return
         }
         let known = metadata.metadata(for: current)
@@ -1035,6 +1053,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         selection.clear()
         strip.setVisible(false)
         comparedVisible = []
+        comparisonShown = Set(model.shown)
         comparisonView.reset()
         // The viewer leaves the window: it must not keep a surface alive that the cache let go.
         view.showMessage(nil)
@@ -1106,7 +1125,15 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func displayComparison() {
         guard let model = comparison else { return }
-        comparisonView.arrange(layout: model.layout, focus: model.focus, photos: model.slots)
+        let shown = Set(model.shown)
+        let arriving = !shown.subtracting(comparisonShown).isEmpty
+        comparisonShown = shown
+        if arriving, comparisonView.followsFocus, !keepsZoomAcrossPhotos() {
+            // Back to the fit; that change displays the comparison again.
+            comparisonView.exitZoom()
+            return
+        }
+        comparisonView.arrange(layout: model.layout, photos: model.slots)
         let left = model.remaining
         comparisonView.setTitle("Comparer  ·  \(left) photo\(left > 1 ? "s" : "") restante\(left > 1 ? "s" : "")")
         comparedVisible = []
@@ -1177,7 +1204,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return StripCell(
                 photo: photo,
                 image: thumbnails.image(for: photo),
-                mark: photo == model.focused ? .current : .none,
+                // Nothing is selected in the comparison: no photo is marked as current.
+                mark: .none,
                 opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14)
             )
         }
@@ -1187,26 +1215,23 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.setRowNote(waiting > 0 ? "\(waiting) en attente" : nil)
     }
 
-    private func comparisonRowClicked(_ photo: PhotoKey) {
-        guard let slot = comparison?.slots.firstIndex(of: photo) else { return }
-        selectSlot(slot)
-    }
-
-    private func selectSlot(_ slot: Int) {
-        comparison?.setFocus(slot: slot)
-        focusChanged()
-    }
-
-    /// A button over a photo: that photo takes the focus, then the action runs with the
-    /// guards of the keyboard. Nothing happens if the slot no longer shows that photo.
-    private func performOnSlot(_ action: ShortcutAction, slot: Int, photo: PhotoKey?) {
+    /// A button over a photo, the only way to keep or delete here. That photo becomes the
+    /// model's reference (the one the viewer comes back to, rendered first), then the action
+    /// runs with its guards. Nothing happens if the slot no longer shows that photo.
+    private func performOnSlot(_ action: ComparisonAction, slot: Int, photo: PhotoKey?) {
         guard let model = comparison, photo != nil, model.slots.indices.contains(slot), model.slots[slot] == photo else {
             NSSound.beep()
             return
         }
-        if model.focus != slot { selectSlot(slot) }
+        if model.focus != slot {
+            comparison?.setFocus(slot: slot)
+            focusChanged()
+        }
         guard comparison?.focus == slot else { return }
-        performInComparison(action)
+        switch action {
+        case .trash: trashFocusedInComparison()
+        case .keep: keepFocusedInComparison()
+        }
     }
 
     private func focusChanged() {
@@ -1218,16 +1243,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func performInComparison(_ action: ShortcutAction) {
         guard comparison != nil else { return }
         switch action {
-        case .next, .jumpForward:
-            comparison?.moveFocus(by: 1)
-            focusChanged()
-        case .previous, .jumpBackward:
-            comparison?.moveFocus(by: -1)
-            focusChanged()
-        case .delete:
-            trashFocusedInComparison()
-        case .keepSelected:
-            keepFocusedInComparison()
         case .undo:
             undo()
         case .toggleZoom:
@@ -1242,7 +1257,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .compare:
             leaveComparison()
         case .revealInFinder:
-            revealInFinder()
+            // The photo under the pointer: none is selected here.
+            if let photo = comparisonView.hoveredSlot.flatMap({ comparison?.slots[$0] }) {
+                NSWorkspace.shared.activateFileViewerSelecting([photo.url])
+            } else {
+                NSSound.beep()
+            }
         case .zoomToFocus:
             // Same key to leave, as in the viewer.
             if comparisonView.followsFocus {
@@ -1251,7 +1271,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 comparisonView.zoomOnFocus()
                 displayComparison()
             }
-        case .toggleInfo, .toggleStrip, .first, .last, .extendNext, .extendPrevious,
+        // Mouse only: keeping and deleting go through the buttons over a photo, and no key
+        // picks a photo.
+        case .next, .previous, .jumpForward, .jumpBackward, .delete,
+             .toggleInfo, .toggleStrip, .first, .last, .extendNext, .extendPrevious,
              .toggleSelection, .zoomIn, .zoomOut, .zoomFit:
             break
         }

@@ -12,7 +12,7 @@ final class ViewerBehaviorTests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("BVViewer-\(UUID().uuidString)")
         let folder = root.appendingPathComponent("photos")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        for name in ["a", "b", "c", "d"] {
+        for name in ["a", "b", "c", "d", "e", "f"] {
             try Data(name.utf8).write(to: folder.appendingPathComponent("\(name).arw"))
         }
         // Deletions go to a folder of the test, never to the real Trash.
@@ -31,7 +31,7 @@ final class ViewerBehaviorTests: XCTestCase {
         // The default, whatever the user chose in the app's settings.
         controller.keepsZoomAcrossPhotos = { false }
         controller.session.open([folder])
-        await spin { self.controller.session.list.count == 4 }
+        await spin { self.controller.session.list.count == 6 }
     }
 
     override func tearDown() async throws {
@@ -104,6 +104,14 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertFalse(controller.followsFocus)
     }
 
+    func testNamePositionAndZoomShareOneSize() throws {
+        let fonts = ViewerView(frame: .zero).textFonts
+        let name = try XCTUnwrap(fonts.name), position = try XCTUnwrap(fonts.position), zoom = try XCTUnwrap(fonts.zoom)
+        XCTAssertEqual(position, name)
+        XCTAssertEqual(zoom.pointSize, name.pointSize)
+        XCTAssertEqual(zoom, NSFont.monospacedDigitSystemFont(ofSize: name.pointSize, weight: .semibold), "fixed-width digits")
+    }
+
     // MARK: Overlays on hover
 
     private var closeButton: NSButton { controller.window.standardWindowButton(.closeButton)! }
@@ -152,6 +160,33 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertTrue(view.overlaysShown, "shown at once, whatever the fade-out left")
     }
 
+    /// Information hidden by the user: a discreet « i » on hover brings it back. Never next
+    /// to the information itself, and not when there is no photo at all.
+    func testTheInfoButtonOffersToShowWhatTheUserHid() throws {
+        let view = ViewerView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentView = view
+        var commands: [ViewerCommand] = []
+        view.onCommand = { commands.append($0) }
+        view.pointerInWindow = { CGPoint(x: 450, y: 300) }
+        view.hideInfo(offeringToShow: true)
+        view.refreshHover()
+        XCTAssertTrue(view.offersToShowInfo)
+        XCTAssertFalse(view.overlaysShown)
+        let button = try XCTUnwrap(view.subviews.compactMap { $0 as? NSButton }.first)
+        button.performClick(nil)
+        XCTAssertTrue(commands.contains { if case .perform(.toggleInfo, _) = $0 { true } else { false } })
+        view.setInfo(name: "A.arw", settings: "", date: "", position: "1 / 4")
+        XCTAssertFalse(view.offersToShowInfo, "never with the information shown")
+        XCTAssertTrue(view.overlaysShown)
+        view.hideInfo()
+        XCTAssertFalse(view.offersToShowInfo, "nothing to show: no « i »")
+        view.hideInfo(offeringToShow: true)
+        view.pointerInWindow = { nil }
+        view.refreshHover()
+        XCTAssertFalse(view.offersToShowInfo, "only while the pointer is on the photo")
+    }
+
     /// A fade-out still running when the pointer comes back must not hide the view at its end.
     func testALateFadeOutDoesNotHideAViewShownSince() async {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
@@ -181,5 +216,94 @@ final class ViewerBehaviorTests: XCTestCase {
         controller.perform(.exit)
         XCTAssertNil(controller.comparisonView.zoom)
         XCTAssertFalse(controller.comparisonView.followsFocus)
+    }
+
+    // MARK: Comparison, mouse only
+
+    private func compareAll() async {
+        controller.perform(.compare)
+        await spin { self.controller.comparisonView.slotsShowingPhotos.count >= 2 }
+    }
+
+    func testNoKeyKeepsDeletesOrPicksAPhotoInTheComparison() async {
+        await compareAll()
+        let before = controller.session.list.photos
+        let current = controller.session.list.current
+        for action in [ShortcutAction.delete, .next, .previous, .jumpForward] {
+            XCTAssertFalse(controller.isAvailable(action), action.rawValue)
+            controller.perform(action)
+        }
+        XCTAssertEqual(controller.session.list.photos, before, "nothing deleted")
+        XCTAssertEqual(controller.session.list.current, current, "nothing picked")
+        for action in [ShortcutAction.undo, .toggleZoom, .zoomToFocus, .exit, .compare] {
+            XCTAssertTrue(controller.isAvailable(action), action.rawValue)
+        }
+        controller.comparisonView.layoutSubtreeIfNeeded()
+        controller.comparisonView.hover(atWindowPoint: nil)
+        XCTAssertFalse(controller.isAvailable(.revealInFinder), "no photo under the pointer")
+        controller.comparisonView.hover(atWindowPoint: controller.comparisonView.slotCenter(0))
+        XCTAssertTrue(controller.isAvailable(.revealInFinder), "the photo under the pointer")
+    }
+
+    func testTheTrashButtonDeletesItsOwnPhoto() async {
+        await compareAll()
+        let second = controller.comparisonView.photo(inSlot: 1)
+        XCTAssertNotNil(second)
+        // The error screen with its name counts as visible: it is what a deletion would hit.
+        await spin { self.controller.comparedVisible.contains(1) }
+        controller.comparisonView.onCommand(.slotAction(.trash, slot: 1, photo: second))
+        XCTAssertFalse(controller.session.list.photos.contains(second!))
+        await spin { !self.controller.session.hasPendingIO }
+    }
+
+    // MARK: Deleting in AF mode
+
+    func testDeletingInAFModeOpensTheNextFittedInTheViewer() async {
+        let before = controller.session.list.current
+        await spin { self.controller.visiblePhoto == before }
+        controller.zoomToFocus()
+        XCTAssertTrue(controller.followsFocus)
+        controller.deleteCurrent()
+        XCTAssertNotEqual(controller.session.list.current, before)
+        XCTAssertFalse(controller.view.isZoomed)
+        XCTAssertFalse(controller.followsFocus)
+        await spin { !self.controller.session.hasPendingIO }
+    }
+
+    /// Six photos selected: four on screen, two waiting to take a freed slot.
+    private func compareSix() async {
+        for _ in 0..<6 {
+            controller.perform(.toggleSelection)
+            controller.step(1)
+        }
+        controller.perform(.compare)
+        await spin { self.controller.comparisonView.slotsShowingPhotos.count == 4 }
+        await spin { self.controller.comparedVisible.count == 4 }
+    }
+
+    private func trashSlot(_ slot: Int) {
+        controller.comparisonView.onCommand(.slotAction(.trash, slot: slot, photo: controller.comparisonView.photo(inSlot: slot)))
+    }
+
+    func testAPhotoArrivingInAFModeBringsTheComparisonBackToTheFit() async {
+        await compareSix()
+        controller.perform(.zoomToFocus)
+        XCTAssertTrue(controller.comparisonView.followsFocus)
+        let gone = controller.comparisonView.photo(inSlot: 0)
+        trashSlot(0)
+        XCTAssertNotEqual(controller.comparisonView.photo(inSlot: 0), gone, "the next waiting photo took the slot")
+        XCTAssertNil(controller.comparisonView.zoom)
+        XCTAssertFalse(controller.comparisonView.followsFocus)
+        await spin { !self.controller.session.hasPendingIO }
+    }
+
+    func testWithTheSettingTheAFZoomStaysWhenAPhotoArrives() async {
+        controller.keepsZoomAcrossPhotos = { true }
+        await compareSix()
+        controller.perform(.zoomToFocus)
+        trashSlot(0)
+        XCTAssertEqual(controller.comparisonView.zoom, 1)
+        XCTAssertTrue(controller.comparisonView.followsFocus)
+        await spin { !self.controller.session.hasPendingIO }
     }
 }
