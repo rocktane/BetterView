@@ -149,4 +149,37 @@ final class StripPanelFollowTests: XCTestCase {
         XCTAssertEqual(strip.frame.maxY, viewer.frame.minY - StripMagnet.dockGap)
         XCTAssertEqual(strip.frame.midX, viewer.frame.midX, accuracy: 0.5)
     }
+
+    func testTheHoverRingFollowsWhenTheWindowCarriesTheStripUnderAStillPointer() throws {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let visible = screen.visibleFrame
+        let viewer = NSWindow(contentRect: CGRect(x: visible.midX - 300, y: visible.midY - 150, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        viewer.isReleasedWhenClosed = false
+        viewer.orderFront(nil)
+        defer { viewer.orderOut(nil) }
+        let strip = StripPanel(placement: StripPlacement(origin: nil, docked: false, centeredX: false, window: StripWindowHold(centered: true)), size: StripSize(width: 700, height: 82))
+        strip.save = { _, _ in }
+        strip.viewer = viewer
+        strip.viewerFrame = { viewer.frame }
+        strip.isAppActive = { true }
+        let photos = (0..<41).map { PhotoKey(path: "/p/\($0).arw", device: 1, inode: UInt64($0), size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0) }
+        strip.view.update(cells: photos.enumerated().map { StripCell(photo: $1, mark: $0 == 20 ? .current : .none) }, anchor: 20, cut: (true, true))
+        strip.setVisible(true)
+        defer { strip.setVisible(false) }
+        let view = strip.view
+        // The pointer on the middle thumbnail, then still.
+        let local = CGPoint(x: view.cellFrames[20].midX, y: view.cellFrames[20].midY)
+        view.mouseMoved(with: NSEvent.mouseEvent(with: .mouseMoved, location: view.convert(local, to: nil), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+        XCTAssertEqual(view.cornerMarks.firstIndex(of: .ring), 20)
+        let pointer = try XCTUnwrap(view.window).convertPoint(toScreen: view.convert(local, to: nil))
+        // The window, and the strip with it, moves left by more than two thumbnails.
+        viewer.setFrameOrigin(CGPoint(x: viewer.frame.minX - 230, y: viewer.frame.minY))
+        strip.followViewer()
+        let now = view.convert(try XCTUnwrap(view.window).convertPoint(fromScreen: pointer), from: nil)
+        let under = view.cellFrames.firstIndex { $0.insetBy(dx: -3, dy: 0).contains(now) }
+        XCTAssertNotNil(under)
+        XCTAssertNotEqual(under, 20)
+        XCTAssertEqual(view.cornerMarks.firstIndex(of: .ring), under, "the ring is under the pointer, not on the thumbnail it left")
+        XCTAssertEqual(view.cornerMarks.filter { $0 == .ring }.count, 1)
+    }
 }

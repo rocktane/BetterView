@@ -225,6 +225,30 @@ final class StripPanelStretchTests: XCTestCase {
         XCTAssertEqual(asked, 1)
     }
 
+    func testTheHoverRingFollowsThePointerThroughAStretch() {
+        let strip = makePanel(placement: StripPlacement(origin: CGPoint(x: 100, y: 300), docked: false, centeredX: false))
+        let view = strip.view
+        let start = strip.frame
+        // The pointer on the right grip, over a thumbnail.
+        let point = CGPoint(x: start.width - 3, y: 40)
+        view.mouseMoved(with: NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+        XCTAssertEqual(view.cornerMarks.filter { $0 == .ring }.count, 1)
+        pointer = CGPoint(x: start.minX + point.x, y: start.minY + point.y)
+        view.mouseDown(with: event(.leftMouseDown, at: point, in: strip))
+        for _ in 0..<6 {
+            pointer.x += 40
+            view.mouseDragged(with: event(.leftMouseDragged, at: point, in: strip))
+            XCTAssertFalse(view.cornerMarks.contains(.ring), "no ring while the strip is stretched")
+        }
+        view.mouseUp(with: event(.leftMouseUp, at: point, in: strip))
+        // Back on the thumbnail under the pointer, wherever the stretch left it.
+        let local = view.convert(view.window!.convertPoint(fromScreen: pointer), from: nil)
+        let under = view.cellFrames.firstIndex { $0.insetBy(dx: -3, dy: 0).contains(local) }
+        XCTAssertNotNil(under)
+        XCTAssertEqual(view.cornerMarks.firstIndex(of: .ring), under)
+        XCTAssertEqual(view.cornerMarks.filter { $0 == .ring }.count, 1)
+    }
+
     func testAWiderStripAsksForMorePhotosAsItStretches() {
         let strip = makePanel(placement: StripPlacement(origin: CGPoint(x: 100, y: 300), docked: false, centeredX: false))
         var asked = 0

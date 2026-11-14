@@ -69,4 +69,78 @@ final class StripSelectionRingTests: XCTestCase {
         click(ring(3))
         XCTAssertEqual(clicks.last?.1, [])
     }
+
+    // MARK: Hover
+
+    private func move(to point: CGPoint) {
+        view.mouseMoved(with: NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+    }
+
+    private func leave() {
+        view.mouseExited(with: NSEvent.mouseEvent(with: .mouseMoved, location: CGPoint(x: -50, y: -50), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+    }
+
+    private func middle(_ at: Int) -> CGPoint { CGPoint(x: view.cellFrames[at].midX, y: view.cellFrames[at].midY) }
+
+    func testTheThumbnailUnderThePointerShowsARing() {
+        view.showsRingOnHover = true
+        show(checked: [])
+        move(to: middle(3))
+        XCTAssertEqual(view.cornerMarks, [.none, .none, .none, .ring, .none])
+        move(to: middle(1))
+        XCTAssertEqual(view.cornerMarks, [.none, .ring, .none, .none, .none], "it follows the pointer")
+        leave()
+        XCTAssertEqual(view.cornerMarks, Array(repeating: .none, count: 5), "and goes when it leaves the strip")
+    }
+
+    func testAHoveredRingChecksWithOneClickEvenWithNothingChecked() {
+        view.showsRingOnHover = true
+        show(checked: [])
+        move(to: ring(3))
+        click(ring(3))
+        XCTAssertEqual(clicks.last?.0, photos[3])
+        XCTAssertEqual(clicks.last?.1, .command)
+        let frame = view.cellFrames[3]
+        click(CGPoint(x: frame.minX + 10, y: frame.minY + 10))
+        XCTAssertEqual(clicks.last?.1, [], "elsewhere: show the photo")
+    }
+
+    func testOnceAPhotoIsCheckedEveryRingStaysWhereverThePointerIs() {
+        view.showsRingOnHover = true
+        show(checked: [1])
+        move(to: middle(3))
+        leave()
+        XCTAssertEqual(view.cornerMarks, [.ring, .check, .ring, .ring, .ring])
+    }
+
+    func testTheRingFollowsWhatMovesUnderAStillPointer() async throws {
+        view.showsRingOnHover = true
+        // More photos than the strip shows: the current one stays in the middle.
+        let many = (0..<9).map { PhotoKey(path: "/photos/m\($0).arw", device: 1, inode: UInt64(100 + $0), size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0) }
+        func showMany(current: Int) {
+            view.update(cells: many.enumerated().map { StripCell(photo: $1, mark: $0 == current ? .current : .none) }, anchor: current)
+        }
+        showMany(current: 4)
+        let pointer = middle(4)
+        move(to: pointer)
+        XCTAssertEqual(view.cornerMarks[4], .ring)
+        // Keyboard navigation: the next photo comes to the middle, under the still pointer.
+        showMany(current: 5)
+        // The row slides there: at each step, the ring is on what is under the pointer.
+        XCTAssertEqual(view.cornerMarks.firstIndex(of: .ring), view.cellFrames.firstIndex { $0.contains(pointer) })
+        try await Task.sleep(for: .milliseconds(600))
+        let under = view.cellFrames.firstIndex { $0.contains(pointer) }
+        XCTAssertEqual(under, 5, "the new middle photo is under the pointer")
+        XCTAssertEqual(view.cornerMarks.firstIndex(of: .ring), under)
+        XCTAssertEqual(view.cornerMarks.filter { $0 == .ring }.count, 1)
+    }
+
+    func testWithoutHoverRingsThePointerChangesNothing() {
+        // The comparison row: no selection there.
+        show(checked: [])
+        move(to: middle(3))
+        XCTAssertEqual(view.cornerMarks, Array(repeating: .none, count: 5))
+        click(ring(3))
+        XCTAssertEqual(clicks.last?.1, [])
+    }
 }

@@ -328,7 +328,11 @@ final class StripPanel {
         StripView.Metrics(height: height - 16, gap: 6, top: 8, fadesEdges: true)
     }
 
-    let view = StripView(metrics: StripPanel.metrics(height: StripSize.standard.height))
+    let view: StripView = {
+        let view = StripView(metrics: StripPanel.metrics(height: StripSize.standard.height))
+        view.showsRingOnHover = true
+        return view
+    }()
     private let panel: NSPanel
     private var placement: StripPlacement
     private var size: StripSize
@@ -512,6 +516,7 @@ final class StripPanel {
             panel.orderFront(nil)
         } else {
             panel.orderOut(nil)
+            view.clearHover()
         }
         updateChildWindow()
     }
@@ -540,6 +545,9 @@ final class StripPanel {
         guard placement.window != nil, panel.isVisible, dragOrigin == nil, resizeStart == nil else { return }
         fitToScreen()
         updateChildWindow()
+        // Moved under a still pointer, as a child even before its frame is set here: the ring
+        // goes to what is under the pointer now.
+        view.refreshHover()
     }
 
     /// The screen holding the remembered position, or the viewer's until there is one. A strip
