@@ -197,3 +197,67 @@ final class KeyRecorderTests: XCTestCase {
         XCTAssertFalse(recorder.isListening)
     }
 }
+
+/// Space checks the photo by default, and keys saved with the old default follow.
+@MainActor
+final class SpaceShortcutTests: XCTestCase {
+    private var suite = ""
+    private var defaults: UserDefaults!
+    private let space = KeyBinding.code(49)
+
+    override func setUp() async throws {
+        suite = "betterview.space.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suite)
+    }
+
+    override func tearDown() async throws {
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    /// Keys as an earlier version saved them: every command, Space on the next photo.
+    private func saveOldKeys(_ change: (inout [String: [KeyBinding]]) -> Void = { _ in }) throws {
+        var stored = Dictionary(uniqueKeysWithValues: ShortcutAction.allCases.map { ($0.rawValue, $0.defaultBindings) })
+        stored["next"] = [.code(124), .code(125), .code(49)]
+        stored["toggleSelection"] = [.character("s")]
+        change(&stored)
+        defaults.set(try JSONEncoder().encode(stored), forKey: "shortcuts")
+    }
+
+    func testSpaceChecksThePhotoByDefault() {
+        XCTAssertEqual(ShortcutMap.defaults.action(for: space), .toggleSelection)
+        XCTAssertFalse(ShortcutMap.defaults.keys(for: .next).isEmpty, "the next photo keeps its other keys")
+        XCTAssertEqual(ShortcutMap.defaults.action(for: .code(124)), .next)
+        XCTAssertEqual(ShortcutMap.defaults.menuBinding(for: .toggleSelection), .character("s"), "the menu still shows S")
+    }
+
+    func testKeysSavedWithTheOldDefaultTakeTheNewOneWithoutWritingAnything() throws {
+        try saveOldKeys()
+        let before = defaults.data(forKey: "shortcuts")
+        let store = ShortcutStore(defaults: defaults)
+        XCTAssertEqual(store.map.action(for: space), .toggleSelection)
+        XCTAssertEqual(store.map.keys(for: .next), [.code(124), .code(125)])
+        XCTAssertEqual(defaults.data(forKey: "shortcuts"), before, "a launch writes nothing")
+        XCTAssertEqual(defaults.integer(forKey: "shortcutsVersion"), 0)
+    }
+
+    func testSpaceMovedElsewhereByTheUserStaysThere() throws {
+        try saveOldKeys {
+            $0["next"] = [.code(124), .code(125)]
+            $0["toggleZoom"] = [.character("z"), .code(49)]
+        }
+        XCTAssertEqual(ShortcutStore(defaults: defaults).map.action(for: space), .toggleZoom)
+    }
+
+    func testOnceTheUserChangesAKeyTheirChoicesStand() throws {
+        try saveOldKeys()
+        let store = ShortcutStore(defaults: defaults)
+        // Space given back to the next photo on purpose.
+        store.assign(space, to: .next)
+        XCTAssertEqual(defaults.integer(forKey: "shortcutsVersion"), ShortcutStore.version)
+        XCTAssertEqual(ShortcutStore(defaults: defaults).map.action(for: space), .next, "not moved again at the next launch")
+    }
+
+    func testNoSavedKeysMeansTheDefaults() {
+        XCTAssertEqual(ShortcutStore(defaults: defaults).map, .defaults)
+    }
+}

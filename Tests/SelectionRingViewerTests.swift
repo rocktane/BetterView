@@ -62,4 +62,20 @@ final class SelectionRingViewerTests: XCTestCase {
         await spin { !self.strip.view.cornerMarks.isEmpty && !self.strip.view.cornerMarks.contains(.ring) }
         XCTAssertFalse(strip.view.cornerMarks.contains(.check))
     }
+
+    func testSpaceDoesNothingInTheComparison() async throws {
+        let before = controller.session.list.current
+        await spin { self.controller.visiblePhoto == before }
+        controller.perform(.compare)
+        let comparison = { Mirror(reflecting: self.controller!).children.first { $0.label == "comparison" }?.value as? ComparisonModel }
+        let selection = { Mirror(reflecting: self.controller!).children.first { $0.label == "selection" }?.value as? PhotoSelection }
+        XCTAssertNotNil(comparison())
+        let focused = comparison()?.focused
+        let decision = controller.view.shortcuts.decide(.code(49), isRepeat: false)
+        XCTAssertEqual(decision, .perform(.toggleSelection, repeating: false))
+        controller.perform(.toggleSelection)
+        XCTAssertEqual(comparison()?.focused, focused, "no move")
+        XCTAssertEqual(selection()?.isEmpty, true, "no selection in this view")
+        controller.perform(.exit)
+    }
 }

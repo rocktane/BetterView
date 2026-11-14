@@ -27,11 +27,11 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 
 | Touche | Action |
 |---|---|
-| ← → (ou ↑ ↓), Espace | Précédente, suivante |
+| ← → (ou ↑ ↓) | Précédente, suivante |
 | Page préc., Page suiv. | Reculer, avancer de 10 photos |
 | Début, Fin | Première, dernière photo |
 | ⇧→ ⇧← (ou ⇧↓ ⇧↑) | Étendre la sélection à la photo suivante, précédente |
-| S | Sélectionner ou désélectionner la photo |
+| S, Espace | Sélectionner ou désélectionner la photo (sans effet dans la comparaison) |
 | ⌫, ⌦, X ou ⌘⌫ | Mettre à la corbeille la photo, ou les photos sélectionnées, puis afficher la suivante |
 | ⌘Z | Annuler la suppression |
 | Z | 100 % ou ajusté |
@@ -48,7 +48,7 @@ Non modifiables : clic (100 % ou ajusté, à l'endroit cliqué ; un double-clic 
 
 ## Sélection
 
-On sélectionne au clavier comme dans le Finder. ⇧→ passe à la photo suivante et la sélectionne avec celle qu'on quitte ; en revenant avec ⇧←, la sélection se réduit au lieu de grandir. S, comme ⌘+clic dans la bande, ajoute ou retire la photo affichée, et la prochaine série ⇧→ part de là. Changer de photo sans Maj garde la sélection, et Échap la vide.
+On sélectionne au clavier comme dans le Finder. ⇧→ passe à la photo suivante et la sélectionne avec celle qu'on quitte ; en revenant avec ⇧←, la sélection se réduit au lieu de grandir. S ou Espace, comme ⌘+clic dans la bande, ajoute ou retire la photo affichée, et la prochaine série ⇧→ part de là. Changer de photo sans Maj garde la sélection, et Échap la vide.
 
 Quand au moins deux photos sont sélectionnées, ⌫ les met toutes à la corbeille, après confirmation (on peut cocher « Ne plus demander », ou décocher l'option dans Réglages > Général). Avec une seule photo sélectionnée, ⌫ supprime la photo affichée, comme d'habitude. Les photos protégées restent dans le dossier, et ⌘Z remet tout le groupe d'un coup.
 
