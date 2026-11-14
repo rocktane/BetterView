@@ -172,6 +172,8 @@ Suivi : tant que la fenêtre la tient, la bande est une fenêtre enfant de la vi
 
 **Mise à jour** : après l'image, au plus une fois par tour de boucle, en affectant des pointeurs à des layers. Chaque vignette a la largeur de sa photo à hauteur fixe ; avant l'arrivée de sa vignette, elle prend du 3:2. Les vignettes sont demandées bien au-delà des bords, donc ce décalage ne se voit qu'en sautant loin. La photo courante reste au milieu, sauf aux extrémités du dossier où la bande s'arrête pour ne pas laisser de vide, et les vignettes coupées par les bords s'estompent.
 
+**Ronds de sélection** : dès qu'une photo est cochée (`PhotoSelection` non vide), chaque vignette montre un rond vide à la place de la pastille, image dessinée une fois comme elle (anneau blanc, disque assombri à 30 %, même ombre : lisible sur une photo claire comme sombre). Le calque de la pastille sert aux deux : coût d'une affectation de pointeur par vignette visible. Un clic sur le rond ou la pastille, 5 pt autour compris, vaut ⌘+clic (coche ou décoche) ; ailleurs, le clic affiche la photo ; Maj+clic et ⌘+clic ne changent pas.
+
 **Rafales** (`PhotoGroups`) : photos consécutives prises à 2 s d'écart au plus, d'après l'heure EXIF déjà lue par `MetadataStore`. Elles sont cherchées à ±12 photos de la courante, ce qui borne une rafale à 25 photos. Une rafale qui dépasse ce rayon n'est donc vue qu'en partie. Aucune analyse d'image : c'est prévisible, mais deux cadrages proches pris à 10 s d'écart ne sont pas regroupés (Maj+clic couvre ce cas).
 
 ### Comparaison

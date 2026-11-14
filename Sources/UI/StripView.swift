@@ -26,6 +26,8 @@ final class StripView: NSView {
     }
 
     private(set) var cells: [StripCell] = []
+    /// Some photo is checked: every thumbnail shows a ring to check it with one click.
+    private(set) var showsSelectionRings = false
     /// The modifiers held: Shift and Command select rather than go to the photo.
     var onClick: (PhotoKey, NSEvent.ModifierFlags) -> Void = { _, _ in }
     /// The right-click menu for a thumbnail.
@@ -101,6 +103,15 @@ final class StripView: NSView {
         return Int((width / 2 / narrowest).rounded(.up)) + 1
     }
 
+    /// For tests: the mark each drawn cell shows in its corner.
+    enum CornerMark: Equatable { case none, ring, check }
+    var cornerMarks: [CornerMark] {
+        cells.indices.map { at in
+            guard at < checks.count, !checks[at].isHidden else { return .none }
+            return cells[at].selected ? .check : .ring
+        }
+    }
+
     /// For tests: where each cell is drawn, and the outer edge of the group outlines.
     var cellFrames: [CGRect] { frames }
     var outlineFrame: CGRect? {
@@ -148,6 +159,40 @@ final class StripView: NSView {
         return context.makeImage()
     }()
 
+    /// An empty ring in the check's place, shown on every thumbnail once a photo is checked:
+    /// white, on a darkened disc and with the same shadow, so that it reads on a light photo
+    /// as on a dark one.
+    private static let ringImage: CGImage? = {
+        let side = checkSize + 2 * checkMargin
+        let pixels = Int(side * 2)
+        guard let context = CGContext(
+            data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.scaleBy(x: 2, y: 2)
+        context.translateBy(x: checkMargin, y: checkMargin)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -1), blur: 2.4, color: NSColor(white: 0, alpha: 0.45).cgColor)
+        context.setFillColor(NSColor(white: 0, alpha: 0.3).cgColor)
+        context.fillEllipse(in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        context.restoreGState()
+        context.setStrokeColor(NSColor.white.cgColor)
+        context.setLineWidth(1.5)
+        context.strokeEllipse(in: CGRect(x: 0.75, y: 0.75, width: 14.5, height: 14.5))
+        return context.makeImage()
+    }()
+
+    /// Where the check or the ring sits in a thumbnail of `size`: inside the white border, in
+    /// the top right corner.
+    private func discFrame(inCellOf size: CGSize) -> CGRect {
+        let side = min(Self.checkSize, metrics.height * 0.4)
+        let inset: CGFloat = 4
+        return CGRect(x: size.width - side - inset, y: size.height - side - inset, width: side, height: side)
+    }
+
+    /// How far around a ring a click still checks: the ring is small.
+    private static let ringReach: CGFloat = 5
+
     init(metrics: Metrics) {
         self.metrics = metrics
         super.init(frame: .zero)
@@ -181,8 +226,9 @@ final class StripView: NSView {
     /// `anchor` stays in the middle, so that moving along slides the strip under a fixed
     /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
     /// outlined as one, and its tip shows when the pointer rests on it.
-    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
+    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = [], selecting: Bool = false) {
         let previous = (cells: self.cells, anchor: self.anchor)
+        showsSelectionRings = selecting
         self.cells = cells
         self.anchor = anchor
         cutAtStart = cut.start
@@ -330,13 +376,13 @@ final class StripView: NSView {
                 layer.borderColor = NSColor.white.cgColor
             }
             let check = checks[position]
-            if check.isHidden == cell.selected { check.isHidden = !cell.selected }
-            if cell.selected {
-                // Inside the white border, in the top right corner.
-                let size = min(Self.checkSize, metrics.height * 0.4)
-                let inset: CGFloat = 4
-                let disc = CGRect(x: frames[position].width - size - inset, y: frames[position].height - size - inset, width: size, height: size)
-                let margin = Self.checkMargin * size / Self.checkSize
+            // A check on the photos checked, and while any is, an empty ring on the others.
+            let marked = cell.selected || showsSelectionRings
+            if check.isHidden == marked { check.isHidden = !marked }
+            if marked {
+                check.contents = cell.selected ? Self.checkImage : Self.ringImage
+                let disc = discFrame(inCellOf: frames[position].size)
+                let margin = Self.checkMargin * disc.width / Self.checkSize
                 check.frame = disc.insetBy(dx: -margin, dy: -margin)
             }
         }
@@ -576,6 +622,13 @@ final class StripView: NSView {
         onDrag(travel)
     }
 
+    /// Whether `point` falls on the ring or the check of cell `at`, a little around it included.
+    private func ringHit(_ at: Int, _ point: CGPoint) -> Bool {
+        guard frames.indices.contains(at), showsSelectionRings || cells[at].selected else { return false }
+        let disc = discFrame(inCellOf: frames[at].size).offsetBy(dx: frames[at].minX, dy: frames[at].minY)
+        return disc.insetBy(dx: -Self.ringReach, dy: -Self.ringReach).contains(point)
+    }
+
     override func mouseUp(with event: NSEvent) {
         guard pressStart != nil else { return }
         defer {
@@ -593,8 +646,12 @@ final class StripView: NSView {
             onDrag?(nil)
             return
         }
-        if let at = cell(at: convert(event.locationInWindow, from: nil)) {
-            onClick(cells[at].photo, event.modifierFlags.intersection([.shift, .command]))
+        let point = convert(event.locationInWindow, from: nil)
+        if let at = cell(at: point) {
+            var modifiers = event.modifierFlags.intersection([.shift, .command])
+            // On a ring or a check, a plain click checks or unchecks, as Command does.
+            if modifiers.isEmpty, ringHit(at, point) { modifiers = .command }
+            onClick(cells[at].photo, modifiers)
         }
     }
 }

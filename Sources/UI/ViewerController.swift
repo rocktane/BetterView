@@ -788,8 +788,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.view.update(
             cells: cells, anchor: center - shown.lowerBound,
             cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
-            groups: groups, tips: tips
+            groups: groups, tips: tips, selecting: showsSelectionRings
         )
+    }
+
+    /// The rings show while a photo of the folder is checked: a checked photo deleted or gone
+    /// from the folder no longer counts. Nothing to look through when nothing is checked.
+    private var showsSelectionRings: Bool {
+        !selection.isEmpty && session.list.photos.contains(where: selection.contains)
     }
 
     /// Where the strip was swiped to, if the current photo has not moved since.
