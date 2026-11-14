@@ -665,25 +665,29 @@ final class ComparisonView: NSView {
         pinch(by: event.magnification, atWindowPoint: event.locationInWindow)
     }
 
+    private static let maximumZoom: CGFloat = 8
+
     private var drawnSlots: [ComparisonSlotView] { layoutSlots.map { slotViews[$0] }.filter { !$0.isHidden } }
 
     func pinch(by magnification: CGFloat, atWindowPoint windowPoint: CGPoint) {
         let wasZoomed = zoom != nil
-        // Fitted already: pinching in has nothing to do, and must not zoom in.
-        if !wasZoomed && magnification <= 0 { return }
         // Back to the fit once every photo would fit its slot again.
         let fits = drawnSlots.compactMap { ComparisonGeometry.fitZoom(slot: $0.bounds.size, native: $0.nativeSize, pointsPerPixel: pointsPerPixel) }
         // A photo fits below its own fit zoom: all of them do below the smallest one.
         guard let fitZoom = fits.min(), let largestFit = fits.max() else { return }
-        // From the fit, start from the largest: no photo shrinks while the fingers spread.
-        let updated = (zoom ?? largestFit) * (1 + magnification)
+        // From the fit, start from the largest: no photo shrinks while the fingers spread. The
+        // 8× cap comes first, so that every comparison below is about the zoom really applied.
+        let updated = min((zoom ?? largestFit) * (1 + magnification), Self.maximumZoom)
+        // Fitted, a zoom that would not go past every photo's fit has nothing to do: a pinch
+        // in, no movement, or photos so small that the cap is below their fit.
+        if !wasZoomed && updated <= largestFit { return }
         if updated <= fitZoom {
             zoom = nil
             center = CGPoint(x: 0.5, y: 0.5)
             stopFollowingFocus()
         } else {
             if !wasZoomed { aim(atWindowPoint: windowPoint) }
-            zoom = min(updated, 8)
+            zoom = updated
             // Zooming out narrows what each photo can show: the kept position follows.
             clampFocusOffset()
             let scale = (zoom ?? 1) * pointsPerPixel
