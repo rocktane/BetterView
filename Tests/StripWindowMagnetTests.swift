@@ -132,7 +132,7 @@ final class StripPanelFollowTests: XCTestCase {
         strip.save = { _, _ in }
         strip.viewer = viewer
         strip.viewerFrame = { viewer.frame }
-        strip.viewerHasFocus = { true }
+        strip.isAppActive = { true }
         strip.setVisible(true)
         defer { strip.setVisible(false) }
         XCTAssertEqual(strip.frame.maxY, viewer.frame.minY - StripMagnet.dockGap)

@@ -2,63 +2,83 @@ import AppKit
 import XCTest
 @testable import BetterView
 
-/// The strip shows only while the photo's window has the focus, whatever asks for it.
+/// The strip shows while BetterView is active and the photo's window is on screen, whatever
+/// window of the app has the focus, and never over another app.
 @MainActor
 final class StripFocusTests: XCTestCase {
-    private var focused = true
+    private var active = true
     private var strip: StripPanel!
     private var viewer: NSWindow!
+    private var other: NSWindow!
 
     override func setUp() async throws {
-        viewer = NSWindow(contentRect: CGRect(x: 200, y: 300, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        viewer = NSWindow(contentRect: CGRect(x: 200, y: 300, width: 600, height: 400), styleMask: [.titled, .miniaturizable], backing: .buffered, defer: false)
         viewer.isReleasedWhenClosed = false
+        other = NSWindow(contentRect: CGRect(x: 300, y: 350, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        viewer.orderFront(nil)
         strip = StripPanel(placement: StripPlacement(origin: CGPoint(x: 100, y: 100), docked: false, centeredX: false), size: .standard)
         strip.save = { _, _ in }
         strip.viewer = viewer
-        strip.viewerHasFocus = { [unowned self] in focused }
+        strip.isAppActive = { [unowned self] in active }
     }
 
     override func tearDown() async throws {
         strip.setVisible(false)
         viewer.orderOut(nil)
+        other.orderOut(nil)
     }
 
-    func testClickingAnotherWindowOfTheAppHidesTheStripAndComingBackShowsIt() {
+    func testAnotherWindowOfTheAppKeepsTheStrip() {
         strip.setVisible(true)
         XCTAssertTrue(strip.isVisible)
-        // The settings or the deletion history become key: the app stays active.
-        focused = false
+        // The settings, the history or a dialog take the focus: the app stays active.
+        other.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: viewer)
-        XCTAssertFalse(strip.isVisible)
-        focused = true
-        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: viewer)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: other)
         XCTAssertTrue(strip.isVisible)
     }
 
-    func testAnotherAppHidesTheStrip() {
+    func testAnotherAppHidesTheStripAndComingBackShowsIt() {
         strip.setVisible(true)
-        focused = false
+        active = false
         NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
         XCTAssertFalse(strip.isVisible)
+        active = true
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        XCTAssertTrue(strip.isVisible)
     }
 
-    func testAnUpdateWithoutTheFocusDoesNotBringItBack() {
-        // A strip update after a navigation, a zoom, a comparison or a screen change, once
-        // another window has the focus: the panel used to be ordered front regardless.
-        focused = false
+    func testAnUpdateWhileInactiveDoesNotBringItBack() {
+        // The original fault: launched or updated in the background, the panel floated over
+        // the other apps.
+        active = false
         strip.setVisible(true)
         XCTAssertFalse(strip.isVisible)
         strip.fitToScreen()
         strip.followViewer()
         XCTAssertFalse(strip.isVisible)
-        focused = true
+        active = true
         NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
-        XCTAssertTrue(strip.isVisible, "back as soon as the photo's window has the focus")
+        XCTAssertTrue(strip.isVisible, "back as soon as the app is active")
     }
 
-    func testNotWantedStaysHiddenEvenWithTheFocus() {
+    func testWithoutThePhotosWindowOnScreenTheStripStaysHidden() {
+        viewer.orderOut(nil)
+        strip.setVisible(true)
+        XCTAssertFalse(strip.isVisible, "closed")
+        viewer.orderFront(nil)
+        strip.setVisible(true)
+        XCTAssertTrue(strip.isVisible)
+        strip.viewer = nil
         strip.setVisible(false)
-        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: viewer)
+        strip.setVisible(true)
+        XCTAssertFalse(strip.isVisible, "no photo window, no strip")
+    }
+
+    func testNotWantedStaysHiddenEvenWhenActive() {
+        strip.setVisible(false)
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
         XCTAssertFalse(strip.isVisible)
     }
 
@@ -68,11 +88,9 @@ final class StripFocusTests: XCTestCase {
         XCTAssertFalse((strip.view.window as? NSPanel)?.hidesOnDeactivate ?? true, "AppKit would show it again on reactivation")
     }
 
-    func testTheDefaultRuleWantsTheAppActiveAndTheViewerKey() {
+    func testTheDefaultRuleIsTheActiveApp() {
         let strip = StripPanel(placement: nil, size: .standard)
         strip.viewer = viewer
-        XCTAssertEqual(strip.viewerHasFocus(), NSApp.isActive && viewer.isKeyWindow)
-        strip.viewer = nil
-        XCTAssertFalse(strip.viewerHasFocus(), "no photo window, no strip")
+        XCTAssertEqual(strip.mayShow, NSApp.isActive)
     }
 }
