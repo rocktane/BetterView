@@ -28,6 +28,8 @@ final class StripView: NSView {
     private(set) var cells: [StripCell] = []
     /// The modifiers held: Shift and Command select rather than go to the photo.
     var onClick: (PhotoKey, NSEvent.ModifierFlags) -> Void = { _, _ in }
+    /// The right-click menu for a thumbnail.
+    var onMenu: (PhotoKey) -> NSMenu? = { _ in nil }
     var onHoverChanged: () -> Void = {}
     /// Set for a view that scrolls: called with how many photos the swipe carried past the
     /// middle, forward positive. The strip expects to be given them centred.
@@ -518,10 +520,26 @@ final class StripView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        pressStart = pointerLocation()
         dragging = false
         resizing = false
+        // ⌃-click is a right-click: no selection, no move, no stretch.
+        if event.modifierFlags.contains(.control) {
+            pressStart = nil
+            pressSides = nil
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return
+        }
+        pressStart = pointerLocation()
         pressSides = gripSides(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        cell(at: convert(event.locationInWindow, from: nil)).flatMap { onMenu(cells[$0].photo) }
+    }
+
+    private func cell(at point: CGPoint) -> Int? {
+        guard point.x >= 0, point.x <= bounds.width else { return nil }
+        return frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) })
     }
 
     /// Dragging from anywhere, thumbnails included, moves the strip: the thumbnails cover most
@@ -545,6 +563,7 @@ final class StripView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard pressStart != nil else { return }
         defer {
             pressStart = nil
             pressSides = nil
@@ -560,8 +579,7 @@ final class StripView: NSView {
             onDrag?(nil)
             return
         }
-        let point = convert(event.locationInWindow, from: nil)
-        if let at = frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) }), point.x >= 0, point.x <= bounds.width {
+        if let at = cell(at: convert(event.locationInWindow, from: nil)) {
             onClick(cells[at].photo, event.modifierFlags.intersection([.shift, .command]))
         }
     }

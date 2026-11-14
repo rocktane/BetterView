@@ -8,6 +8,7 @@ Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite po
 - Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs.
 - Une bande d'aperçu flottante, détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant, s'aimante au Dock, au centre de l'écran et à la fenêtre de la photo, et s'agrandit en tirant ses bords.
 - Une vue Comparer pour garder la meilleure de plusieurs photos : jusqu'à 4 côte à côte, zoom à 100 % synchronisé, et corbeille directement depuis cette vue.
+- Un clic droit sur la photo ou une vignette pour l'envoyer dans Lightroom, avec la sélection ou tout le dossier.
 - Aucune dépendance, aucun catalogue : un dossier, des photos.
 
 ## Installation
@@ -67,6 +68,18 @@ Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une to
 Un clic zoome à 100 % à l'endroit cliqué, un autre revient à l'ajustement ; glisser déplace alors l'image. Pendant un zoom, son niveau s'affiche en haut à droite de la photo. Changer de photo (navigation, saut, clic dans la bande, suppression) revient à l'ajusté, et la fenêtre reprend la forme de la nouvelle photo. Réglages > Général > « Conserver le zoom en changeant de photo » garde au contraire le zoom et sa position d'une photo à l'autre.
 
 A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repère : un petit cercle). Changer de photo revient à l'ajusté ; avec « Conserver le zoom en changeant de photo », chaque photo s'ouvre au contraire sur sa propre position AF, au même grossissement. C'est l'endroit visé par l'autofocus, pas une garantie de netteté. Sans position enregistrée, le zoom se fait au centre et le dit.
+
+## Menu contextuel
+
+Clic droit (ou ⌃+clic) sur la photo ou sur une vignette de la bande. Comme dans le Finder, le menu agit sur toute la sélection quand la photo cliquée en fait partie, sinon sur cette photo seule.
+
+- Ouvrir dans Lightroom Classic (ou Lightroom) : la photo ou la sélection, et, en plus, les photos sélectionnées et toutes les photos du dossier quand elles sont plus nombreuses. Une confirmation est toujours demandée, même pour une photo. Lightroom Classic montre ensuite sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer.
+- Ouvrir avec : les autres apps qui ouvrent ce format, celle par défaut en premier.
+- Afficher dans le Finder, Copier (les fichiers, à coller dans le Finder ou une autre app), Partager.
+- Sélectionner ou désélectionner la photo, Tout désélectionner, Comparer les photos visées.
+- Mettre à la corbeille, annulable avec ⌘Z. Une photo qui n'est pas celle affichée demande confirmation, comme une sélection.
+
+Le menu n'est pas proposé dans la comparaison.
 
 ## Développement
 
