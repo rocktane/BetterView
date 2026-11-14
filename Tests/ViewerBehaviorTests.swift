@@ -12,7 +12,7 @@ final class ViewerBehaviorTests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("BVViewer-\(UUID().uuidString)")
         let folder = root.appendingPathComponent("photos")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        for name in ["a", "b", "c", "d"] {
+        for name in ["a", "b", "c", "d", "e", "f"] {
             try Data(name.utf8).write(to: folder.appendingPathComponent("\(name).arw"))
         }
         // Deletions go to a folder of the test, never to the real Trash.
@@ -31,7 +31,7 @@ final class ViewerBehaviorTests: XCTestCase {
         // The default, whatever the user chose in the app's settings.
         controller.keepsZoomAcrossPhotos = { false }
         controller.session.open([folder])
-        await spin { self.controller.session.list.count == 4 }
+        await spin { self.controller.session.list.count == 6 }
     }
 
     override func tearDown() async throws {
@@ -248,6 +248,57 @@ final class ViewerBehaviorTests: XCTestCase {
         await spin { self.controller.comparedVisible.contains(1) }
         controller.comparisonView.onCommand(.slotAction(.trash, slot: 1, photo: second))
         XCTAssertFalse(controller.session.list.photos.contains(second!))
+        await spin { !self.controller.session.hasPendingIO }
+    }
+
+    // MARK: Deleting in AF mode
+
+    func testDeletingInAFModeOpensTheNextFittedInTheViewer() async {
+        let before = controller.session.list.current
+        await spin { self.controller.visiblePhoto == before }
+        controller.zoomToFocus()
+        XCTAssertTrue(controller.followsFocus)
+        controller.deleteCurrent()
+        XCTAssertNotEqual(controller.session.list.current, before)
+        XCTAssertFalse(controller.view.isZoomed)
+        XCTAssertFalse(controller.followsFocus)
+        await spin { !self.controller.session.hasPendingIO }
+    }
+
+    /// Six photos selected: four on screen, two waiting to take a freed slot.
+    private func compareSix() async {
+        for _ in 0..<6 {
+            controller.perform(.toggleSelection)
+            controller.step(1)
+        }
+        controller.perform(.compare)
+        await spin { self.controller.comparisonView.slotsShowingPhotos.count == 4 }
+        await spin { self.controller.comparedVisible.count == 4 }
+    }
+
+    private func trashSlot(_ slot: Int) {
+        controller.comparisonView.onCommand(.slotAction(.trash, slot: slot, photo: controller.comparisonView.photo(inSlot: slot)))
+    }
+
+    func testAPhotoArrivingInAFModeBringsTheComparisonBackToTheFit() async {
+        await compareSix()
+        controller.perform(.zoomToFocus)
+        XCTAssertTrue(controller.comparisonView.followsFocus)
+        let gone = controller.comparisonView.photo(inSlot: 0)
+        trashSlot(0)
+        XCTAssertNotEqual(controller.comparisonView.photo(inSlot: 0), gone, "the next waiting photo took the slot")
+        XCTAssertNil(controller.comparisonView.zoom)
+        XCTAssertFalse(controller.comparisonView.followsFocus)
+        await spin { !self.controller.session.hasPendingIO }
+    }
+
+    func testWithTheSettingTheAFZoomStaysWhenAPhotoArrives() async {
+        controller.keepsZoomAcrossPhotos = { true }
+        await compareSix()
+        controller.perform(.zoomToFocus)
+        trashSlot(0)
+        XCTAssertEqual(controller.comparisonView.zoom, 1)
+        XCTAssertTrue(controller.comparisonView.followsFocus)
         await spin { !self.controller.session.hasPendingIO }
     }
 }

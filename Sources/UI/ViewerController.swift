@@ -53,6 +53,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var preComparisonCenter: CGPoint?
     /// Slots whose content can legitimately be deleted: pixels, or an error with its name.
     private(set) var comparedVisible: Set<Int> = []
+    /// The photos last laid out in the slots: one arriving (a deletion, a keep, an undo) ends
+    /// the AF zoom, as another photo does in the viewer.
+    private var comparisonShown: Set<PhotoKey> = []
     private let normalFullBudget: Int
 
     /// The shape the window currently has, and the size it keeps across shapes.
@@ -997,6 +1000,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         selection.clear()
         strip.setVisible(false)
         comparedVisible = []
+        comparisonShown = Set(model.shown)
         comparisonView.reset()
         // The viewer leaves the window: it must not keep a surface alive that the cache let go.
         view.showMessage(nil)
@@ -1064,6 +1068,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func displayComparison() {
         guard let model = comparison else { return }
+        let shown = Set(model.shown)
+        let arriving = !shown.subtracting(comparisonShown).isEmpty
+        comparisonShown = shown
+        if arriving, comparisonView.followsFocus, !keepsZoomAcrossPhotos() {
+            // Back to the fit; that change displays the comparison again.
+            comparisonView.exitZoom()
+            return
+        }
         comparisonView.arrange(layout: model.layout, photos: model.slots)
         let left = model.remaining
         comparisonView.setTitle("Comparer  ·  \(left) photo\(left > 1 ? "s" : "") restante\(left > 1 ? "s" : "")")
