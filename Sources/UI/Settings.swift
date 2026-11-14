@@ -254,7 +254,7 @@ final class CacheSettings: ObservableObject {
 struct GeneralSettingsView: View {
     @ObservedObject var associations: FileAssociations
     @ObservedObject var cache: CacheSettings
-    @AppStorage("settingsShowsFormats") private var showsFormats = false
+    @State private var showsFormats = false
     @AppStorage(Preferences.deleteFollowsDirectionKey) private var deleteFollowsDirection = false
     @AppStorage(Preferences.confirmsMultipleDeleteKey) private var confirmsMultipleDelete = true
     @AppStorage(Preferences.keepsZoomAcrossPhotosKey) private var keepsZoomAcrossPhotos = false
@@ -273,9 +273,19 @@ struct GeneralSettingsView: View {
             Section("Affichage") {
                 Toggle("Afficher les informations de la photo", isOn: $infoVisible)
                     .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
-                Toggle("Afficher la bande d'aperçu", isOn: $stripVisible)
+                Toggle("Afficher la pellicule", isOn: $stripVisible)
                     .onChange(of: stripVisible) { _, value in onStripVisibleChange(value) }
-                LabeledContent("Opacité des autres photos de la bande") {
+                // Stretching the filmstrip by hand turns this to custom; picking a size applies it.
+                LabeledContent("Taille de la pellicule") {
+                    Picker("Taille de la pellicule", selection: $stripSizePreset) {
+                        ForEach(StripSizePreset.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .onChange(of: stripSizePreset) { _, value in onStripSizeChange(value) }
+                LabeledContent("Opacité des autres photos") {
                     HStack {
                         Slider(value: $stripOtherOpacity, in: 0.2...1, step: 0.05)
                             .frame(width: 140)
@@ -285,11 +295,6 @@ struct GeneralSettingsView: View {
                     }
                 }
                 .onChange(of: stripOtherOpacity) { _, value in onStripOpacityChange(value) }
-                // Stretching the strip by hand turns this to custom; picking a size applies it.
-                Picker("Taille de la bande", selection: $stripSizePreset) {
-                    ForEach(StripSizePreset.allCases) { Text($0.label).tag($0) }
-                }
-                .onChange(of: stripSizePreset) { _, value in onStripSizeChange(value) }
                 Toggle("Conserver le zoom en changeant de photo", isOn: $keepsZoomAcrossPhotos)
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
                 Toggle("Demander avant de supprimer plusieurs photos sélectionnées", isOn: $confirmsMultipleDelete)
@@ -304,13 +309,8 @@ struct GeneralSettingsView: View {
                     Text(associations.summary)
                 }
                 .disabled(associations.isWorking)
-                DisclosureGroup("Détail par format", isExpanded: $showsFormats) {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: 4), alignment: .leading, spacing: 8) {
-                        ForEach(RawFormat.all) { format in
-                            formatToggle(format)
-                        }
-                    }
-                    .padding(.vertical, 4)
+                LabeledContent("Réglage par format") {
+                    Button("Détails…") { showsFormats = true }
                 }
             } header: {
                 Text("Formats RAW")
@@ -340,7 +340,7 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .frame(width: 540)
+        .frame(width: SettingsWindow.width)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             associations.refresh()
@@ -354,14 +354,45 @@ struct GeneralSettingsView: View {
         } message: {
             Text("Les rendus seront recalculés à la demande. Les photos ne sont pas touchées.")
         }
-        .alert("Réglage non appliqué", isPresented: Binding(
-            get: { associations.lastError != nil },
-            set: { if !$0 { associations.lastError = nil } }
-        )) {
-            Button("OK") {}
-        } message: {
-            Text(associations.lastError ?? "")
+        // While the sheet is open, its own alert shows the error: a window presents one at a time.
+        .formatErrorAlert(associations, when: !showsFormats)
+        .sheet(isPresented: $showsFormats) {
+            FormatDetailsSheet(associations: associations)
         }
+    }
+}
+
+/// The formats one by one, in a sheet of fixed size, as System Settings does with its
+/// “Détails…” buttons: the settings window keeps its size.
+private struct FormatDetailsSheet: View {
+    @ObservedObject var associations: FileAssociations
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    ForEach(RawFormat.all) { formatToggle($0) }
+                } header: {
+                    Text("Ouvrir avec BetterView")
+                } footer: {
+                    Text(associations.summary).settingsFooter()
+                }
+            }
+            .formStyle(.grouped)
+            Divider()
+            HStack {
+                if associations.isWorking {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+                Button("OK") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(width: 420, height: 520)
+        .formatErrorAlert(associations, when: true)
     }
 
     private func formatToggle(_ format: RawFormat) -> some View {
@@ -370,19 +401,10 @@ struct GeneralSettingsView: View {
             get: { enabled },
             set: { associations.setEnabled(format, $0) }
         )) {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(format.fileExtension.uppercased()).monospaced()
-                    Text(format.brand).foregroundStyle(.secondary)
-                }
-                if !enabled {
-                    Text(associations.appName(format))
-                        .font(.caption2).foregroundStyle(.tertiary)
-                        .lineLimit(1).truncationMode(.tail)
-                }
-            }
+            Text("\(format.brand) \(format.fileExtension.uppercased())")
+            Text(enabled ? "BetterView" : "S'ouvre avec \(associations.appName(format))")
+                .lineLimit(1).truncationMode(.tail)
         }
-        .toggleStyle(.checkbox)
         .disabled(associations.isWorking)
         .help(enabled ? "\(format.brand) \(format.fileExtension.uppercased()) s'ouvre avec BetterView"
                       : "\(format.brand) \(format.fileExtension.uppercased()) s'ouvre avec \(associations.appName(format))")
@@ -531,12 +553,12 @@ struct ShortcutsSettingsView: View {
                     .disabled(ShortcutAction.allCases.allSatisfy { !store.map.isCustomized($0) })
                 }
             } footer: {
-                Text("Cliquer sur un raccourci pour le changer, le survoler pour le retirer. Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation et le zoom. Souris et trackpad : clic pour 100 % ou ajusté, pincement pour zoomer, glisser pour se déplacer. Bande d'aperçu : Maj+clic sélectionne jusqu'à la vignette, ⌘+clic ajoute ou retire une photo.")
+                Text("Cliquer sur un raccourci pour le changer, le survoler pour le retirer. Les lettres suivent la disposition du clavier (AZERTY compris). Maintenir une touche ne répète que la navigation et le zoom. Souris et trackpad : clic pour 100 % ou ajusté, pincement pour zoomer, glisser pour se déplacer. Pellicule : Maj+clic sélectionne jusqu'à la vignette, ⌘+clic ajoute ou retire une photo.")
                     .settingsFooter()
             }
         }
         .formStyle(.grouped)
-        .frame(width: 540, height: 640)
+        .frame(width: SettingsWindow.width, height: 640)
         .onDisappear { recorder.cancel() }
     }
 
@@ -680,6 +702,17 @@ private extension View {
     func settingsFooter() -> some View {
         font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    func formatErrorAlert(_ associations: FileAssociations, when shown: Bool) -> some View {
+        alert("Réglage non appliqué", isPresented: Binding(
+            get: { shown && associations.lastError != nil },
+            set: { if !$0 { associations.lastError = nil } }
+        )) {
+            Button("OK") {}
+        } message: {
+            Text(associations.lastError ?? "")
+        }
+    }
 }
 
 // MARK: - Window
@@ -687,6 +720,9 @@ private extension View {
 /// Réglages window: toolbar tabs, as in Apple's own apps. Each tab sizes the window.
 @MainActor
 enum SettingsWindow {
+    /// Wide enough for the four filmstrip sizes on the label's line.
+    nonisolated static let width: CGFloat = 640
+
     static func make(shortcuts: ShortcutStore, disk: DiskCache, viewer: ViewerController) -> NSWindow {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
