@@ -737,8 +737,13 @@ final class ComparisonFocusTests: XCTestCase {
         view.showFrame(frame(photo("a")), slot: 0)
         let small = PixelFormat.makeSurface(width: 60, height: 40)!
         view.showFrame(Frame(key: FrameKey(photo: photo("b"), tier: .screen), surface: small, nativeSize: CGSize(width: 3000, height: 2000)), slot: 1)
+        // Slots of about 595 x 693 pt, 2 px per pt: fits at about 0.2 and 0.4. Spreading the
+        // fingers from the fit starts from the larger: the smaller photo grows, never shrinks.
+        view.pinch(by: 0.05, atWindowPoint: .zero)
+        let largestFit = ComparisonGeometry.fitZoom(slot: CGSize(width: 595.5, height: 693), native: CGSize(width: 3000, height: 2000), pointsPerPixel: 0.5) ?? 0
+        XCTAssertGreaterThan(view.zoom ?? 0, largestFit)
         view.toggleZoom(atWindowPoint: nil)
-        // Slots of about 595 x 693 pt, 2 px per pt: fits at about 0.2 and 0.4.
+        view.toggleZoom(atWindowPoint: nil)
         view.pinch(by: -0.65, atWindowPoint: .zero)
         XCTAssertEqual(view.zoom ?? 0, 0.35, accuracy: 1e-9, "the 6000 px photo is still cropped: still zoomed")
         view.pinch(by: -0.5, atWindowPoint: .zero)
