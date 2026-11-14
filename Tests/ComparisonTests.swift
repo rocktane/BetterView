@@ -755,6 +755,24 @@ final class ComparisonFocusTests: XCTestCase {
         XCTAssertNil(view.zoom, "0.175: both fit now")
     }
 
+    /// Photos so small that the 8× cap is below their fit: spreading the fingers from the fit
+    /// must neither shrink them nor zoom at all.
+    func testThe8xCapNeverShrinksAPhotoFromTheFit() {
+        for sizes in [[CGSize(width: 6000, height: 4000), CGSize(width: 60, height: 40)],
+                      [CGSize(width: 60, height: 40), CGSize(width: 60, height: 40)]] {
+            let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+            view.pointerInWindow = { nil }
+            view.arrange(layout: [0, 1], photos: [photo("a"), photo("b"), nil, nil])
+            view.layoutSubtreeIfNeeded()
+            for (slot, size) in sizes.enumerated() {
+                let surface = PixelFormat.makeSurface(width: 60, height: 40)!
+                view.showFrame(Frame(key: FrameKey(photo: photo(slot == 0 ? "a" : "b"), tier: .screen), surface: surface, nativeSize: size), slot: slot)
+            }
+            view.pinch(by: 0.05, atWindowPoint: .zero)
+            XCTAssertNil(view.zoom, "\(sizes): a 60 px photo fits at about 20×, past the cap")
+        }
+    }
+
     func testLeavingTheZoomEndsTheAFMode() {
         let view = makeView()
         view.zoomOnFocus()
