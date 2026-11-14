@@ -448,7 +448,11 @@ final class StripPanel {
         fullScreenFrame = screen
         // Only a full screen space needs it: elsewhere the strip stays in its own space.
         panel.collectionBehavior = screen == nil ? [.ignoresCycle, .fullScreenNone] : [.ignoresCycle, .fullScreenAuxiliary]
+        // Edge to edge at the bottom of the screen: no rounded corner, no light border and no
+        // shadow, which would draw a line along the screen's edges and over the photo.
         view.layer?.cornerRadius = screen == nil ? 12 : 0
+        view.layer?.borderWidth = screen == nil ? 1 : 0
+        panel.hasShadow = screen == nil
         if screen == nil {
             view.onDrag = { [weak self] in self?.drag($0) }
             view.onResize = { [weak self] in self?.resize($0) }
