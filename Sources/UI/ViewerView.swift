@@ -23,7 +23,9 @@ final class ViewerView: NSView {
     var onCommand: (ViewerCommand) -> Void = { _ in }
     /// The right-click menu for the photo shown, built for each click.
     var contextMenu: () -> NSMenu? = { nil }
-    var shortcuts = ShortcutMap.defaults
+    var shortcuts = ShortcutMap.defaults {
+        didSet { updateInfoButtonTip() }
+    }
     /// Nothing is shown: a click asks to open something.
     var opensOnClick = false
 
@@ -63,6 +65,28 @@ final class ViewerView: NSView {
     /// Everything written over the photo only shows while the pointer is on it.
     private(set) var isHovered = false
     private var hasInfo = false
+    /// The user hid the information: a discreet « i » on hover brings it back.
+    private var offersInfo = false
+    private let infoButton: NSButton = {
+        let image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Afficher les informations")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        let button = NSButton(image: image ?? NSImage(), target: nil, action: nil)
+        button.isBordered = false
+        // Layer-backed like the panels: a fade sets its alpha at once and animates the layer.
+        button.wantsLayer = true
+        button.contentTintColor = NSColor(white: 1, alpha: 0.75)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.refusesFirstResponder = true
+        button.isHidden = true
+        button.shadow = {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor(white: 0, alpha: 0.8)
+            shadow.shadowBlurRadius = 3
+            shadow.shadowOffset = .zero
+            return shadow
+        }()
+        return button
+    }()
     private let bannerLabel = ViewerView.label(size: 13, weight: .semibold)
     private let lockBadge: NSImageView = {
         let image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Photo protégée")?
@@ -139,6 +163,10 @@ final class ViewerView: NSView {
         bannerLabel.layer?.cornerRadius = 4
         for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
         addSubview(infoPanel)
+        infoButton.target = self
+        infoButton.action = #selector(infoButtonPressed)
+        addSubview(infoButton)
+        updateInfoButtonTip()
         addSubview(positionPanel)
         positionLabel.isHidden = false
         positionLabel.font = infoNameLabel.font
@@ -164,6 +192,8 @@ final class ViewerView: NSView {
             bannerLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             bannerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 44),
             infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            infoButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            infoButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
             positionPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -237,15 +267,26 @@ final class ViewerView: NSView {
         applyOverlayVisibility()
     }
 
-    func hideInfo() {
+    /// `offeringToShow`: the user hid it, and the « i » on hover can bring it back. Not when
+    /// there is simply nothing to tell.
+    func hideInfo(offeringToShow: Bool = false) {
         hasInfo = false
+        offersInfo = offeringToShow
         applyOverlayVisibility()
+    }
+
+    @objc private func infoButtonPressed() { onCommand(.perform(.toggleInfo, repeating: false)) }
+
+    private func updateInfoButtonTip() {
+        let key = shortcuts.keys(for: .toggleInfo).first?.label
+        infoButton.toolTip = key.map { "Afficher les informations (\($0))" } ?? "Afficher les informations"
     }
 
     private func applyOverlayVisibility() {
         let showInfo = hasInfo && isHovered
         infoPanel.fade(visible: showInfo)
         positionPanel.fade(visible: showInfo)
+        infoButton.fade(visible: !hasInfo && offersInfo && isHovered)
         updateBadge()
     }
 
@@ -400,6 +441,8 @@ final class ViewerView: NSView {
     var textFonts: (name: NSFont?, position: NSFont?, zoom: NSFont?) { (infoNameLabel.font, positionLabel.font, zoomLabel.font) }
 
     /// What the pointer shows, as it really is on screen: for the tests.
+    var offersToShowInfo: Bool { !infoButton.isHidden && infoButton.alphaValue == 1 }
+
     var overlaysShown: Bool { !infoPanel.isHidden && infoPanel.alphaValue == 1 && !positionPanel.isHidden && positionPanel.alphaValue == 1 }
 
     // MARK: Zoom and pan

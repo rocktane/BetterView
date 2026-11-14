@@ -189,6 +189,8 @@ extension AppDelegate: NSMenuItemValidation {
         guard item.action == #selector(performShortcut(_:)),
               let name = item.representedObject as? String, let action = ShortcutAction(rawValue: name)
         else { return true }
+        // A toggle shows its state, as in any Mac app.
+        if action == .toggleInfo { item.state = viewer.isInfoVisible ? .on : .off }
         return action == .undo || (viewer.window.isKeyWindow && viewer.isAvailable(action))
     }
 }

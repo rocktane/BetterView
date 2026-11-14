@@ -253,7 +253,7 @@ struct GeneralSettingsView: View {
     var body: some View {
         Form {
             Section("Affichage") {
-                Toggle("Afficher les informations sur la photo", isOn: $infoVisible)
+                Toggle("Afficher les informations de la photo", isOn: $infoVisible)
                     .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
                 Toggle("Afficher la bande d'aperçu", isOn: $stripVisible)
                     .onChange(of: stripVisible) { _, value in onStripVisibleChange(value) }

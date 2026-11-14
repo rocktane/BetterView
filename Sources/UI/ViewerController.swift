@@ -481,6 +481,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if !session.undo() { NSSound.beep() }
     }
 
+    var isInfoVisible: Bool { infoVisible }
+
     func setInfoVisible(_ visible: Bool) {
         infoVisible = visible
         Preferences.infoVisible = visible
@@ -684,8 +686,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// for the next photos so it is normally there on arrival.
     private func updateInfo() {
         requestMetadata()
-        guard infoVisible, let current = session.list.current, let index = session.list.index else {
+        guard let current = session.list.current, let index = session.list.index else {
             view.hideInfo()
+            return
+        }
+        guard infoVisible else {
+            view.hideInfo(offeringToShow: true)
             return
         }
         let known = metadata.metadata(for: current)

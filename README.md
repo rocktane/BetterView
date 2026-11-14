@@ -5,7 +5,7 @@ Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite po
 - Passage d'une photo à l'autre en moins d'une milliseconde quand la photo est préparée.
 - Suppression en une touche, vers la corbeille, annulable avec ⌘Z ; historique des suppressions du dossier avec aperçu (⌘Y).
 - Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo. Elle se déplace en glissant la photo.
-- Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs.
+- Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs. Informations masquées (I, ou Réglages > Général) : un petit « i » en bas à gauche, au survol, les réaffiche d'un clic.
 - Une bande d'aperçu flottante, détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant, s'aimante au Dock, au centre de l'écran et à la fenêtre de la photo, et s'agrandit en tirant ses bords.
 - Une vue Comparer pour garder la meilleure de plusieurs photos : jusqu'à 4 côte à côte, zoom à 100 % synchronisé, et corbeille directement depuis cette vue.
 - Un clic droit sur la photo ou une vignette pour l'envoyer dans Lightroom, avec la sélection ou tout le dossier.
@@ -38,7 +38,7 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 | A | 100 % sur le point AF enregistré, ou ajusté (dans la comparaison : chaque photo sur le sien) |
 | ⌘+ (ou ⌘=), ⌘− | Zoom avant, arrière : 25, 50, 100, 200, 400, 800 % |
 | ⌘0 (ou ⌘à en AZERTY) | Ajuster à la fenêtre |
-| I | Informations |
+| I | Afficher ou masquer les informations (aussi dans Réglages > Général et le menu Présentation, coché quand elles sont affichées) |
 | R | Afficher dans le Finder |
 | Échap | Vider la sélection et quitter le zoom, puis la comparaison |
 | B | Afficher ou masquer la bande d'aperçu |

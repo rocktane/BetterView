@@ -160,6 +160,33 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertTrue(view.overlaysShown, "shown at once, whatever the fade-out left")
     }
 
+    /// Information hidden by the user: a discreet « i » on hover brings it back. Never next
+    /// to the information itself, and not when there is no photo at all.
+    func testTheInfoButtonOffersToShowWhatTheUserHid() throws {
+        let view = ViewerView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        window.contentView = view
+        var commands: [ViewerCommand] = []
+        view.onCommand = { commands.append($0) }
+        view.pointerInWindow = { CGPoint(x: 450, y: 300) }
+        view.hideInfo(offeringToShow: true)
+        view.refreshHover()
+        XCTAssertTrue(view.offersToShowInfo)
+        XCTAssertFalse(view.overlaysShown)
+        let button = try XCTUnwrap(view.subviews.compactMap { $0 as? NSButton }.first)
+        button.performClick(nil)
+        XCTAssertTrue(commands.contains { if case .perform(.toggleInfo, _) = $0 { true } else { false } })
+        view.setInfo(name: "A.arw", settings: "", date: "", position: "1 / 4")
+        XCTAssertFalse(view.offersToShowInfo, "never with the information shown")
+        XCTAssertTrue(view.overlaysShown)
+        view.hideInfo()
+        XCTAssertFalse(view.offersToShowInfo, "nothing to show: no « i »")
+        view.hideInfo(offeringToShow: true)
+        view.pointerInWindow = { nil }
+        view.refreshHover()
+        XCTAssertFalse(view.offersToShowInfo, "only while the pointer is on the photo")
+    }
+
     /// A fade-out still running when the pointer comes back must not hide the view at its end.
     func testALateFadeOutDoesNotHideAViewShownSince() async {
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
