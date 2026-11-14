@@ -18,6 +18,12 @@ struct PhotoMenuTarget: Equatable, Sendable {
         self.folder = folder.count > photos.count ? folder : []
     }
 
+    /// Whether a deletion sent from the menu asks first. A selection follows the user's
+    /// setting; a lone thumbnail that is not the photo shown is always confirmed.
+    static func confirmsDeletion(isSelection: Bool, asksForSelections: Bool) -> Bool {
+        !isSelection || asksForSelections
+    }
+
     /// « la photo », « les 3 photos sélectionnées » : what an item does it to.
     static func phrase(count: Int, selected: Bool = false) -> String {
         if count == 1 { return selected ? "la photo sélectionnée" : "la photo" }

@@ -443,7 +443,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Several selected photos go together, as one gesture for ⌘Z. They are not all on
     /// screen, so the user confirms first, unless they chose not to be asked. The context
-    /// menu also sends here a thumbnail that is not the photo shown, `isSelection` false.
+    /// menu also sends here a thumbnail that is not the photo shown, `isSelection` false:
+    /// that one is always confirmed, whatever was chosen for selections.
     private func deleteSelection(_ photos: [PhotoKey], isSelection: Bool = true) {
         guard window.attachedSheet == nil else { return }
         let deletable = photos.filter { session.protection(of: $0).isEmpty }
@@ -467,7 +468,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             let undoKey = self.view.shortcuts.keys(for: .undo).first?.label
             self.view.flash(undoKey.map { "\(message)  ·  \($0) pour annuler" } ?? message)
         }
-        guard Preferences.confirmsMultipleDelete else {
+        guard PhotoMenuTarget.confirmsDeletion(isSelection: isSelection, asksForSelections: Preferences.confirmsMultipleDelete) else {
             trash()
             return
         }
@@ -482,12 +483,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
         alert.informativeText = info
         alert.addButton(withTitle: "Mettre à la corbeille")
         alert.addButton(withTitle: "Annuler")
-        alert.showsSuppressionButton = true
+        // « Ne plus demander » is the selections' setting: not offered for a lone thumbnail.
+        alert.showsSuppressionButton = isSelection
         alert.suppressionButton?.title = "Ne plus demander"
         alert.beginSheetModal(for: window) { response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn else { return }
-                if alert.suppressionButton?.state == .on { Preferences.confirmsMultipleDelete = false }
+                if isSelection, alert.suppressionButton?.state == .on { Preferences.confirmsMultipleDelete = false }
                 trash()
             }
         }
@@ -945,8 +947,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if !apps.isEmpty {
             let submenu = NSMenu()
             for app in apps {
-                submenu.addItem(ClosureMenuItem(app.name, image: ExternalApps.icon(of: app)) { [weak self] in
-                    self?.openPhotos(target.photos, in: app)
+                // Another Lightroom than the one above still asks first.
+                submenu.addItem(ClosureMenuItem(app.name + (app.isLightroom ? "…" : ""), image: ExternalApps.icon(of: app)) { [weak self] in
+                    if app.isLightroom {
+                        self?.confirmOpen(target.photos, in: app)
+                    } else {
+                        self?.openPhotos(target.photos, in: app)
+                    }
                 })
             }
             let openWith = NSMenuItem(title: "Ouvrir avec", action: nil, keyEquivalent: "")
@@ -1016,8 +1023,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     private func openPhotos(_ photos: [PhotoKey], in app: ExternalApps.App) {
-        ExternalApps.open(photos, with: app) { [weak self] message in
-            self?.alert("Impossible d'ouvrir les photos dans \(app.name)", info: message)
+        ExternalApps.open(photos, with: app) { [weak self] failure in
+            guard let self else { return }
+            switch failure {
+            case .changed:
+                self.session.requestScan()
+                self.alert(
+                    "Rien n'a été envoyé à \(app.name)",
+                    info: "\(photos.count == 1 ? "La photo a" : "Des photos ont") changé sur le disque depuis l'ouverture du menu. Le dossier est relu : recommence ensuite."
+                )
+            case .refused(let message):
+                self.alert("Impossible d'ouvrir les photos dans \(app.name)", info: message)
+            }
         }
     }
 

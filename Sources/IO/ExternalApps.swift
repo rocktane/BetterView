@@ -10,11 +10,20 @@ enum ExternalApps {
 
         /// Lightroom Classic works from a catalog: it shows its import window with the files.
         var importsFirst: Bool { bundleIdentifier == ExternalApps.lightroomClassic }
+
+        /// Any Lightroom, wherever it is installed: sending photos to one is always confirmed.
+        var isLightroom: Bool { bundleIdentifier.map(ExternalApps.lightroomIdentifiers.contains) ?? false }
+    }
+
+    enum OpenFailure: Equatable, Sendable {
+        /// A file is no longer the revision the user saw: nothing was sent.
+        case changed
+        case refused(String)
     }
 
     nonisolated static let lightroomClassic = "com.adobe.LightroomClassicCC7"
     /// Classic first: it is the one that sorts and develops a folder of RAW files.
-    private static let lightroomIdentifiers = [lightroomClassic, "com.adobe.lightroomCC"]
+    nonisolated static let lightroomIdentifiers = [lightroomClassic, "com.adobe.lightroomCC"]
 
     static func lightroom() -> App? {
         lightroomIdentifiers.lazy
@@ -50,13 +59,23 @@ enum ExternalApps {
         return image
     }
 
-    static func open(_ photos: [PhotoKey], with app: App, failed: @escaping @MainActor (String) -> Void) {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        NSWorkspace.shared.open(photos.map(\.url), withApplicationAt: app.url, configuration: configuration) { _, error in
-            guard let error else { return }
-            let message = error.localizedDescription
-            Task { @MainActor in failed(message) }
+    /// Sends the photos only if every file is still the revision the user saw and confirmed:
+    /// a file replaced meanwhile, at the same path, is not what they chose. The check reads
+    /// the disk, so it runs off the main thread.
+    static func open(_ photos: [PhotoKey], with app: App, failed: @escaping @MainActor (OpenFailure) -> Void) {
+        let appURL = app.url
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard photos.allSatisfy({ PhotoKey.read(path: $0.path) == $0 }) else {
+                Task { @MainActor in failed(.changed) }
+                return
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.open(photos.map(\.url), withApplicationAt: appURL, configuration: configuration) { _, error in
+                guard let error else { return }
+                let message = error.localizedDescription
+                Task { @MainActor in failed(.refused(message)) }
+            }
         }
     }
 }

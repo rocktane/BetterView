@@ -73,10 +73,10 @@ A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repè
 Clic droit (ou ⌃+clic) sur la photo ou sur une vignette de la bande. Comme dans le Finder, le menu agit sur toute la sélection quand la photo cliquée en fait partie, sinon sur cette photo seule.
 
 - Ouvrir dans Lightroom Classic (ou Lightroom) : la photo ou la sélection, et, en plus, les photos sélectionnées et toutes les photos du dossier quand elles sont plus nombreuses. Une confirmation est toujours demandée, même pour une photo. Lightroom Classic montre ensuite sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer.
-- Ouvrir avec : les autres apps qui ouvrent ce format, celle par défaut en premier.
+- Ouvrir avec : les autres apps qui ouvrent ce format, celle par défaut en premier. Un autre Lightroom installé demande la même confirmation.
 - Afficher dans le Finder, Copier (les fichiers, à coller dans le Finder ou une autre app), Partager.
 - Sélectionner ou désélectionner la photo, Tout désélectionner, Comparer les photos visées.
-- Mettre à la corbeille, annulable avec ⌘Z. Une photo qui n'est pas celle affichée demande confirmation, comme une sélection.
+- Mettre à la corbeille, annulable avec ⌘Z. Une vignette qui n'est pas la photo affichée demande toujours confirmation ; une sélection suit le réglage « Demander avant de supprimer plusieurs photos sélectionnées ».
 
 Le menu n'est pas proposé dans la comparaison.
 
