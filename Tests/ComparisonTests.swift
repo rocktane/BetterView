@@ -728,6 +728,23 @@ final class ComparisonFocusTests: XCTestCase {
         XCTAssertEqual(view.focusOffset.dx, atHalf, "zooming back in does not bring the excess back")
     }
 
+    /// Photos of different sizes: the fit comes back only once the largest one fits too.
+    func testAPinchFitsOnlyWhenEveryPhotoFits() {
+        let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+        view.pointerInWindow = { nil }
+        view.arrange(layout: [0, 1], photos: [photo("a"), photo("b"), nil, nil])
+        view.layoutSubtreeIfNeeded()
+        view.showFrame(frame(photo("a")), slot: 0)
+        let small = PixelFormat.makeSurface(width: 60, height: 40)!
+        view.showFrame(Frame(key: FrameKey(photo: photo("b"), tier: .screen), surface: small, nativeSize: CGSize(width: 3000, height: 2000)), slot: 1)
+        view.toggleZoom(atWindowPoint: nil)
+        // Slots of about 595 x 693 pt, 2 px per pt: fits at about 0.2 and 0.4.
+        view.pinch(by: -0.65, atWindowPoint: .zero)
+        XCTAssertEqual(view.zoom ?? 0, 0.35, accuracy: 1e-9, "the 6000 px photo is still cropped: still zoomed")
+        view.pinch(by: -0.5, atWindowPoint: .zero)
+        XCTAssertNil(view.zoom, "0.175: both fit now")
+    }
+
     func testLeavingTheZoomEndsTheAFMode() {
         let view = makeView()
         view.zoomOnFocus()

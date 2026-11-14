@@ -671,7 +671,8 @@ final class ComparisonView: NSView {
         let wasZoomed = zoom != nil
         // Back to the fit once every photo would fit its slot again.
         let fits = drawnSlots.compactMap { ComparisonGeometry.fitZoom(slot: $0.bounds.size, native: $0.nativeSize, pointsPerPixel: pointsPerPixel) }
-        guard let fitZoom = fits.max() else { return }
+        // A photo fits below its own fit zoom: all of them do below the smallest one.
+        guard let fitZoom = fits.min() else { return }
         let updated = (zoom ?? fitZoom) * (1 + magnification)
         if updated <= fitZoom {
             zoom = nil
