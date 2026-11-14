@@ -104,6 +104,14 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertFalse(controller.followsFocus)
     }
 
+    func testNamePositionAndZoomShareOneSize() throws {
+        let fonts = ViewerView(frame: .zero).textFonts
+        let name = try XCTUnwrap(fonts.name), position = try XCTUnwrap(fonts.position), zoom = try XCTUnwrap(fonts.zoom)
+        XCTAssertEqual(position, name)
+        XCTAssertEqual(zoom.pointSize, name.pointSize)
+        XCTAssertEqual(zoom, NSFont.monospacedDigitSystemFont(ofSize: name.pointSize, weight: .semibold), "fixed-width digits")
+    }
+
     // MARK: Overlays on hover
 
     private var closeButton: NSButton { controller.window.standardWindowButton(.closeButton)! }

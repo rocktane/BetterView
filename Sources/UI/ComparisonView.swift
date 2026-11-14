@@ -156,7 +156,8 @@ private final class ComparisonSlotView: NSView {
         }
         caption.font = .systemFont(ofSize: 11, weight: .medium)
         captionPanel.addSubview(caption)
-        badge.font = .systemFont(ofSize: 11, weight: .semibold)
+        // The caption's size; the zoom level in it keeps fixed-width digits, as in the viewer.
+        badge.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         badge.isHidden = true
         addSubview(badge)
         message.font = .systemFont(ofSize: 13, weight: .medium)

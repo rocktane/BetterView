@@ -48,14 +48,17 @@ final class ViewerView: NSView {
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
     /// The zoom level, shown for as long as the view is zoomed, pointer on the photo or not.
     private let zoomPanel = ViewerView.panel()
-    private let zoomLabel = ViewerView.label(size: 13, weight: .semibold)
+    /// The name's size and weight too, with fixed-width digits.
+    private let zoomLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private let infoPanel = ViewerView.panel()
-    private let infoNameLabel = ViewerView.label(size: 15, weight: .semibold)
+    /// The name sets the size of the name, the position and the zoom level.
+    private static let nameSize: CGFloat = 15
+    private let infoNameLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private let infoSettingsLabel = ViewerView.label(size: 13, weight: .regular)
     private let infoDateLabel = ViewerView.label(size: 13, weight: .regular)
     private let positionPanel = ViewerView.panel()
     /// Set in the name's font: same size, same weight.
-    private let positionLabel = ViewerView.label(size: 15, weight: .semibold)
+    private let positionLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private var hoverTracking: NSTrackingArea?
     /// Everything written over the photo only shows while the pointer is on it.
     private(set) var isHovered = false
@@ -123,7 +126,7 @@ final class ViewerView: NSView {
         root.addSublayer(markerLayer)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
-        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: Self.nameSize, weight: .semibold)
         zoomLabel.isHidden = false
         zoomPanel.addSubview(zoomLabel)
         let badges = NSStackView(views: [badgeLabel, lockBadge, zoomPanel])
@@ -392,6 +395,9 @@ final class ViewerView: NSView {
         applyOverlayVisibility()
         onCommand(.hoverChanged(inside))
     }
+
+    /// Name, position and zoom level: for the tests.
+    var textFonts: (name: NSFont?, position: NSFont?, zoom: NSFont?) { (infoNameLabel.font, positionLabel.font, zoomLabel.font) }
 
     /// What the pointer shows, as it really is on screen: for the tests.
     var overlaysShown: Bool { !infoPanel.isHidden && infoPanel.alphaValue == 1 && !positionPanel.isHidden && positionPanel.alphaValue == 1 }
