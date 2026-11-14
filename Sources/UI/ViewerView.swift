@@ -16,6 +16,8 @@ enum ViewerCommand {
 /// Shows one IOSurface in a layer and handles geometry and input. No app logic here.
 final class ViewerView: NSView {
     var onCommand: (ViewerCommand) -> Void = { _ in }
+    /// The right-click menu for the photo shown, built for each click.
+    var contextMenu: () -> NSMenu? = { nil }
     var shortcuts = ShortcutMap.defaults
     /// Nothing is shown: a click asks to open something.
     var opensOnClick = false
@@ -498,6 +500,11 @@ final class ViewerView: NSView {
     /// nothing to show, a click asks to open something.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        // ⌃-click is a right-click: it must neither zoom nor move the window.
+        if event.modifierFlags.contains(.control) {
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return
+        }
         guard event.clickCount == 1, let window else { return }
         let start = event.locationInWindow
         var moved = false
@@ -519,6 +526,10 @@ final class ViewerView: NSView {
             }
             pan(dx: next.deltaX, dy: next.deltaY)
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        opensOnClick || shownSurface == nil ? nil : contextMenu()
     }
 
     private func clicked(at point: CGPoint) {

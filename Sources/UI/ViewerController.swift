@@ -110,6 +110,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
+        strip.view.onMenu = { [weak self] in self?.stripMenu(for: $0) }
+        view.contextMenu = { [weak self] in self?.viewerMenu() }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
         thumbnails.onLoaded = { [weak self] _ in self?.scheduleStripUpdate() }
@@ -381,6 +383,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
             deleteSelection(selected)
             return
         }
+        trashCurrentPhoto()
+    }
+
+    private func trashCurrentPhoto() {
         // Whatever is deleted must be what the user is looking at.
         guard let current = session.list.current, visiblePhoto == current else {
             NSSound.beep()
@@ -398,8 +404,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     /// Several selected photos go together, as one gesture for ⌘Z. They are not all on
-    /// screen, so the user confirms first, unless they chose not to be asked.
-    private func deleteSelection(_ photos: [PhotoKey]) {
+    /// screen, so the user confirms first, unless they chose not to be asked. The context
+    /// menu also sends here a thumbnail that is not the photo shown, `isSelection` false.
+    private func deleteSelection(_ photos: [PhotoKey], isSelection: Bool = true) {
         guard window.attachedSheet == nil else { return }
         let deletable = photos.filter { session.protection(of: $0).isEmpty }
         let kept = photos.count - deletable.count
@@ -417,7 +424,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 self.session.requestScan()
                 return
             }
-            self.selection.clear()
+            if isSelection { self.selection.clear() }
             self.scheduleStripUpdate()
             let undoKey = self.view.shortcuts.keys(for: .undo).first?.label
             self.view.flash(undoKey.map { "\(message)  ·  \($0) pour annuler" } ?? message)
@@ -427,8 +434,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         let alert = NSAlert()
-        alert.messageText = "Mettre \(count) photos à la corbeille ?"
-        var info = "Les photos sélectionnées ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        alert.messageText = count == 1 ? "Mettre \(deletable[0].name) à la corbeille ?" : "Mettre \(count) photos à la corbeille ?"
+        var info = switch (isSelection, count) {
+        case (_, 1): "Ce n'est pas la photo affichée."
+        case (true, _): "Les photos sélectionnées ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        case (false, _): "Ces photos ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        }
         if kept > 0 { info += "\n\n\(kept) photo\(kept > 1 ? "s protégées restent" : " protégée reste") dans le dossier." }
         alert.informativeText = info
         alert.addButton(withTitle: "Mettre à la corbeille")
@@ -789,6 +800,130 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    // MARK: Context menu
+
+    private func viewerMenu() -> NSMenu? {
+        guard comparison == nil, let current = session.list.current, visiblePhoto == current else { return nil }
+        return contextMenu(for: current)
+    }
+
+    private func stripMenu(for photo: PhotoKey) -> NSMenu? {
+        comparison == nil ? contextMenu(for: photo) : nil
+    }
+
+    /// The same menu on the photo and on its thumbnail. As in the Finder, it acts on the
+    /// selection when the photo belongs to it; the selection and the folder, when they are
+    /// more, get their own Lightroom items.
+    private func contextMenu(for clicked: PhotoKey) -> NSMenu {
+        let photos = session.list.photos
+        let selected = selection.photos(in: photos)
+        let target = PhotoMenuTarget(clicked: clicked, selection: selected, folder: photos)
+        let count = target.photos.count
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, image: NSImage? = nil, _ handler: @escaping @MainActor (ViewerController) -> Void) {
+            menu.addItem(ClosureMenuItem(title, image: image) { [weak self] in
+                if let self { handler(self) }
+            })
+        }
+
+        let lightroom = ExternalApps.lightroom()
+        if let lightroom {
+            let icon = ExternalApps.icon(of: lightroom)
+            add(PhotoMenuTarget.openTitle(app: lightroom.name, count: count, selected: target.isSelection), image: icon) {
+                $0.confirmOpen(target.photos, in: lightroom)
+            }
+            if !target.otherSelection.isEmpty {
+                add(PhotoMenuTarget.openTitle(app: lightroom.name, count: target.otherSelection.count, selected: true), image: icon) {
+                    $0.confirmOpen(target.otherSelection, in: lightroom)
+                }
+            }
+            if !target.folder.isEmpty {
+                add(PhotoMenuTarget.openTitle(app: lightroom.name, count: target.folder.count, folder: true), image: icon) {
+                    $0.confirmOpen(target.folder, in: lightroom)
+                }
+            }
+        }
+        let apps = ExternalApps.apps(opening: clicked.url).filter { $0.url != lightroom?.url }
+        if !apps.isEmpty {
+            let submenu = NSMenu()
+            for app in apps {
+                submenu.addItem(ClosureMenuItem(app.name, image: ExternalApps.icon(of: app)) { [weak self] in
+                    self?.openPhotos(target.photos, in: app)
+                })
+            }
+            let openWith = NSMenuItem(title: "Ouvrir avec", action: nil, keyEquivalent: "")
+            openWith.submenu = submenu
+            menu.addItem(openWith)
+        }
+
+        menu.addItem(.separator())
+        let urls = target.photos.map(\.url)
+        add(count == 1 ? "Afficher dans le Finder" : "Afficher les \(count) photos dans le Finder") { _ in
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+        add(count == 1 ? "Copier" : "Copier les \(count) photos") { _ in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects(urls as [NSURL])
+        }
+        menu.addItem(NSSharingServicePicker(items: urls).standardShareMenuItem)
+
+        menu.addItem(.separator())
+        add(selection.contains(clicked) ? "Désélectionner" : "Sélectionner") {
+            $0.selection.toggle(clicked)
+            $0.updateStrip()
+        }
+        if !selected.isEmpty {
+            add("Tout désélectionner") {
+                $0.selection.clear()
+                $0.updateStrip()
+            }
+        }
+        if count >= 2 {
+            add("Comparer les \(count) photos") { $0.enterComparison(target.photos) }
+        }
+
+        menu.addItem(.separator())
+        add(count == 1 ? "Mettre à la corbeille" : "Mettre les \(count) photos à la corbeille") {
+            $0.trashFromMenu(target.photos, isSelection: target.isSelection)
+        }
+        return menu
+    }
+
+    private func trashFromMenu(_ photos: [PhotoKey], isSelection: Bool) {
+        if photos.count == 1, photos[0] == session.list.current {
+            trashCurrentPhoto()
+        } else {
+            deleteSelection(photos, isSelection: isSelection)
+        }
+    }
+
+    /// Always asked, even for one photo: sending a folder to a catalog by mistake is
+    /// tedious to undo there.
+    private func confirmOpen(_ photos: [PhotoKey], in app: ExternalApps.App) {
+        guard !photos.isEmpty, window.attachedSheet == nil else { return }
+        let one = photos.count == 1
+        let alert = NSAlert()
+        alert.messageText = one ? "Ouvrir \(photos[0].name) dans \(app.name) ?" : "Ouvrir \(photos.count) photos dans \(app.name) ?"
+        alert.informativeText = app.importsFirst
+            ? "\(app.name) \(one ? "la" : "les") proposera dans sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer."
+            : "\(app.name) va s'ouvrir avec \(one ? "cette photo" : "ces photos")."
+        alert.addButton(withTitle: "Ouvrir")
+        alert.addButton(withTitle: "Annuler")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn else { return }
+                self?.openPhotos(photos, in: app)
+            }
+        }
+    }
+
+    private func openPhotos(_ photos: [PhotoKey], in app: ExternalApps.App) {
+        ExternalApps.open(photos, with: app) { [weak self] message in
+            self?.alert("Impossible d'ouvrir les photos dans \(app.name)", info: message)
+        }
+    }
+
     // MARK: Comparison
 
     /// The Shift-clicked photos, or else the burst around the current photo, or else the
@@ -807,8 +942,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         return index + 1 < photos.count ? [photos[index], photos[index + 1]] : [photos[index - 1], photos[index]]
     }
 
-    private func enterComparison() {
-        guard let model = ComparisonModel(photos: photosToCompare(), focusing: session.list.current) else {
+    private func enterComparison(_ photos: [PhotoKey]? = nil) {
+        guard let model = ComparisonModel(photos: photos ?? photosToCompare(), focusing: session.list.current) else {
             NSSound.beep()
             return
         }
