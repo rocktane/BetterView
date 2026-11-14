@@ -62,6 +62,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The centre shapes are placed around. Reading it back from the frame would add a
     /// rounding error at every change of orientation, and the window would creep sideways.
     private var shapeCenter: CGPoint?
+    /// Set from the start of the way into full screen to the end of the way out: the window
+    /// frame is the system's then, neither the photo's shape nor a size to keep.
+    private var fullScreen = false
+    /// The window's content in full screen: the photo above the strip.
+    private(set) var fullScreenContainer: FullScreenContainer?
+    /// Leaves full screen; replaced in tests, which must not take over the screen.
+    lazy var leaveFullScreen: () -> Void = { [weak self] in self?.window.toggleFullScreen(nil) }
     /// The window has not shown a photo yet: it is small, and clicking it opens one.
     private var welcoming = false
     private static let welcomeSize = CGSize(width: 480, height: 300)
@@ -93,8 +100,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         window.contentView = view
         window.delegate = self
         window.title = "BetterView"
-        // Only the window with the photo's shape exists: no full-screen mode.
-        window.collectionBehavior = .fullScreenNone
+        // The green button goes full screen; Option-click keeps the standard zoom.
+        window.collectionBehavior = .fullScreenPrimary
         window.minSize = NSSize(width: 200, height: 200)
         window.isReleasedWhenClosed = false
         window.initialFirstResponder = view
@@ -201,6 +208,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func screensChanged() {
         updateTarget()
+        refreshFullScreenScreen()
         strip.fitToScreen()
         if comparison != nil {
             placeComparisonWindow()
@@ -263,11 +271,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .toggleInfo: setInfoVisible(!infoVisible)
         case .revealInFinder: revealInFinder()
         case .exit:
+            // Out of full screen only when there is nothing else to leave.
+            let leavesSomething = !selection.isEmpty || view.isZoomed
             if !selection.isEmpty {
                 selection.clear()
                 scheduleStripUpdate()
             }
             view.exitZoom()
+            if !leavesSomething, fullScreen { leaveFullScreen() }
         case .toggleStrip: setStripVisible(!stripVisible)
         case .compare: enterComparison()
         case .keepSelected: break
@@ -504,6 +515,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     private func setWindowButtonsVisible(_ visible: Bool) {
+        // In full screen the system shows and hides the title bar itself: the buttons must be
+        // there when it does.
+        let visible = visible || fullScreen
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(kind)?.fade(visible: visible)
         }
@@ -518,6 +532,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func applyWindowShape(aspect: CGFloat, approximate: Bool) {
         if approximate, let shapedAspect, WindowShape.sameShape(shapedAspect, aspect) { return }
         if view.isZoomed { return }
+        if fullScreen {
+            // The screen is the window: the photo's view takes the shape instead.
+            shapedAspect = aspect
+            fullScreenContainer?.photoAspect = aspect
+            return
+        }
         guard let screen = window.screen ?? NSScreen.main else { return }
         shapedAspect = aspect
         let center = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
@@ -732,7 +752,27 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The photo or the comparison, in the window or, in full screen, above the strip.
+    private func setContent(_ content: NSView) {
+        if let fullScreenContainer {
+            fullScreenContainer.content = content
+            fullScreenContainer.photoAspect = content === view ? shapedAspect : nil
+            updateFullScreenRoom()
+        } else {
+            window.contentView = content
+        }
+    }
+
+    /// The strip's room at the bottom in full screen: its height when it is wanted there,
+    /// whether the app is active or not, so that switching apps does not move the photo.
+    private func updateFullScreenRoom() {
+        guard let fullScreenContainer, let screen = strip.fullScreenFrame else { return }
+        let wanted = comparison == nil && stripVisible && session.list.count > 1 && session.list.index != nil
+        fullScreenContainer.bottomInset = wanted ? strip.fullScreenHeight(on: screen) : 0
+    }
+
     private func updateStrip() {
+        updateFullScreenRoom()
         guard comparison == nil else {
             strip.setVisible(false)
             updateComparisonRow()
@@ -1000,7 +1040,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         view.showMessage(nil)
         visiblePhoto = nil
         comparisonView.frame = window.contentLayoutRect
-        window.contentView = comparisonView
+        setContent(comparisonView)
         window.makeFirstResponder(comparisonView)
         setWindowButtonsVisible(true)
         // Four photos at 100 % have to fit at once, or each render would push another out.
@@ -1015,7 +1055,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Close to the whole screen: this is the one view that wants the room.
     private func placeComparisonWindow() {
-        guard let screen = window.screen ?? NSScreen.main else { return }
+        guard !fullScreen, let screen = window.screen ?? NSScreen.main else { return }
         applyingShape = true
         window.setFrame(screen.visibleFrame.insetBy(dx: 16, dy: 12), display: true)
         applyingShape = false
@@ -1029,12 +1069,16 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.reset()
         pipeline.cache.setBudget(.full, normalFullBudget)
         applyingShape = true
-        window.contentView = view
-        if let preComparisonFrame { window.setFrame(preComparisonFrame, display: true) }
-        window.contentAspectRatio = preComparisonFrame?.size ?? window.frame.size
+        setContent(view)
+        // In full screen, the way out gives the window back; the shape follows then.
+        if !fullScreen {
+            if let preComparisonFrame { window.setFrame(preComparisonFrame, display: true) }
+            window.contentAspectRatio = preComparisonFrame?.size ?? window.frame.size
+        }
         applyingShape = false
         // Without a photo shown yet, the first shape enables it: the small frame is not kept.
-        if !welcoming { window.setFrameAutosaveName("Viewer") }
+        // Nor the screen's, in full screen: the way out enables it.
+        if !welcoming, !fullScreen { window.setFrameAutosaveName("Viewer") }
         window.makeFirstResponder(view)
         shapeCenter = preComparisonCenter
         shapedAspect = nil
@@ -1359,20 +1403,91 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) { strip.setVisible(false) }
+
+    // MARK: Full screen
+
+    /// The photo goes above the strip, in a container of the screen's size. The strip waits
+    /// for the end of the transition, then spans the bottom of the screen.
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        fullScreen = true
+        strip.setVisible(false)
+        guard let current = window.contentView else { return }
+        let container = FullScreenContainer(frame: current.frame)
+        container.autoresizingMask = [.width, .height]
+        window.contentView = container
+        fullScreenContainer = container
+        setContent(current)
+        // The photo's shape no longer constrains the window.
+        window.contentResizeIncrements = NSSize(width: 1, height: 1)
+        if let screen = window.screen?.frame {
+            container.bottomInset = comparison == nil && stripVisible && session.list.count > 1 ? strip.fullScreenHeight(on: screen) : 0
+        }
+        window.makeFirstResponder(current)
+        setWindowButtonsVisible(true)
+    }
+
+    /// A screen changed under a full screen window (resolution, another display): the strip
+    /// and the photo's room follow it.
+    private func refreshFullScreenScreen() {
+        guard fullScreen, strip.fullScreenFrame != nil, let screen = window.screen?.frame else { return }
+        strip.setFullScreen(screen)
+        updateFullScreenRoom()
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) { refreshFullScreenScreen() }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        strip.setFullScreen(window.screen?.frame ?? window.frame)
+        updateStrip()
+    }
+
+    func windowWillExitFullScreen(_ notification: Notification) {
+        strip.setVisible(false)
+        strip.setFullScreen(nil)
+    }
+
+    /// Back in its own window, which the system gave back: the photo's shape again, and the
+    /// strip at its own place.
+    func windowDidExitFullScreen(_ notification: Notification) {
+        let content = fullScreenContainer?.content
+        fullScreenContainer?.content = nil
+        fullScreenContainer = nil
+        fullScreen = false
+        if let content {
+            content.frame = window.contentLayoutRect
+            window.contentView = content
+            window.makeFirstResponder(content)
+        }
+        if comparison == nil {
+            shapedAspect = nil
+            display()
+            // Saved from here on, now that the window has its photo's shape again.
+            if !welcoming { window.setFrameAutosaveName("Viewer") }
+            view.refreshHover()
+            setWindowButtonsVisible(view.isHovered)
+        } else {
+            placeComparisonWindow()
+        }
+        updateStrip()
+    }
+
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification, object: window))
+    }
     func windowDidMiniaturize(_ notification: Notification) { updateStrip() }
     func windowDidDeminiaturize(_ notification: Notification) { updateStrip() }
 
     /// A size the user chose stays for the next photos, whatever their orientation.
     func windowDidResize(_ notification: Notification) {
         strip.followViewer()
-        guard !applyingShape, comparison == nil, !welcoming else { return }
+        guard !applyingShape, comparison == nil, !welcoming, !fullScreen else { return }
         chosenHeight = window.frame.height
         shapeCenter = nil
     }
 
     func windowDidMove(_ notification: Notification) {
         strip.followViewer()
-        guard !applyingShape, comparison == nil else { return }
+        guard !applyingShape, comparison == nil, !fullScreen else { return }
         // The photo opens where the small window was taken.
         shapeCenter = welcoming ? CGPoint(x: window.frame.midX, y: window.frame.midY) : nil
     }

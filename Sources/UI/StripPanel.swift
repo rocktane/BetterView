@@ -362,6 +362,9 @@ final class StripPanel {
         guard isAppActive(), let viewer else { return false }
         return viewer.isVisible && !viewer.isMiniaturized
     }
+    /// The screen the photo's window fills, while it is full screen: the strip then spans its
+    /// bottom, and its own place, magnets and size wait untouched for the way back.
+    private(set) var fullScreenFrame: CGRect?
     /// The viewer wants the strip shown; it shows when the rule allows.
     private var wanted = false
     private var focusObservers: [NSObjectProtocol] = []
@@ -438,6 +441,30 @@ final class StripPanel {
         return StripView.reach(width: max(width, panel.frame.width), metrics: view.metrics)
     }
 
+    /// Full screen across the bottom of `screen`, or back to the strip's own place with nil.
+    /// It neither moves nor stretches there: the photo's room is what is left above it.
+    func setFullScreen(_ screen: CGRect?) {
+        guard screen != fullScreenFrame else { return }
+        fullScreenFrame = screen
+        // Only a full screen space needs it: elsewhere the strip stays in its own space.
+        panel.collectionBehavior = screen == nil ? [.ignoresCycle, .fullScreenNone] : [.ignoresCycle, .fullScreenAuxiliary]
+        view.layer?.cornerRadius = screen == nil ? 12 : 0
+        if screen == nil {
+            view.onDrag = { [weak self] in self?.drag($0) }
+            view.onResize = { [weak self] in self?.resize($0) }
+        } else {
+            view.onDrag = nil
+            view.onResize = nil
+        }
+        updateChildWindow()
+        fitToScreen()
+    }
+
+    /// The strip's height in full screen on `screen`: the size chosen, as that screen allows.
+    func fullScreenHeight(on screen: CGRect) -> CGFloat {
+        StripResize.fitted(size, visible: screen).height
+    }
+
     /// A size from the settings, at once.
     func applySize(_ size: StripSize) {
         self.size = size
@@ -489,7 +516,7 @@ final class StripPanel {
     /// then carries it along with the window as it is dragged, with no delay. A shape change
     /// still goes through `followViewer`, as the window grows around its centre.
     private func updateChildWindow() {
-        let wanted = panel.isVisible && placement.window != nil && dragOrigin == nil && resizeStart == nil && viewerFrame() != nil
+        let wanted = panel.isVisible && placement.window != nil && dragOrigin == nil && resizeStart == nil && fullScreenFrame == nil && viewerFrame() != nil
         let parent = panel.parent
         if wanted, let viewer {
             if parent !== viewer {
@@ -524,6 +551,11 @@ final class StripPanel {
 
     /// Follows the Dock and the screens. They change under the strip without any drag.
     func fitToScreen() {
+        if let fullScreenFrame {
+            let height = fullScreenHeight(on: fullScreenFrame)
+            setFrame(CGRect(x: fullScreenFrame.minX, y: fullScreenFrame.minY, width: fullScreenFrame.width, height: height), display: panel.isVisible)
+            return
+        }
         guard let screen else { return }
         let visible = screen.visibleFrame
         let size = shownSize(visible: visible)

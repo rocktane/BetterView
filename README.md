@@ -4,7 +4,7 @@ Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite po
 
 - Passage d'une photo à l'autre en moins d'une milliseconde quand la photo est préparée.
 - Suppression en une touche, vers la corbeille, annulable avec ⌘Z ; historique des suppressions du dossier avec aperçu (⌘Y).
-- Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo. Elle se déplace en glissant la photo.
+- Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo. Elle se déplace en glissant la photo. Le bouton vert (ou ⌃⌘F) passe en plein écran : la bande en bas sur toute la largeur, la photo ajustée au-dessus.
 - Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs.
 - Une bande d'aperçu flottante, détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant, s'aimante au Dock, au centre de l'écran et à la fenêtre de la photo, et s'agrandit en tirant ses bords.
 - Une vue Comparer pour garder la meilleure de plusieurs photos : jusqu'à 4 côte à côte, zoom à 100 % synchronisé, et corbeille directement depuis cette vue.
@@ -40,7 +40,7 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 | ⌘0 (ou ⌘à en AZERTY) | Ajuster à la fenêtre |
 | I | Informations |
 | R | Afficher dans le Finder |
-| Échap | Vider la sélection et quitter le zoom, puis la comparaison |
+| Échap | Vider la sélection et quitter le zoom, puis la comparaison, puis le plein écran |
 | B | Afficher ou masquer la bande d'aperçu |
 | C | Comparer les photos, ou quitter la comparaison |
 | ↩ | Dans la comparaison : garder la photo choisie |

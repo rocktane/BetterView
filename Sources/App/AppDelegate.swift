@@ -137,6 +137,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return entry
         }
 
+        // The system's own action: it titles the item for entering or leaving, and applies to
+        // the window in front.
+        func fullScreenItem() -> NSMenuItem {
+            let entry = NSMenuItem(title: "Passer en mode plein écran", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+            entry.keyEquivalentModifierMask = [.control, .command]
+            return entry
+        }
+
         let quit = NSMenuItem(title: "Quitter BetterView", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         submenu("BetterView", [
             item("Réglages…", #selector(showSettings), ","),
@@ -173,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.zoomFit),
             action(.toggleInfo),
             action(.toggleStrip),
+            fullScreenItem(),
             .separator(),
             action(.compare),
             action(.keepSelected),
