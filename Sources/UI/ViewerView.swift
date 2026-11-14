@@ -9,10 +9,13 @@ enum ViewerCommand {
     /// A click that did not move the window, while `opensOnClick`.
     case clicked
     case zoomChanged
-    /// In the comparison: this slot takes the focus.
-    case selectSlot(Int)
     /// In the comparison: a button of this slot, showing this photo, was pressed.
-    case slotAction(ShortcutAction, slot: Int, photo: PhotoKey?)
+    case slotAction(ComparisonAction, slot: Int, photo: PhotoKey?)
+}
+
+/// The buttons over a photo of the comparison: the only way to keep or delete there.
+enum ComparisonAction: Sendable {
+    case trash, keep
 }
 
 /// Shows one IOSurface in a layer and handles geometry and input. No app logic here.

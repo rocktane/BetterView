@@ -8,7 +8,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case extendNext, extendPrevious, toggleSelection
     case delete, undo, revealInFinder
     case toggleZoom, zoomToFocus, zoomIn, zoomOut, zoomFit, toggleInfo, toggleStrip, exit
-    case compare, keepSelected
+    case compare
 
     /// Groups of the shortcuts settings, in display order.
     enum Group: String, CaseIterable, Sendable {
@@ -53,7 +53,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .toggleStrip: Spec(title: "Bande d'aperçu", group: .display, keys: [.character("b")])
         case .exit: Spec(title: "Quitter le zoom ou la comparaison", group: .display, keys: [.code(53)])
         case .compare: Spec(title: "Comparer les photos", group: .comparison, keys: [.character("c")])
-        case .keepSelected: Spec(title: "Comparaison : garder la photo choisie", group: .comparison, keys: [.code(36), .code(76)])
         }
     }
 
@@ -63,7 +62,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     var defaultBindings: [KeyBinding] { spec.keys }
 
     /// Never given a plain key in the menu: it would also fire while typing in the settings window.
-    var isDestructive: Bool { self == .delete || self == .keepSelected }
+    var isDestructive: Bool { self == .delete }
 }
 
 /// One key with its modifiers. Letters are stored as the typed character so they work on any

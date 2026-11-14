@@ -175,7 +175,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action(.toggleStrip),
             .separator(),
             action(.compare),
-            action(.keepSelected),
         ])
         return main
     }
@@ -190,6 +189,6 @@ extension AppDelegate: NSMenuItemValidation {
         guard item.action == #selector(performShortcut(_:)),
               let name = item.representedObject as? String, let action = ShortcutAction(rawValue: name)
         else { return true }
-        return action == .undo || viewer.window.isKeyWindow
+        return action == .undo || (viewer.window.isKeyWindow && viewer.isAvailable(action))
     }
 }

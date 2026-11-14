@@ -43,9 +43,8 @@ Ils se changent dans Réglages (⌘,) > Raccourcis : clic sur une touche pour la
 | Échap | Vider la sélection et quitter le zoom, puis la comparaison |
 | B | Afficher ou masquer la bande d'aperçu |
 | C | Comparer les photos, ou quitter la comparaison |
-| ↩ | Dans la comparaison : garder la photo choisie |
 
-Non modifiables : clic (100 % ou ajusté, à l'endroit cliqué ; un double-clic compte pour un seul clic), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W, ⌘Q, et ⌘Y (suppressions du dossier : aperçu et restauration d'une photo précise, sans annuler les suivantes). Dans la comparaison, les touches 1 à 4 choisissent une photo.
+Non modifiables : clic (100 % ou ajusté, à l'endroit cliqué ; un double-clic compte pour un seul clic), pincement, défilement et glisser (zoom, déplacement), ⌘O, ⌘, ⌘W, ⌘Q, et ⌘Y (suppressions du dossier : aperçu et restauration d'une photo précise, sans annuler les suivantes).
 
 ## Sélection
 
@@ -59,7 +58,7 @@ La bande est une pellicule : chaque vignette a la forme de sa photo, la photo co
 
 `C` compare, dans cet ordre de préférence : les photos sélectionnées, la rafale de la photo courante (photos consécutives prises à 2 s d'écart au plus), ou la photo courante et la suivante.
 
-Dans la comparaison, ← → (ou un clic) choisissent une photo. ⌫ la met à la corbeille, et la photo suivante du groupe prend sa place sans que les autres bougent. ↩ garde la photo choisie et met à la corbeille les autres photos affichées, jamais celles encore en attente. ⌘Z annule tout le geste d'un coup. Quand il ne reste qu'une photo, on revient à la vue normale, où ⌘Z reste possible. Les boutons « Corbeille » et « Garder celle-ci » apparaissent sur la photo survolée, sans clic, et agissent sur elle : elle devient la photo choisie, puis l'action s'applique. Le clavier, lui, agit toujours sur la photo choisie (cadre blanc), que le survol ne déplace pas.
+La comparaison se trie à la souris uniquement : rien ne se sélectionne au clic ni au clavier. Les boutons « Corbeille » et « Garder celle-ci » apparaissent sur la photo survolée et agissent sur elle. « Corbeille » la retire, et la photo suivante du groupe prend sa place sans que les autres bougent. « Garder celle-ci » met à la corbeille les autres photos affichées, jamais celles encore en attente. ⌫, les flèches et les chiffres n'y font rien ; ⌘Z annule tout le geste d'un coup. Double-cliquer zoome à l'endroit cliqué, et glisser déplace la fenêtre, ou les photos une fois zoomé. Quand il ne reste qu'une photo, on revient à la vue normale, sur la dernière photo gardée ou touchée, où ⌘Z reste possible. R affiche dans le Finder la photo survolée.
 
 Dans la comparaison, Z zoome à 100 % au même endroit sur toutes les photos. A les zoome à 100 % chacune sur son propre point AF, avec le petit cercle ; glisser, défiler ou pincer déplace ensuite toutes les photos du même écart, et une photo qui en remplace une autre s'ouvre sur son point AF avec ce même écart. Une photo sans point AF, ou en mise au point manuelle, est centrée au milieu et le dit. A une seconde fois, Z ou Échap reviennent à l'ajusté.
 

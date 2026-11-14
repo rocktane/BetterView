@@ -182,4 +182,37 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertNil(controller.comparisonView.zoom)
         XCTAssertFalse(controller.comparisonView.followsFocus)
     }
+
+    // MARK: Comparison, mouse only
+
+    private func compareAll() async {
+        controller.perform(.compare)
+        await spin { self.controller.comparisonView.slotsShowingPhotos.count >= 2 }
+    }
+
+    func testNoKeyKeepsDeletesOrPicksAPhotoInTheComparison() async {
+        await compareAll()
+        let before = controller.session.list.photos
+        let current = controller.session.list.current
+        for action in [ShortcutAction.delete, .next, .previous, .jumpForward] {
+            XCTAssertFalse(controller.isAvailable(action), action.rawValue)
+            controller.perform(action)
+        }
+        XCTAssertEqual(controller.session.list.photos, before, "nothing deleted")
+        XCTAssertEqual(controller.session.list.current, current, "nothing picked")
+        for action in [ShortcutAction.undo, .toggleZoom, .zoomToFocus, .exit, .compare] {
+            XCTAssertTrue(controller.isAvailable(action), action.rawValue)
+        }
+    }
+
+    func testTheTrashButtonDeletesItsOwnPhoto() async {
+        await compareAll()
+        let second = controller.comparisonView.photo(inSlot: 1)
+        XCTAssertNotNil(second)
+        // The error screen with its name counts as visible: it is what a deletion would hit.
+        await spin { self.controller.comparedVisible.contains(1) }
+        controller.comparisonView.onCommand(.slotAction(.trash, slot: 1, photo: second))
+        XCTAssertFalse(controller.session.list.photos.contains(second!))
+        await spin { !self.controller.session.hasPendingIO }
+    }
 }
