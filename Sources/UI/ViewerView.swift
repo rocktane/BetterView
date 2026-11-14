@@ -9,14 +9,23 @@ enum ViewerCommand {
     /// A click that did not move the window, while `opensOnClick`.
     case clicked
     case zoomChanged
-    /// In the comparison: this slot takes the focus.
-    case selectSlot(Int)
+    /// In the comparison: a button of this slot, showing this photo, was pressed.
+    case slotAction(ComparisonAction, slot: Int, photo: PhotoKey?)
+}
+
+/// The buttons over a photo of the comparison: the only way to keep or delete there.
+enum ComparisonAction: Sendable {
+    case trash, keep
 }
 
 /// Shows one IOSurface in a layer and handles geometry and input. No app logic here.
 final class ViewerView: NSView {
     var onCommand: (ViewerCommand) -> Void = { _ in }
-    var shortcuts = ShortcutMap.defaults
+    /// The right-click menu for the photo shown, built for each click.
+    var contextMenu: () -> NSMenu? = { nil }
+    var shortcuts = ShortcutMap.defaults {
+        didSet { updateInfoButtonTip() }
+    }
     /// Nothing is shown: a click asks to open something.
     var opensOnClick = false
 
@@ -36,23 +45,48 @@ final class ViewerView: NSView {
     private let host = NSView()
     private let imageLayer = CALayer()
     /// A thin ring: it marks where the camera aimed, nothing about sharpness.
-    private let markerLayer = CALayer()
-    private static let markerSize: CGFloat = 22
+    private let markerLayer = CALayer.focusMarker()
     private let messageLabel = ViewerView.label(size: 15, weight: .medium)
     private let badgeLabel = ViewerView.label(size: 11, weight: .semibold)
     /// The zoom level, shown for as long as the view is zoomed, pointer on the photo or not.
     private let zoomPanel = ViewerView.panel()
-    private let zoomLabel = ViewerView.label(size: 13, weight: .semibold)
+    /// The name's size and weight too, with fixed-width digits.
+    private let zoomLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private let infoPanel = ViewerView.panel()
-    private let infoNameLabel = ViewerView.label(size: 15, weight: .semibold)
+    /// The name sets the size of the name, the position and the zoom level.
+    private static let nameSize: CGFloat = 15
+    private let infoNameLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private let infoSettingsLabel = ViewerView.label(size: 13, weight: .regular)
     private let infoDateLabel = ViewerView.label(size: 13, weight: .regular)
     private let positionPanel = ViewerView.panel()
-    private let positionLabel = ViewerView.label(size: 17, weight: .semibold)
+    /// Set in the name's font: same size, same weight.
+    private let positionLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private var hoverTracking: NSTrackingArea?
     /// Everything written over the photo only shows while the pointer is on it.
     private(set) var isHovered = false
     private var hasInfo = false
+    /// The user hid the information: a discreet « i » on hover brings it back.
+    private var offersInfo = false
+    private let infoButton: NSButton = {
+        let image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Afficher les informations")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        let button = NSButton(image: image ?? NSImage(), target: nil, action: nil)
+        button.isBordered = false
+        // Layer-backed like the panels: a fade sets its alpha at once and animates the layer.
+        button.wantsLayer = true
+        button.contentTintColor = NSColor(white: 1, alpha: 0.75)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.refusesFirstResponder = true
+        button.isHidden = true
+        button.shadow = {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor(white: 0, alpha: 0.8)
+            shadow.shadowBlurRadius = 3
+            shadow.shadowOffset = .zero
+            return shadow
+        }()
+        return button
+    }()
     private let bannerLabel = ViewerView.label(size: 13, weight: .semibold)
     private let lockBadge: NSImageView = {
         let image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Photo protégée")?
@@ -113,20 +147,10 @@ final class ViewerView: NSView {
         imageLayer.minificationFilter = .linear
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.addSublayer(imageLayer)
-        markerLayer.bounds = CGRect(x: 0, y: 0, width: Self.markerSize, height: Self.markerSize)
-        markerLayer.cornerRadius = Self.markerSize / 2
-        markerLayer.borderWidth = 1.5
-        markerLayer.borderColor = NSColor(white: 1, alpha: 0.75).cgColor
-        markerLayer.shadowColor = NSColor.black.cgColor
-        markerLayer.shadowOpacity = 0.8
-        markerLayer.shadowRadius = 1.5
-        markerLayer.shadowOffset = .zero
-        markerLayer.isHidden = true
-        markerLayer.actions = ["position": NSNull(), "hidden": NSNull()]
         root.addSublayer(markerLayer)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
-        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: Self.nameSize, weight: .semibold)
         zoomLabel.isHidden = false
         zoomPanel.addSubview(zoomLabel)
         let badges = NSStackView(views: [badgeLabel, lockBadge, zoomPanel])
@@ -139,8 +163,13 @@ final class ViewerView: NSView {
         bannerLabel.layer?.cornerRadius = 4
         for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
         addSubview(infoPanel)
+        infoButton.target = self
+        infoButton.action = #selector(infoButtonPressed)
+        addSubview(infoButton)
+        updateInfoButtonTip()
         addSubview(positionPanel)
         positionLabel.isHidden = false
+        positionLabel.font = infoNameLabel.font
         positionLabel.setContentCompressionResistancePriority(.dragThatCannotResizeWindow - 5, for: .horizontal)
         positionPanel.addSubview(positionLabel)
         for label in [infoNameLabel, infoSettingsLabel, infoDateLabel] {
@@ -163,6 +192,8 @@ final class ViewerView: NSView {
             bannerLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             bannerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 44),
             infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            infoButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            infoButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
             positionPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -236,15 +267,26 @@ final class ViewerView: NSView {
         applyOverlayVisibility()
     }
 
-    func hideInfo() {
+    /// `offeringToShow`: the user hid it, and the « i » on hover can bring it back. Not when
+    /// there is simply nothing to tell.
+    func hideInfo(offeringToShow: Bool = false) {
         hasInfo = false
+        offersInfo = offeringToShow
         applyOverlayVisibility()
+    }
+
+    @objc private func infoButtonPressed() { onCommand(.perform(.toggleInfo, repeating: false)) }
+
+    private func updateInfoButtonTip() {
+        let key = shortcuts.keys(for: .toggleInfo).first?.label
+        infoButton.toolTip = key.map { "Afficher les informations (\($0))" } ?? "Afficher les informations"
     }
 
     private func applyOverlayVisibility() {
         let showInfo = hasInfo && isHovered
         infoPanel.fade(visible: showInfo)
         positionPanel.fade(visible: showInfo)
+        infoButton.fade(visible: !hasInfo && offersInfo && isHovered)
         updateBadge()
     }
 
@@ -354,27 +396,54 @@ final class ViewerView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let hoverTracking { removeTrackingArea(hoverTracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        // Moves too: whatever went wrong before, moving the pointer on the photo shows it all.
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
         addTrackingArea(area)
         hoverTracking = area
         // The window can change shape under a pointer that does not move, which sends no event.
         refreshHover()
     }
 
-    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseEntered(with event: NSEvent) { pointerMoved(toWindowPoint: event.locationInWindow) }
+    override func mouseMoved(with event: NSEvent) { pointerMoved(toWindowPoint: event.locationInWindow) }
     override func mouseExited(with event: NSEvent) { refreshHover() }
 
+    /// Where the pointer really is, in window coordinates, or nil when it is not on this
+    /// window or another window is in front of it there. Replaced by tests.
+    lazy var pointerInWindow: () -> CGPoint? = { [weak self] in
+        guard let window = self?.window,
+              NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
+        else { return nil }
+        return window.mouseLocationOutsideOfEventStream
+    }
+
     /// Asks where the pointer really is. Over another window in front, it is not on the photo.
+    /// Applied again even when nothing seems to have changed: the overlays may have drifted.
     func refreshHover() {
-        guard let window else { return }
-        let inWindow = window.mouseLocationOutsideOfEventStream
-        let inside = bounds.contains(convert(inWindow, from: nil))
-            && NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
-        guard inside != isHovered else { return }
+        guard window != nil else { return }
+        setHovered(pointerInWindow().map { bounds.contains(convert($0, from: nil)) } ?? false)
+    }
+
+    /// A pointer event of this window: the pointer is there, whatever another window's
+    /// number said before (a tooltip, the app switcher, a system banner).
+    func pointerMoved(toWindowPoint point: CGPoint) {
+        setHovered(bounds.contains(convert(point, from: nil)))
+    }
+
+    /// Idempotent: a few property reads when everything is already as it should be.
+    private func setHovered(_ inside: Bool) {
         isHovered = inside
         applyOverlayVisibility()
         onCommand(.hoverChanged(inside))
     }
+
+    /// Name, position and zoom level: for the tests.
+    var textFonts: (name: NSFont?, position: NSFont?, zoom: NSFont?) { (infoNameLabel.font, positionLabel.font, zoomLabel.font) }
+
+    /// What the pointer shows, as it really is on screen: for the tests.
+    var offersToShowInfo: Bool { !infoButton.isHidden && infoButton.alphaValue == 1 }
+
+    var overlaysShown: Bool { !infoPanel.isHidden && infoPanel.alphaValue == 1 && !positionPanel.isHidden && positionPanel.alphaValue == 1 }
 
     // MARK: Zoom and pan
 
@@ -438,6 +507,18 @@ final class ViewerView: NSView {
         applyZoomChange()
     }
 
+    /// Back to the fit without reporting it: the caller is already displaying another photo
+    /// and plans after that.
+    func resetZoom() {
+        guard zoom != nil else { return }
+        zoom = nil
+        movedByUser = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateGeometry()
+        CATransaction.commit()
+    }
+
     private func imagePoint(at point: CGPoint) -> CGPoint {
         let rect = imageLayer.frame
         guard rect.width > 0, rect.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
@@ -498,6 +579,11 @@ final class ViewerView: NSView {
     /// nothing to show, a click asks to open something.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        // ⌃-click is a right-click: it must neither zoom nor move the window.
+        if event.modifierFlags.contains(.control) {
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return
+        }
         guard event.clickCount == 1, let window else { return }
         let start = event.locationInWindow
         var moved = false
@@ -519,6 +605,10 @@ final class ViewerView: NSView {
             }
             pan(dx: next.deltaX, dy: next.deltaY)
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        opensOnClick || shownSurface == nil ? nil : contextMenu()
     }
 
     private func clicked(at point: CGPoint) {
@@ -570,17 +660,50 @@ final class ViewerView: NSView {
     }
 }
 
+/// The last fade asked of each view: an older fade-out that ends late must not hide a view
+/// shown again since, whatever its alpha reads at that moment.
+private nonisolated(unsafe) var fadeGenerationKey: UInt8 = 0
+
+extension CALayer {
+    /// The AF mark, in the viewer as in the comparison: a thin ring where the camera aimed,
+    /// saying nothing about sharpness. Hidden until placed.
+    static func focusMarker() -> CALayer {
+        let size: CGFloat = 22
+        let layer = CALayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        layer.cornerRadius = size / 2
+        layer.borderWidth = 1.5
+        layer.borderColor = NSColor(white: 1, alpha: 0.75).cgColor
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.8
+        layer.shadowRadius = 1.5
+        layer.shadowOffset = .zero
+        layer.isHidden = true
+        layer.actions = ["position": NSNull(), "hidden": NSNull()]
+        return layer
+    }
+}
+
 extension NSView {
+    private var fadeGeneration: Int {
+        get { objc_getAssociatedObject(self, &fadeGenerationKey) as? Int ?? 0 }
+        set { objc_setAssociatedObject(self, &fadeGenerationKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
     /// Overlays shown on hover: they appear almost at once, and leave a little more slowly.
     /// A view that has faded out is hidden, so it takes no clicks.
     func fade(visible: Bool) {
         let target: CGFloat = visible ? 1 : 0
+        // Showing always cancels a pending hide, even when the view already looks right.
+        if visible { fadeGeneration += 1 }
         // The animator sets the value at once: a view already headed there is left alone.
         if visible ? (!isHidden && alphaValue == 1) : (isHidden || alphaValue == 0) { return }
         if visible, isHidden {
             alphaValue = 0
             isHidden = false
         }
+        if !visible { fadeGeneration += 1 }
+        let generation = fadeGeneration
         NSAnimationContext.runAnimationGroup { context in
             context.duration = visible ? 0.08 : 0.22
             context.timingFunction = CAMediaTimingFunction(name: visible ? .easeOut : .easeInEaseOut)
@@ -588,8 +711,9 @@ extension NSView {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 // Shown again meanwhile: it stays.
-                guard let self, !visible, self.alphaValue == 0 else { return }
+                guard let self, !visible, self.fadeGeneration == generation else { return }
                 self.isHidden = true
+                self.alphaValue = 0
             }
         }
     }

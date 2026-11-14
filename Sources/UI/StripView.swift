@@ -26,8 +26,12 @@ final class StripView: NSView {
     }
 
     private(set) var cells: [StripCell] = []
+    /// Some photo is checked: every thumbnail shows a ring to check it with one click.
+    private(set) var showsSelectionRings = false
     /// The modifiers held: Shift and Command select rather than go to the photo.
     var onClick: (PhotoKey, NSEvent.ModifierFlags) -> Void = { _, _ in }
+    /// The right-click menu for a thumbnail.
+    var onMenu: (PhotoKey) -> NSMenu? = { _ in nil }
     var onHoverChanged: () -> Void = {}
     /// Set for a view that scrolls: called with how many photos the swipe carried past the
     /// middle, forward positive. The strip expects to be given them centred.
@@ -35,8 +39,20 @@ final class StripView: NSView {
     /// Set for a view that moves its window: called with the pointer's travel since the press,
     /// in screen points, then with nil when the drag ends.
     var onDrag: ((CGPoint?) -> Void)?
+    /// Set for a view whose window can be stretched: called with the sides pressed (two at a
+    /// corner) and the pointer's travel since the press, in screen points, then with nil.
+    var onResize: (((sides: StripResize.Sides, travel: CGPoint)?) -> Void)?
+    /// The pointer on screen. Read rather than taken from the event: the window moves under it.
+    var pointerLocation: () -> CGPoint = { NSEvent.mouseLocation }
 
-    private let metrics: Metrics
+    /// Changed by a strip stretched taller or shorter: the redraw comes with the new frame.
+    var metrics: Metrics {
+        didSet {
+            // A swipe in progress keeps its place among photos of the new size.
+            if oldValue.height > 0 { scrollShift *= metrics.height / oldValue.height }
+            needsLayout = true
+        }
+    }
     private let host = NSView()
     private let content = CALayer()
     private let fade = CAGradientLayer()
@@ -49,6 +65,10 @@ final class StripView: NSView {
     private var groupTips: [String] = []
     private var pressStart: CGPoint?
     private var dragging = false
+    /// The side whose grip the press started on, if any: that press stretches the strip.
+    private var pressSides: StripResize.Sides?
+    private var resizing = false
+    private var resizeCursorSides: StripResize.Sides?
     private var hoverTracking: NSTrackingArea?
     /// How far a swipe has carried the photos from their place, in points, right positive.
     private var scrollShift: CGFloat = 0
@@ -74,6 +94,22 @@ final class StripView: NSView {
         let size = min(2 * reach + 1, count)
         let lower = min(max(index - reach, 0), count - size)
         return lower...(lower + size - 1)
+    }
+
+    /// How many photos each side of the middle one fill `width` even if they are all portrait,
+    /// plus one cut by the edge.
+    static func reach(width: CGFloat, metrics: Metrics) -> Int {
+        let narrowest = (metrics.height * 2 / 3).rounded() + metrics.gap
+        return Int((width / 2 / narrowest).rounded(.up)) + 1
+    }
+
+    /// For tests: the mark each drawn cell shows in its corner.
+    enum CornerMark: Equatable { case none, ring, check }
+    var cornerMarks: [CornerMark] {
+        cells.indices.map { at in
+            guard at < checks.count, !checks[at].isHidden else { return .none }
+            return cells[at].selected ? .check : .ring
+        }
     }
 
     /// For tests: where each cell is drawn, and the outer edge of the group outlines.
@@ -123,6 +159,40 @@ final class StripView: NSView {
         return context.makeImage()
     }()
 
+    /// An empty ring in the check's place, shown on every thumbnail once a photo is checked:
+    /// white, on a darkened disc and with the same shadow, so that it reads on a light photo
+    /// as on a dark one.
+    private static let ringImage: CGImage? = {
+        let side = checkSize + 2 * checkMargin
+        let pixels = Int(side * 2)
+        guard let context = CGContext(
+            data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.scaleBy(x: 2, y: 2)
+        context.translateBy(x: checkMargin, y: checkMargin)
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -1), blur: 2.4, color: NSColor(white: 0, alpha: 0.45).cgColor)
+        context.setFillColor(NSColor(white: 0, alpha: 0.3).cgColor)
+        context.fillEllipse(in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        context.restoreGState()
+        context.setStrokeColor(NSColor.white.cgColor)
+        context.setLineWidth(1.5)
+        context.strokeEllipse(in: CGRect(x: 0.75, y: 0.75, width: 14.5, height: 14.5))
+        return context.makeImage()
+    }()
+
+    /// Where the check or the ring sits in a thumbnail of `size`: inside the white border, in
+    /// the top right corner.
+    private func discFrame(inCellOf size: CGSize) -> CGRect {
+        let side = min(Self.checkSize, metrics.height * 0.4)
+        let inset: CGFloat = 4
+        return CGRect(x: size.width - side - inset, y: size.height - side - inset, width: side, height: side)
+    }
+
+    /// How far around a ring a click still checks: the ring is small.
+    private static let ringReach: CGFloat = 5
+
     init(metrics: Metrics) {
         self.metrics = metrics
         super.init(frame: .zero)
@@ -156,8 +226,9 @@ final class StripView: NSView {
     /// `anchor` stays in the middle, so that moving along slides the strip under a fixed
     /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
     /// outlined as one, and its tip shows when the pointer rests on it.
-    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
+    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = [], selecting: Bool = false) {
         let previous = (cells: self.cells, anchor: self.anchor)
+        showsSelectionRings = selecting
         self.cells = cells
         self.anchor = anchor
         cutAtStart = cut.start
@@ -168,6 +239,18 @@ final class StripView: NSView {
         redraw()
         updateTips()
         if !scrollGestureActive { settle() }
+        onContentChanged()
+    }
+
+    /// Called after each update: the width the row needs may have changed.
+    var onContentChanged: () -> Void = {}
+
+    /// The width the whole row needs, margins included, with thumbnails `height` points tall,
+    /// when it holds every photo of the list; nil when more photos lie beyond an end.
+    func fittingWidth(thumbnailHeight height: CGFloat) -> CGFloat? {
+        guard !cutAtStart, !cutAtEnd, !cells.isEmpty else { return nil }
+        let widths = cells.reduce(0) { $0 + width(of: $1, height: height) }
+        return widths + metrics.gap * CGFloat(cells.count - 1) + 2 * inset
     }
 
     /// A new photo in the middle first leaves the photos where they were, the shift rebased
@@ -205,9 +288,11 @@ final class StripView: NSView {
 
     private func centre(of index: Int) -> CGFloat { centres(of: cells)[index] }
 
-    private func width(of cell: StripCell) -> CGFloat {
-        guard let image = cell.image, image.width > 0, image.height > 0 else { return (metrics.height * Self.defaultAspect).rounded() }
-        return (metrics.height * CGFloat(image.width) / CGFloat(image.height)).rounded()
+    private func width(of cell: StripCell) -> CGFloat { width(of: cell, height: metrics.height) }
+
+    private func width(of cell: StripCell, height: CGFloat) -> CGFloat {
+        guard let image = cell.image, image.width > 0, image.height > 0 else { return (height * Self.defaultAspect).rounded() }
+        return (height * CGFloat(image.width) / CGFloat(image.height)).rounded()
     }
 
     private func layoutFrames() {
@@ -240,6 +325,9 @@ final class StripView: NSView {
 
     private func redraw() {
         layoutFrames()
+        // The photos may have moved under a pointer that did not: the ring follows what is
+        // under it. Nothing to find when the pointer is elsewhere.
+        hoveredCell = hoverCell()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         content.frame = host.bounds
@@ -290,16 +378,7 @@ final class StripView: NSView {
                 layer.borderWidth = 2
                 layer.borderColor = NSColor.white.cgColor
             }
-            let check = checks[position]
-            if check.isHidden == cell.selected { check.isHidden = !cell.selected }
-            if cell.selected {
-                // Inside the white border, in the top right corner.
-                let size = min(Self.checkSize, metrics.height * 0.4)
-                let inset: CGFloat = 4
-                let disc = CGRect(x: frames[position].width - size - inset, y: frames[position].height - size - inset, width: size, height: size)
-                let margin = Self.checkMargin * size / Self.checkSize
-                check.frame = disc.insetBy(dx: -margin, dy: -margin)
-            }
+            updateMark(at: position)
         }
         // One rounded outline around each group, concentric with the thumbnails' corners.
         let path = CGMutablePath()
@@ -329,6 +408,17 @@ final class StripView: NSView {
 
     override func layout() {
         super.layout()
+        redraw()
+        updateTips()
+    }
+
+    /// Redrawn in the same transaction as the new size: a strip being stretched keeps the
+    /// current photo in its middle at every step, with nothing stretched or left blank.
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        guard changed else { return }
+        host.frame = bounds
         redraw()
         updateTips()
     }
@@ -410,40 +500,236 @@ final class StripView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let hoverTracking { removeTrackingArea(hoverTracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways], owner: self)
         addTrackingArea(area)
         hoverTracking = area
     }
 
-    override func mouseEntered(with event: NSEvent) { onHoverChanged() }
-    override func mouseExited(with event: NSEvent) { onHoverChanged() }
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged()
+        let point = convert(event.locationInWindow, from: nil)
+        updateResizeCursor(at: point)
+        setHover(screen: screenPoint(point))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged()
+        if !resizing { setResizeCursor(nil) }
+        setHover(screen: nil)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        updateResizeCursor(at: point)
+        setHover(screen: screenPoint(point))
+    }
+
+    // MARK: Marks
+
+    /// Set for the floating strip: the thumbnail under the pointer shows an empty ring, so that
+    /// one click on it checks the photo even when nothing is checked yet.
+    var showsRingOnHover = false
+    /// The pointer over the strip, on screen, nil once it has left: no pointer, nothing to
+    /// look up. On screen rather than in the view, which moves and stretches under it.
+    private var hoverScreenPoint: CGPoint?
+    private var hoveredCell: Int?
+
+    private func screenPoint(_ local: CGPoint) -> CGPoint {
+        window.map { $0.convertPoint(toScreen: convert(local, to: nil)) } ?? local
+    }
+
+    private func localPoint(_ screen: CGPoint) -> CGPoint {
+        window.map { convert($0.convertPoint(fromScreen: screen), from: nil) } ?? screen
+    }
+
+    /// The thumbnail under the pointer, as the strip is now. None while the strip itself is
+    /// moved or stretched: the pointer is then on a grip or carrying the strip.
+    private func hoverCell() -> Int? {
+        guard showsRingOnHover, !dragging, !resizing, let screen = hoverScreenPoint else { return nil }
+        let point = localPoint(screen)
+        return bounds.contains(point) ? cell(at: point) : nil
+    }
+
+    private func setHover(screen: CGPoint?) {
+        hoverScreenPoint = screen
+        refreshHover()
+    }
+
+    /// Only the two thumbnails concerned change, and only when the pointer changes thumbnail.
+    /// Also called when the strip moved under a still pointer, which reports nothing.
+    func refreshHover() {
+        let now = hoverCell()
+        guard now != hoveredCell else { return }
+        let before = hoveredCell
+        hoveredCell = now
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for at in [before, now].compactMap({ $0 }) { updateMark(at: at) }
+        CATransaction.commit()
+    }
+
+    /// After a move or a stretch: the pointer as it is now, if it is still over the strip.
+    private func hoverAfterGesture() {
+        let screen = pointerLocation()
+        setHover(screen: bounds.contains(localPoint(screen)) ? screen : nil)
+    }
+
+    /// The strip hid under a pointer that will not report leaving it.
+    func clearHover() { setHover(screen: nil) }
+
+    /// A check on the photos checked; while any is, an empty ring on the others; and one on the
+    /// thumbnail under the pointer.
+    private func updateMark(at position: Int) {
+        guard cells.indices.contains(position), checks.indices.contains(position), frames.indices.contains(position),
+              !images[position].isHidden else { return }
+        let cell = cells[position]
+        let check = checks[position]
+        let marked = cell.selected || showsSelectionRings || position == hoveredCell
+        if check.isHidden == marked { check.isHidden = !marked }
+        guard marked else { return }
+        check.contents = cell.selected ? Self.checkImage : Self.ringImage
+        let disc = discFrame(inCellOf: frames[position].size)
+        let margin = Self.checkMargin * disc.width / Self.checkSize
+        check.frame = disc.insetBy(dx: -margin, dy: -margin)
+    }
+
+    /// The sides whose grips hold `point`: a thin band inside each side, over the faded edges
+    /// and the margins around the photos. Near a corner, both sides it joins.
+    private func gripSides(at point: CGPoint) -> StripResize.Sides? {
+        guard onResize != nil, bounds.contains(point) || point.x == bounds.maxX || point.y == bounds.maxY else { return nil }
+        let grip = StripResize.grip, corner = Self.cornerGrip
+        let nearX = point.x < grip.width || point.x > bounds.width - grip.width
+        let nearY = point.y < grip.height || point.y > bounds.height - grip.height
+        guard nearX || nearY else { return nil }
+        var sides: StripResize.Sides = []
+        if nearX || point.x < corner || point.x > bounds.width - corner {
+            sides.insert(point.x < bounds.midX ? .left : .right)
+        }
+        if nearY || point.y < corner || point.y > bounds.height - corner {
+            sides.insert(point.y < bounds.midY ? .bottom : .top)
+        }
+        return sides
+    }
+
+    /// How far from a corner a side's grip takes the other side along: the rounded corner.
+    private static let cornerGrip: CGFloat = 14
+
+    private func updateResizeCursor(at point: CGPoint) {
+        guard !resizing, pressStart == nil else { return }
+        setResizeCursor(gripSides(at: point))
+    }
+
+    /// Set by hand: the strip's panel never becomes key, so cursor rects would not apply.
+    private func setResizeCursor(_ sides: StripResize.Sides?) {
+        guard sides != resizeCursorSides else { return }
+        resizeCursorSides = sides
+        guard let sides else {
+            NSCursor.arrow.set()
+            return
+        }
+        if #available(macOS 15, *) {
+            let position: NSCursor.FrameResizePosition
+            switch (sides.contains(.left), sides.contains(.right), sides.contains(.bottom), sides.contains(.top)) {
+            case (true, _, true, _): position = .bottomLeft
+            case (true, _, _, true): position = .topLeft
+            case (_, true, true, _): position = .bottomRight
+            case (_, true, _, true): position = .topRight
+            case (true, _, _, _): position = .left
+            case (_, true, _, _): position = .right
+            case (_, _, true, _): position = .bottom
+            default: position = .top
+            }
+            NSCursor.frameResize(position: position, directions: .all).set()
+        } else if sides.isDisjoint(with: [.left, .right]) {
+            NSCursor.resizeUpDown.set()
+        } else {
+            NSCursor.resizeLeftRight.set()
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
-        pressStart = NSEvent.mouseLocation
         dragging = false
+        resizing = false
+        // ⌃-click is a right-click: no selection, no move, no stretch.
+        if event.modifierFlags.contains(.control) {
+            pressStart = nil
+            pressSides = nil
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return
+        }
+        pressStart = pointerLocation()
+        pressSides = gripSides(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        cell(at: convert(event.locationInWindow, from: nil)).flatMap { onMenu(cells[$0].photo) }
+    }
+
+    private func cell(at point: CGPoint) -> Int? {
+        guard point.x >= 0, point.x <= bounds.width else { return nil }
+        return frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) })
     }
 
     /// Dragging from anywhere, thumbnails included, moves the strip: the thumbnails cover most
     /// of it, and a press that does not travel is still a click.
     override func mouseDragged(with event: NSEvent) {
-        guard let onDrag, let pressStart else { return }
-        let now = NSEvent.mouseLocation
+        guard let pressStart else { return }
+        let now = pointerLocation()
         let travel = CGPoint(x: now.x - pressStart.x, y: now.y - pressStart.y)
+        // From a grip, the press stretches the strip instead of moving it; it still clicks
+        // if it does not travel.
+        if let pressSides, let onResize {
+            if !resizing, hypot(travel.x, travel.y) < 4 { return }
+            if !resizing {
+                resizing = true
+                refreshHover()
+            }
+            onResize((pressSides, travel))
+            return
+        }
+        guard let onDrag else { return }
         if !dragging, hypot(travel.x, travel.y) < 4 { return }
-        dragging = true
+        if !dragging {
+            dragging = true
+            refreshHover()
+        }
         onDrag(travel)
     }
 
+    /// Whether `point` falls on the ring or the check of cell `at`, a little around it included.
+    private func ringHit(_ at: Int, _ point: CGPoint) -> Bool {
+        // A click is under the pointer: with rings on hover, the thumbnail clicked shows one.
+        guard frames.indices.contains(at), showsSelectionRings || cells[at].selected || showsRingOnHover else { return false }
+        let disc = discFrame(inCellOf: frames[at].size).offsetBy(dx: frames[at].minX, dy: frames[at].minY)
+        return disc.insetBy(dx: -Self.ringReach, dy: -Self.ringReach).contains(point)
+    }
+
     override func mouseUp(with event: NSEvent) {
-        defer { pressStart = nil }
+        guard pressStart != nil else { return }
+        defer {
+            pressStart = nil
+            pressSides = nil
+        }
+        if resizing {
+            resizing = false
+            onResize?(nil)
+            // The strip changed under the pointer: the ring comes back where the pointer is.
+            hoverAfterGesture()
+            setResizeCursor(gripSides(at: convert(event.locationInWindow, from: nil)))
+            return
+        }
         if dragging {
             dragging = false
             onDrag?(nil)
+            hoverAfterGesture()
             return
         }
         let point = convert(event.locationInWindow, from: nil)
-        if let at = frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) }), point.x >= 0, point.x <= bounds.width {
-            onClick(cells[at].photo, event.modifierFlags.intersection([.shift, .command]))
+        if let at = cell(at: point) {
+            var modifiers = event.modifierFlags.intersection([.shift, .command])
+            // On a ring or a check, a plain click checks or unchecks, as Command does.
+            if modifiers.isEmpty, ringHit(at, point) { modifiers = .command }
+            onClick(cells[at].photo, modifiers)
         }
     }
 }

@@ -363,14 +363,15 @@ final class ComparisonShortcutTests: XCTestCase {
         let map = ShortcutMap.defaults
         XCTAssertEqual(map.action(for: .character("c")), .compare)
         XCTAssertEqual(map.action(for: .character("b")), .toggleStrip)
-        XCTAssertEqual(map.action(for: .code(36)), .keepSelected)
+        XCTAssertNil(map.action(for: .code(36)), "keeping a photo is mouse only now")
     }
 
-    func testKeepingNeverGetsAPlainMenuKey() {
-        XCTAssertNil(ShortcutMap.defaults.menuBinding(for: .keepSelected), "Return in the settings window must delete nothing")
-        var map = ShortcutMap.defaults
-        map.assign(.code(36, modifiers: .command), to: .keepSelected)
-        XCTAssertEqual(map.menuBinding(for: .keepSelected), .code(36, modifiers: .command))
+    /// A key stored for the former « garder la photo choisie » is dropped, the rest stays.
+    func testTheFormerKeepCommandIsIgnoredInStoredKeys() throws {
+        let stored = try JSONEncoder().encode(["keepSelected": [KeyBinding.code(36)], "delete": [KeyBinding.character("d")]])
+        let map = ShortcutMap.decoded(from: stored)
+        XCTAssertNil(map.action(for: .code(36)))
+        XCTAssertEqual(map.keys(for: .delete), [.character("d")])
     }
 }
 
@@ -527,5 +528,258 @@ final class StripLayoutTests: XCTestCase {
         let short = try strip(count: 5, anchor: 0, cut: (false, false))
         let frames = short.cellFrames
         XCTAssertEqual(frames.first!.minX - 0, 820 - frames.last!.maxX, accuracy: 1)
+    }
+}
+
+@MainActor
+final class ComparisonHoverTests: XCTestCase {
+    private func makeView(pointer: @escaping () -> CGPoint?) -> ComparisonView {
+        let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+        view.pointerInWindow = pointer
+        return view
+    }
+
+    func testTheButtonsFollowThePointerNotTheFocus() {
+        var pointer: CGPoint?
+        let view = makeView { pointer }
+        view.arrange(layout: [0, 1, 2, 3], photos: photos("a", "b", "c", "d"))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.slotsWithActions, [], "nothing until the pointer is on a photo")
+        pointer = view.slotCenter(2)
+        view.refreshHover()
+        XCTAssertEqual(view.slotsWithActions, [2], "the hovered photo, not the focused one")
+        view.hover(atWindowPoint: view.slotCenter(1))
+        XCTAssertEqual(view.slotsWithActions, [1])
+        view.hover(atWindowPoint: nil)
+        XCTAssertEqual(view.slotsWithActions, [])
+    }
+
+    func testTheGridChangingUnderAStillPointerIsReadAgain() {
+        var pointer: CGPoint?
+        let view = makeView { pointer }
+        view.arrange(layout: [0, 1, 2, 3], photos: photos("a", "b", "c", "d"))
+        view.layoutSubtreeIfNeeded()
+        // Bottom left in the 2 x 2 grid: the third photo.
+        pointer = view.slotCenter(2)
+        view.refreshHover()
+        XCTAssertEqual(view.slotsWithActions, [2])
+        // Two photos left, side by side: the same point is now on the first one.
+        view.arrange(layout: [0, 1], photos: [photo("a"), photo("b"), nil, nil])
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(view.slotsWithActions, [0], "read again from where the pointer really is")
+    }
+
+    func testAnEmptiedSlotLosesItsButtons() {
+        var pointer: CGPoint?
+        let view = makeView { pointer }
+        view.arrange(layout: [0, 1, 2, 3], photos: photos("a", "b", "c", "d"))
+        view.layoutSubtreeIfNeeded()
+        pointer = view.slotCenter(3)
+        view.refreshHover()
+        XCTAssertEqual(view.slotsWithActions, [3])
+        view.arrange(layout: [0, 1, 2, 3], photos: [photo("a"), photo("b"), photo("c"), nil])
+        XCTAssertEqual(view.slotsWithActions, [], "the cell stays, empty, without buttons")
+    }
+}
+
+final class ComparisonFocusGeometryTests: XCTestCase {
+    func testTheCommonOffsetIsTheSameDistanceEverywhere() {
+        let native = CGSize(width: 6000, height: 4000)
+        let a = ComparisonGeometry.center(anchor: CGPoint(x: 0.2, y: 0.7), offset: CGVector(dx: 600, dy: -400), native: native)
+        let b = ComparisonGeometry.center(anchor: CGPoint(x: 0.6, y: 0.3), offset: CGVector(dx: 600, dy: -400), native: native)
+        XCTAssertEqual(a.x, 0.3, accuracy: 1e-9)
+        XCTAssertEqual(a.y, 0.6, accuracy: 1e-9)
+        XCTAssertEqual(b.x, 0.7, accuracy: 1e-9)
+        XCTAssertEqual(b.y, 0.2, accuracy: 1e-9)
+    }
+
+    /// 6000 px at 100 % on a 2x screen: 3000 pt wide, a 600 pt slot shows a tenth of it.
+    func testOnePhotoAtItsEdgeDoesNotStopTheOthers() {
+        let native = CGSize(width: 6000, height: 4000)
+        let slot = CGSize(width: 600, height: 400)
+        let photos: [(anchor: CGPoint, native: CGSize, slot: CGSize)] = [
+            (CGPoint(x: 0.9, y: 0.5), native, slot),
+            (CGPoint(x: 0.3, y: 0.5), native, slot),
+        ]
+        // Each shows a tenth around its centre, so a centre stays within 0.1...0.9. Rightwards,
+        // the first can go nowhere and the second by 0.6 of its width: the second wins.
+        let held = ComparisonGeometry.clampedOffset(CGVector(dx: 10_000, dy: 0), photos: photos, zoom: 1, pointsPerPixel: 0.5)
+        XCTAssertEqual(held.dx, 0.6 * 6000, accuracy: 1e-6)
+        // Leftwards, the first goes furthest; past every edge, nothing more is kept.
+        let left = ComparisonGeometry.clampedOffset(CGVector(dx: -10_000, dy: 0), photos: photos, zoom: 1, pointsPerPixel: 0.5)
+        XCTAssertEqual(left.dx, (0.1 - 0.9) * 6000, accuracy: 1e-6)
+    }
+}
+
+final class ComparisonSharedCenterTests: XCTestCase {
+    /// Z: one centre for all. A photo at its edge stays there for display, the others go on.
+    func testTheSharedCentreIsHeldToWhatOnePhotoCanStillShow() {
+        let slot = CGSize(width: 600, height: 400)
+        let photos: [(image: CGSize, slot: CGSize)] = [
+            (CGSize(width: 3000, height: 2000), slot),
+            (CGSize(width: 1500, height: 1000), slot),
+        ]
+        // The larger one shows a tenth of its width around the centre: 0.1 ... 0.9.
+        let held = ComparisonGeometry.clampedCenter(CGPoint(x: 2, y: -1), photos: photos)
+        XCTAssertEqual(held.x, 0.9, accuracy: 1e-9)
+        XCTAssertEqual(held.y, 0.1, accuracy: 1e-9)
+        XCTAssertEqual(ComparisonGeometry.clampedCenter(CGPoint(x: 0.3, y: 0.6), photos: photos), CGPoint(x: 0.3, y: 0.6))
+    }
+
+    func testFitZoom() {
+        let fit = ComparisonGeometry.fitZoom(slot: CGSize(width: 600, height: 400), native: CGSize(width: 6000, height: 4000), pointsPerPixel: 0.5)
+        XCTAssertEqual(fit ?? 0, 0.2, accuracy: 1e-9)
+        XCTAssertNil(ComparisonGeometry.fitZoom(slot: CGSize(width: 600, height: 400), native: .zero, pointsPerPixel: 0.5))
+    }
+}
+
+@MainActor
+final class ComparisonFocusTests: XCTestCase {
+    private func frame(_ photo: PhotoKey) -> Frame {
+        let surface = PixelFormat.makeSurface(width: 60, height: 40)!
+        return Frame(key: FrameKey(photo: photo, tier: .screen), surface: surface, nativeSize: CGSize(width: 6000, height: 4000))
+    }
+
+    private func focus(x: Int, y: Int) -> CameraFocus {
+        .point(FocusPoint(sensorWidth: 6000, sensorHeight: 4000, x: x, y: y, orientation: 1)!)
+    }
+
+    private func makeView() -> ComparisonView {
+        let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+        view.pointerInWindow = { nil }
+        view.arrange(layout: [0, 1], photos: [photo("a"), photo("b"), nil, nil])
+        view.layoutSubtreeIfNeeded()
+        view.showFrame(frame(photo("a")), slot: 0)
+        view.showFrame(frame(photo("b")), slot: 1)
+        return view
+    }
+
+    func testEachPhotoLooksAtItsOwnAFPosition() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        XCTAssertEqual(view.zoom, 1)
+        view.setFocus(focus(x: 1500, y: 1000), photo: photo("a"), slot: 0)
+        view.setFocus(.manual, photo: photo("b"), slot: 1)
+        let a = try XCTUnwrap(view.shownCenter(slot: 0))
+        XCTAssertEqual(a.x, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(a.y, 0.75, accuracy: 1e-9, "y up: a point in the top quarter")
+        XCTAssertEqual(view.shownCenter(slot: 1), CGPoint(x: 0.5, y: 0.5), "manual focus: the middle")
+        XCTAssertTrue(view.showsMarker(slot: 0))
+        XCTAssertFalse(view.showsMarker(slot: 1), "no ring where the camera did not aim")
+    }
+
+    func testDraggingMovesEveryPhotoByTheSameDistance() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(focus(x: 2400, y: 2000), photo: photo("a"), slot: 0)
+        view.setFocus(focus(x: 3600, y: 2000), photo: photo("b"), slot: 1)
+        let before = (try XCTUnwrap(view.shownCenter(slot: 0)), try XCTUnwrap(view.shownCenter(slot: 1)))
+        view.pan(dx: -60, dy: 0)
+        let after = (try XCTUnwrap(view.shownCenter(slot: 0)), try XCTUnwrap(view.shownCenter(slot: 1)))
+        XCTAssertEqual(after.0.x - before.0.x, after.1.x - before.1.x, accuracy: 1e-9)
+        XCTAssertGreaterThan(after.0.x, before.0.x)
+    }
+
+    func testALatePositionRecentresUnlessThePhotosWereMoved() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(nil, photo: photo("a"), slot: 0)
+        view.setFocus(nil, photo: photo("b"), slot: 1)
+        XCTAssertEqual(view.shownCenter(slot: 0), CGPoint(x: 0.5, y: 0.5), "not read yet: the middle meanwhile")
+        view.setFocus(focus(x: 1500, y: 2000), photo: photo("a"), slot: 0)
+        XCTAssertEqual(try XCTUnwrap(view.shownCenter(slot: 0)).x, 0.25, accuracy: 1e-9)
+        view.pan(dx: -30, dy: 0)
+        let moved = try XCTUnwrap(view.shownCenter(slot: 1))
+        view.setFocus(focus(x: 4500, y: 2000), photo: photo("b"), slot: 1)
+        XCTAssertEqual(view.shownCenter(slot: 1), moved, "the user is looking around: it stays")
+        XCTAssertTrue(view.showsMarker(slot: 1), "the ring still shows where the camera aimed")
+    }
+
+    func testAReplacingPhotoOpensOnItsPositionPlusTheCommonOffset() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("a"), slot: 0)
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("b"), slot: 1)
+        view.pan(dx: -60, dy: 0)
+        let offset = view.focusOffset
+        XCTAssertNotEqual(offset.dx, 0)
+        view.arrange(layout: [0, 1], photos: [photo("a"), photo("c"), nil, nil])
+        view.showFrame(frame(photo("c")), slot: 1)
+        view.setFocus(focus(x: 1500, y: 2000), photo: photo("c"), slot: 1)
+        XCTAssertEqual(try XCTUnwrap(view.shownCenter(slot: 1)).x, 0.25 + offset.dx / 6000, accuracy: 1e-9)
+    }
+
+    /// Zooming out narrows what each photo can show: the offset kept must not come back
+    /// past the edge when zooming in again.
+    func testAPinchOutHoldsTheOffsetToWhatCanStillBeShown() throws {
+        let view = makeView()
+        view.zoomOnFocus()
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("a"), slot: 0)
+        view.setFocus(focus(x: 3000, y: 2000), photo: photo("b"), slot: 1)
+        view.pan(dx: -100_000, dy: 0)
+        let atFull = view.focusOffset.dx
+        XCTAssertGreaterThan(atFull, 0)
+        view.pinch(by: -0.5, atWindowPoint: .zero)
+        XCTAssertEqual(view.zoom, 0.5)
+        let atHalf = view.focusOffset.dx
+        XCTAssertLessThan(atHalf, atFull, "the edge is closer at 50 %")
+        view.pinch(by: 1, atWindowPoint: .zero)
+        XCTAssertEqual(view.zoom, 1)
+        XCTAssertEqual(view.focusOffset.dx, atHalf, "zooming back in does not bring the excess back")
+    }
+
+    /// Photos of different sizes: the fit comes back only once the largest one fits too.
+    func testAPinchFitsOnlyWhenEveryPhotoFits() {
+        let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+        view.pointerInWindow = { nil }
+        view.arrange(layout: [0, 1], photos: [photo("a"), photo("b"), nil, nil])
+        view.layoutSubtreeIfNeeded()
+        view.showFrame(frame(photo("a")), slot: 0)
+        let small = PixelFormat.makeSurface(width: 60, height: 40)!
+        view.showFrame(Frame(key: FrameKey(photo: photo("b"), tier: .screen), surface: small, nativeSize: CGSize(width: 3000, height: 2000)), slot: 1)
+        // Slots of about 595 x 693 pt, 2 px per pt: fits at about 0.2 and 0.4. Spreading the
+        // fingers from the fit starts from the larger: the smaller photo grows, never shrinks.
+        // Pinching in from the fit does nothing.
+        view.pinch(by: -0.05, atWindowPoint: .zero)
+        XCTAssertNil(view.zoom, "a pinch in leaves the fit alone")
+        view.pinch(by: 0, atWindowPoint: .zero)
+        XCTAssertNil(view.zoom)
+        view.pinch(by: 0.05, atWindowPoint: .zero)
+        let largestFit = ComparisonGeometry.fitZoom(slot: CGSize(width: 595.5, height: 693), native: CGSize(width: 3000, height: 2000), pointsPerPixel: 0.5) ?? 0
+        XCTAssertGreaterThan(view.zoom ?? 0, largestFit)
+        view.toggleZoom(atWindowPoint: nil)
+        view.toggleZoom(atWindowPoint: nil)
+        view.pinch(by: -0.65, atWindowPoint: .zero)
+        XCTAssertEqual(view.zoom ?? 0, 0.35, accuracy: 1e-9, "the 6000 px photo is still cropped: still zoomed")
+        view.pinch(by: -0.5, atWindowPoint: .zero)
+        XCTAssertNil(view.zoom, "0.175: both fit now")
+    }
+
+    /// Photos so small that the 8× cap is below their fit: spreading the fingers from the fit
+    /// must neither shrink them nor zoom at all.
+    func testThe8xCapNeverShrinksAPhotoFromTheFit() {
+        for sizes in [[CGSize(width: 6000, height: 4000), CGSize(width: 60, height: 40)],
+                      [CGSize(width: 60, height: 40), CGSize(width: 60, height: 40)]] {
+            let view = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800))
+            view.pointerInWindow = { nil }
+            view.arrange(layout: [0, 1], photos: [photo("a"), photo("b"), nil, nil])
+            view.layoutSubtreeIfNeeded()
+            for (slot, size) in sizes.enumerated() {
+                let surface = PixelFormat.makeSurface(width: 60, height: 40)!
+                view.showFrame(Frame(key: FrameKey(photo: photo(slot == 0 ? "a" : "b"), tier: .screen), surface: surface, nativeSize: size), slot: slot)
+            }
+            view.pinch(by: 0.05, atWindowPoint: .zero)
+            XCTAssertNil(view.zoom, "\(sizes): a 60 px photo fits at about 20×, past the cap")
+        }
+    }
+
+    func testLeavingTheZoomEndsTheAFMode() {
+        let view = makeView()
+        view.zoomOnFocus()
+        XCTAssertTrue(view.followsFocus)
+        view.toggleZoom(atWindowPoint: nil)
+        XCTAssertNil(view.zoom)
+        XCTAssertFalse(view.followsFocus)
+        XCTAssertFalse(view.showsMarker(slot: 0))
     }
 }

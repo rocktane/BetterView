@@ -8,7 +8,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case extendNext, extendPrevious, toggleSelection
     case delete, undo, revealInFinder
     case toggleZoom, zoomToFocus, zoomIn, zoomOut, zoomFit, toggleInfo, toggleStrip, exit
-    case compare, keepSelected
+    case compare
 
     /// Groups of the shortcuts settings, in display order.
     enum Group: String, CaseIterable, Sendable {
@@ -31,7 +31,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     /// One line per command. The raw value is stored with the user's keys: never rename a case.
     var spec: Spec {
         switch self {
-        case .next: Spec(title: "Photo suivante", group: .navigation, keys: [.code(124), .code(125), .code(49)], repeats: true)
+        case .next: Spec(title: "Photo suivante", group: .navigation, keys: [.code(124), .code(125)], repeats: true)
         case .previous: Spec(title: "Photo précédente", group: .navigation, keys: [.code(123), .code(126)], repeats: true)
         case .jumpForward: Spec(title: "Avancer de 10 photos", group: .navigation, keys: [.code(121)], repeats: true)
         case .jumpBackward: Spec(title: "Reculer de 10 photos", group: .navigation, keys: [.code(116)], repeats: true)
@@ -39,7 +39,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .last: Spec(title: "Dernière photo", group: .navigation, keys: [.code(119)])
         case .extendNext: Spec(title: "Étendre la sélection vers la suivante", group: .selection, keys: [.code(124, modifiers: .shift), .code(125, modifiers: .shift)], repeats: true)
         case .extendPrevious: Spec(title: "Étendre la sélection vers la précédente", group: .selection, keys: [.code(123, modifiers: .shift), .code(126, modifiers: .shift)], repeats: true)
-        case .toggleSelection: Spec(title: "Sélectionner ou désélectionner la photo", group: .selection, keys: [.character("s")])
+        // Space as in a contact sheet: check the photo on screen. S stays first, for the menu.
+        case .toggleSelection: Spec(title: "Sélectionner ou désélectionner la photo", group: .selection, keys: [.character("s"), .code(49)])
         case .delete: Spec(title: "Mettre à la corbeille", group: .sorting, keys: [.code(51), .code(117), .character("x"), .code(51, modifiers: .command)])
         case .undo: Spec(title: "Annuler la suppression", group: .sorting, keys: [.character("z", modifiers: .command)])
         case .revealInFinder: Spec(title: "Afficher dans le Finder", group: .sorting, keys: [.character("r")])
@@ -53,7 +54,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .toggleStrip: Spec(title: "Bande d'aperçu", group: .display, keys: [.character("b")])
         case .exit: Spec(title: "Quitter le zoom ou la comparaison", group: .display, keys: [.code(53)])
         case .compare: Spec(title: "Comparer les photos", group: .comparison, keys: [.character("c")])
-        case .keepSelected: Spec(title: "Comparaison : garder la photo choisie", group: .comparison, keys: [.code(36), .code(76)])
         }
     }
 
@@ -63,7 +63,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     var defaultBindings: [KeyBinding] { spec.keys }
 
     /// Never given a plain key in the menu: it would also fire while typing in the settings window.
-    var isDestructive: Bool { self == .delete || self == .keepSelected }
+    var isDestructive: Bool { self == .delete }
 }
 
 /// One key with its modifiers. Letters are stored as the typed character so they work on any
@@ -252,6 +252,13 @@ struct ShortcutMap: Equatable, Sendable {
 
     // MARK: Storage
 
+    /// Brings keys saved with older defaults to the current ones, where the user left the old
+    /// default. Version 2: Space checks the photo instead of going to the next one.
+    mutating func upgrade(from version: Int) {
+        let space = KeyBinding.code(49)
+        if version < 2, action(for: space) == .next { assign(space, to: .toggleSelection) }
+    }
+
     func encoded() -> Data? {
         let stored = Dictionary(uniqueKeysWithValues: ShortcutAction.allCases.map { ($0.rawValue, keys(for: $0)) })
         return try? JSONEncoder().encode(stored)
@@ -279,6 +286,9 @@ struct ShortcutMap: Equatable, Sendable {
 @MainActor
 final class ShortcutStore: ObservableObject {
     private static let defaultsKey = "shortcuts"
+    /// The version of the defaults the saved keys were last brought to.
+    private static let versionKey = "shortcutsVersion"
+    static let version = 2
 
     @Published private(set) var map: ShortcutMap
     var onChange: (ShortcutMap) -> Void = { _ in }
@@ -288,6 +298,11 @@ final class ShortcutStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         map = ShortcutMap.decoded(from: defaults.data(forKey: Self.defaultsKey))
+        // Saved keys hold every command, defaults included: a new default is brought to them
+        // where the old one was left. In memory only: a launch writes nothing, and the version
+        // is saved with the user's next change, after which their choices stand.
+        let version = defaults.integer(forKey: Self.versionKey)
+        if defaults.data(forKey: Self.defaultsKey) != nil, version < Self.version { map.upgrade(from: version) }
     }
 
     @discardableResult
@@ -316,6 +331,7 @@ final class ShortcutStore: ObservableObject {
 
     private func saved() {
         defaults.set(map.encoded(), forKey: Self.defaultsKey)
+        defaults.set(Self.version, forKey: Self.versionKey)
         onChange(map)
     }
 }

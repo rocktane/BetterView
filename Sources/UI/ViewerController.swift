@@ -8,7 +8,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
     let session: LibrarySession
     let pipeline: Pipeline
     let view = ViewerView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
-    private let comparisonView = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
+    let comparisonView = ComparisonView(frame: NSRect(x: 0, y: 0, width: 1100, height: 750))
     private let strip = StripPanel()
     let window: NSWindow
 
@@ -28,6 +28,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The photo last centred on its AF position, and whether that position was unknown.
     private var focusCentred: PhotoKey?
     private var focusAwaited = false
+    /// The setting « Conserver le zoom en changeant de photo », off by default: then any change
+    /// of photo goes back to the fit, AF mode included. Replaced by tests.
+    var keepsZoomAcrossPhotos: () -> Bool = { Preferences.keepsZoomAcrossPhotos }
+    /// The file last displayed: another one brings the zoom back to the fit.
+    private var displayedPath: String?
     private var titlePending = false
     private let metadata = MetadataStore()
     private let thumbnails = ThumbnailStore()
@@ -47,7 +52,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var preComparisonFrame: CGRect?
     private var preComparisonCenter: CGPoint?
     /// Slots whose content can legitimately be deleted: pixels, or an error with its name.
-    private var comparedVisible: Set<Int> = []
+    private(set) var comparedVisible: Set<Int> = []
+    /// The photos last laid out in the slots: one arriving (a deletion, a keep, an undo) ends
+    /// the AF zoom, as another photo does in the viewer.
+    private var comparisonShown: Set<PhotoKey> = []
     private let normalFullBudget: Int
 
     /// The shape the window currently has, and the size it keeps across shapes.
@@ -57,6 +65,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The centre shapes are placed around. Reading it back from the frame would add a
     /// rounding error at every change of orientation, and the window would creep sideways.
     private var shapeCenter: CGPoint?
+    /// Set from the start of the way into full screen to the end of the way out: the window
+    /// frame is the system's then, neither the photo's shape nor a size to keep.
+    private var fullScreen = false
+    /// The window's content in full screen: the photo above the strip.
+    private(set) var fullScreenContainer: FullScreenContainer?
+    /// Leaves full screen; replaced in tests, which must not take over the screen.
+    lazy var leaveFullScreen: () -> Void = { [weak self] in self?.window.toggleFullScreen(nil) }
     /// The window has not shown a photo yet: it is small, and clicking it opens one.
     private var welcoming = false
     private static let welcomeSize = CGSize(width: 480, height: 300)
@@ -88,8 +103,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         window.contentView = view
         window.delegate = self
         window.title = "BetterView"
-        // Only the window with the photo's shape exists: no full-screen mode.
-        window.collectionBehavior = .fullScreenNone
+        // The green button goes full screen; Option-click keeps the standard zoom.
+        window.collectionBehavior = .fullScreenPrimary
         window.minSize = NSSize(width: 200, height: 200)
         window.isReleasedWhenClosed = false
         window.initialFirstResponder = view
@@ -107,9 +122,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
         view.onCommand = { [weak self] in self?.handle($0) }
         comparisonView.onCommand = { [weak self] in self?.handle($0) }
-        comparisonView.row.onClick = { [weak self] photo, _ in self?.comparisonRowClicked(photo) }
         strip.preferredScreen = { [weak self] in self?.window.screen }
+        strip.onSizeChanged = { [weak self] in self?.scheduleStripUpdate() }
+        strip.viewer = window
+        strip.viewerFrame = { [weak self] in self?.stripHolderFrame }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
+        strip.view.onMenu = { [weak self] in self?.stripMenu(for: $0) }
+        view.contextMenu = { [weak self] in self?.viewerMenu() }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
         strip.view.onHoverChanged = { [weak self] in self?.view.refreshHover() }
         thumbnails.onLoaded = { [weak self] _ in self?.scheduleStripUpdate() }
@@ -191,6 +210,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func screensChanged() {
         updateTarget()
+        refreshFullScreenScreen()
         strip.fitToScreen()
         if comparison != nil {
             placeComparisonWindow()
@@ -217,7 +237,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             if !view.isZoomed { stopFollowingFocus() }
             display()
             replan()
-        case .selectSlot(let slot): selectSlot(slot)
+        case .slotAction(let action, let slot, let photo): performOnSlot(action, slot: slot, photo: photo)
         }
     }
 
@@ -225,6 +245,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
         view.shortcuts = map
         comparisonView.shortcuts = map
         scheduleStripUpdate()
+    }
+
+    /// Whether the command does something where the user is: in the comparison, keeping and
+    /// deleting go through the buttons over a photo, and no key picks one. The menu greys the rest.
+    func isAvailable(_ action: ShortcutAction) -> Bool {
+        guard comparison != nil else { return true }
+        switch action {
+        case .undo, .toggleZoom, .zoomToFocus, .exit, .compare: return true
+        // The photo under the pointer: still there when the menu is walked from the keyboard.
+        case .revealInFinder: return comparisonView.hoveredSlot != nil
+        default: return false
+        }
     }
 
     func perform(_ action: ShortcutAction, repeating isRepeat: Bool = false) {
@@ -252,14 +284,16 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .toggleInfo: setInfoVisible(!infoVisible)
         case .revealInFinder: revealInFinder()
         case .exit:
+            // Out of full screen only when there is nothing else to leave.
+            let leavesSomething = !selection.isEmpty || view.isZoomed
             if !selection.isEmpty {
                 selection.clear()
                 scheduleStripUpdate()
             }
             view.exitZoom()
+            if !leavesSomething, fullScreen { leaveFullScreen() }
         case .toggleStrip: setStripVisible(!stripVisible)
         case .compare: enterComparison()
-        case .keepSelected: break
         }
     }
 
@@ -340,19 +374,21 @@ final class ViewerController: NSObject, NSWindowDelegate {
         let focus = pipeline.cameraFocus(current)
         focusAwaited = focus == nil
         let middle = CGPoint(x: 0.5, y: 0.5)
-        switch focus {
-        case .point(let point):
+        if case .point(let point) = focus {
             view.setFocusMarker(point.normalized, note: nil)
             view.zoom(onNormalized: point.normalized, level: level)
-        case .manual:
-            view.setFocusMarker(nil, note: "Mise au point manuelle : centre")
+        } else {
+            view.setFocusMarker(nil, note: Self.focusNote(focus))
             view.zoom(onNormalized: middle, level: level)
-        case .absent:
-            view.setFocusMarker(nil, note: "Pas de point AF : centre")
-            view.zoom(onNormalized: middle, level: level)
-        case nil:
-            view.setFocusMarker(nil, note: nil)
-            view.zoom(onNormalized: middle, level: level)
+        }
+    }
+
+    /// Said when the zoom falls back on the middle: it must not pretend to know the focus.
+    private static func focusNote(_ focus: CameraFocus?) -> String? {
+        switch focus {
+        case .manual: "Mise au point manuelle : centre"
+        case .absent: "Pas de point AF : centre"
+        case .point, nil: nil
         }
     }
 
@@ -367,6 +403,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// The header was read after the photo appeared: move to it, unless the user has
     /// started looking around on their own.
     private func focusArrived(_ photo: PhotoKey) {
+        if let comparison {
+            if comparisonView.followsFocus, comparison.shown.contains(photo) { displayComparison() }
+            return
+        }
         guard followsFocus, focusAwaited, photo == session.list.current, photo == focusCentred else { return }
         if view.movedByUser {
             focusAwaited = false
@@ -381,6 +421,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
             deleteSelection(selected)
             return
         }
+        trashCurrentPhoto()
+    }
+
+    private func trashCurrentPhoto() {
         // Whatever is deleted must be what the user is looking at.
         guard let current = session.list.current, visiblePhoto == current else {
             NSSound.beep()
@@ -398,8 +442,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     /// Several selected photos go together, as one gesture for ⌘Z. They are not all on
-    /// screen, so the user confirms first, unless they chose not to be asked.
-    private func deleteSelection(_ photos: [PhotoKey]) {
+    /// screen, so the user confirms first, unless they chose not to be asked. The context
+    /// menu also sends here a thumbnail that is not the photo shown, `isSelection` false:
+    /// that one is always confirmed, whatever was chosen for selections.
+    private func deleteSelection(_ photos: [PhotoKey], isSelection: Bool = true) {
         guard window.attachedSheet == nil else { return }
         let deletable = photos.filter { session.protection(of: $0).isEmpty }
         let kept = photos.count - deletable.count
@@ -417,28 +463,33 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 self.session.requestScan()
                 return
             }
-            self.selection.clear()
+            if isSelection { self.selection.clear() }
             self.scheduleStripUpdate()
             let undoKey = self.view.shortcuts.keys(for: .undo).first?.label
             self.view.flash(undoKey.map { "\(message)  ·  \($0) pour annuler" } ?? message)
         }
-        guard Preferences.confirmsMultipleDelete else {
+        guard PhotoMenuTarget.confirmsDeletion(isSelection: isSelection, asksForSelections: Preferences.confirmsMultipleDelete) else {
             trash()
             return
         }
         let alert = NSAlert()
-        alert.messageText = "Mettre \(count) photos à la corbeille ?"
-        var info = "Les photos sélectionnées ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        alert.messageText = count == 1 ? "Mettre \(deletable[0].name) à la corbeille ?" : "Mettre \(count) photos à la corbeille ?"
+        var info = switch (isSelection, count) {
+        case (_, 1): "Ce n'est pas la photo affichée."
+        case (true, _): "Les photos sélectionnées ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        case (false, _): "Ces photos ne sont pas toutes à l'écran. Une seule annulation les remettra toutes."
+        }
         if kept > 0 { info += "\n\n\(kept) photo\(kept > 1 ? "s protégées restent" : " protégée reste") dans le dossier." }
         alert.informativeText = info
         alert.addButton(withTitle: "Mettre à la corbeille")
         alert.addButton(withTitle: "Annuler")
-        alert.showsSuppressionButton = true
+        // « Ne plus demander » is the selections' setting: not offered for a lone thumbnail.
+        alert.showsSuppressionButton = isSelection
         alert.suppressionButton?.title = "Ne plus demander"
         alert.beginSheetModal(for: window) { response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn else { return }
-                if alert.suppressionButton?.state == .on { Preferences.confirmsMultipleDelete = false }
+                if isSelection, alert.suppressionButton?.state == .on { Preferences.confirmsMultipleDelete = false }
                 trash()
             }
         }
@@ -447,6 +498,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     func undo() {
         if !session.undo() { NSSound.beep() }
     }
+
+    var isInfoVisible: Bool { infoVisible }
 
     func setInfoVisible(_ visible: Bool) {
         infoVisible = visible
@@ -467,12 +520,20 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     // MARK: Window shape
 
+    /// A size picked in the settings, applied at once; custom brings back the size stretched.
+    func setStripSizePreset(_ preset: StripSizePreset) {
+        strip.applySize(preset.size ?? Preferences.stripSize ?? .standard)
+    }
+
     func setStripOtherOpacity(_ opacity: Double) {
         stripOtherOpacity = Float(opacity)
         updateStrip()
     }
 
     private func setWindowButtonsVisible(_ visible: Bool) {
+        // In full screen the system shows and hides the title bar itself: the buttons must be
+        // there when it does.
+        let visible = visible || fullScreen
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(kind)?.fade(visible: visible)
         }
@@ -487,6 +548,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func applyWindowShape(aspect: CGFloat, approximate: Bool) {
         if approximate, let shapedAspect, WindowShape.sameShape(shapedAspect, aspect) { return }
         if view.isZoomed { return }
+        if fullScreen {
+            // The screen is the window: the photo's view takes the shape instead.
+            shapedAspect = aspect
+            fullScreenContainer?.photoAspect = aspect
+            return
+        }
         guard let screen = window.screen ?? NSScreen.main else { return }
         shapedAspect = aspect
         let center = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
@@ -562,8 +629,17 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         scheduleTitleUpdate()
-        if followsFocus, view.isZoomed, let current = session.list.current, current != focusCentred {
-            centreOnFocus(level: nil)
+        let photoChanged = session.list.current?.path != displayedPath
+        displayedPath = session.list.current?.path
+        if view.isZoomed {
+            if photoChanged && !keepsZoomAcrossPhotos() {
+                // Each photo opens fitted, in its own window shape.
+                stopFollowingFocus()
+                view.resetZoom()
+            } else if followsFocus, let current = session.list.current, current != focusCentred {
+                // Kept on purpose: each photo opens on its own AF position, at the same zoom.
+                centreOnFocus(level: nil)
+            }
         }
         scheduleStripUpdate()
         view.opensOnClick = session.list.current == nil
@@ -642,8 +718,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// for the next photos so it is normally there on arrival.
     private func updateInfo() {
         requestMetadata()
-        guard infoVisible, let current = session.list.current, let index = session.list.index else {
+        guard let current = session.list.current, let index = session.list.index else {
             view.hideInfo()
+            return
+        }
+        guard infoVisible else {
+            view.hideInfo(offeringToShow: true)
             return
         }
         let known = metadata.metadata(for: current)
@@ -692,7 +772,27 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The photo or the comparison, in the window or, in full screen, above the strip.
+    private func setContent(_ content: NSView) {
+        if let fullScreenContainer {
+            fullScreenContainer.content = content
+            fullScreenContainer.photoAspect = content === view ? shapedAspect : nil
+            updateFullScreenRoom()
+        } else {
+            window.contentView = content
+        }
+    }
+
+    /// The strip's room at the bottom in full screen: its height when it is wanted there,
+    /// whether the app is active or not, so that switching apps does not move the photo.
+    private func updateFullScreenRoom() {
+        guard let fullScreenContainer, let screen = strip.fullScreenFrame else { return }
+        let wanted = comparison == nil && stripVisible && session.list.count > 1 && session.list.index != nil
+        fullScreenContainer.bottomInset = wanted ? strip.fullScreenHeight(on: screen) : 0
+    }
+
     private func updateStrip() {
+        updateFullScreenRoom()
         guard comparison == nil else {
             strip.setVisible(false)
             updateComparisonRow()
@@ -705,10 +805,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         strip.setVisible(true)
+        // Also after the first shape, given while the window was still the welcome one.
+        strip.followViewer()
         let photos = session.list.photos
         let center = browsedIndex() ?? index
         // More than the strip can show even with portrait photos: it cuts the rest at its edges.
-        let shown = StripView.window(around: center, count: photos.count, reach: Self.stripReach)
+        let stripReach = max(Self.stripReach, strip.reach)
+        let shown = StripView.window(around: center, count: photos.count, reach: stripReach)
         let cells = shown.map { at -> StripCell in
             let photo = photos[at]
             let selected = selection.contains(photo)
@@ -721,8 +824,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
-        let ahead = (1...(2 * Self.stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
-        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= Self.stripReach + Self.thumbnailMargin || shown.contains($0) }
+        let ahead = (1...(2 * stripReach + Self.thumbnailMargin)).flatMap { [center + $0 * direction, center - $0 * direction] }
+        let wanted = ([center] + ahead).filter { photos.indices.contains($0) && ($0 - center).magnitude <= stripReach + Self.thumbnailMargin || shown.contains($0) }
+        thumbnails.pixels = strip.thumbnailPixels
         thumbnails.request(wanted.map { photos[$0] })
 
         let reach = max(center - Self.burstReach, 0)...min(center + Self.burstReach, photos.count - 1)
@@ -744,8 +848,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.view.update(
             cells: cells, anchor: center - shown.lowerBound,
             cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
-            groups: groups, tips: tips
+            groups: groups, tips: tips, selecting: showsSelectionRings
         )
+    }
+
+    /// The rings show while a photo of the folder is checked: a checked photo deleted or gone
+    /// from the folder no longer counts. Nothing to look through when nothing is checked.
+    private var showsSelectionRings: Bool {
+        !selection.isEmpty && session.list.photos.contains(where: selection.contains)
     }
 
     /// Where the strip was swiped to, if the current photo has not moved since.
@@ -789,6 +899,145 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    // MARK: Context menu
+
+    private func viewerMenu() -> NSMenu? {
+        guard comparison == nil, let current = session.list.current, visiblePhoto == current else { return nil }
+        return contextMenu(for: current)
+    }
+
+    private func stripMenu(for photo: PhotoKey) -> NSMenu? {
+        comparison == nil ? contextMenu(for: photo) : nil
+    }
+
+    /// The same menu on the photo and on its thumbnail. As in the Finder, it acts on the
+    /// selection when the photo belongs to it; the selection and the folder, when they are
+    /// more, get their own Lightroom items.
+    private func contextMenu(for clicked: PhotoKey) -> NSMenu {
+        let photos = session.list.photos
+        let selected = selection.photos(in: photos)
+        let target = PhotoMenuTarget(clicked: clicked, selection: selected, folder: photos)
+        let count = target.photos.count
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, image: NSImage? = nil, _ handler: @escaping @MainActor (ViewerController) -> Void) {
+            menu.addItem(ClosureMenuItem(title, image: image) { [weak self] in
+                if let self { handler(self) }
+            })
+        }
+
+        let lightroom = ExternalApps.lightroom()
+        if let lightroom {
+            let icon = ExternalApps.icon(of: lightroom)
+            add(PhotoMenuTarget.openTitle(app: lightroom.name, count: count, selected: target.isSelection), image: icon) {
+                $0.confirmOpen(target.photos, in: lightroom)
+            }
+            if !target.otherSelection.isEmpty {
+                add(PhotoMenuTarget.openTitle(app: lightroom.name, count: target.otherSelection.count, selected: true), image: icon) {
+                    $0.confirmOpen(target.otherSelection, in: lightroom)
+                }
+            }
+            if !target.folder.isEmpty {
+                add(PhotoMenuTarget.openTitle(app: lightroom.name, count: target.folder.count, folder: true), image: icon) {
+                    $0.confirmOpen(target.folder, in: lightroom)
+                }
+            }
+        }
+        let apps = ExternalApps.apps(opening: clicked.url).filter { $0.url != lightroom?.url }
+        if !apps.isEmpty {
+            let submenu = NSMenu()
+            for app in apps {
+                // Another Lightroom than the one above still asks first.
+                submenu.addItem(ClosureMenuItem(app.name + (app.isLightroom ? "…" : ""), image: ExternalApps.icon(of: app)) { [weak self] in
+                    if app.isLightroom {
+                        self?.confirmOpen(target.photos, in: app)
+                    } else {
+                        self?.openPhotos(target.photos, in: app)
+                    }
+                })
+            }
+            let openWith = NSMenuItem(title: "Ouvrir avec", action: nil, keyEquivalent: "")
+            openWith.submenu = submenu
+            menu.addItem(openWith)
+        }
+
+        menu.addItem(.separator())
+        let urls = target.photos.map(\.url)
+        add(count == 1 ? "Afficher dans le Finder" : "Afficher les \(count) photos dans le Finder") { _ in
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+        }
+        add(count == 1 ? "Copier" : "Copier les \(count) photos") { _ in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects(urls as [NSURL])
+        }
+        menu.addItem(NSSharingServicePicker(items: urls).standardShareMenuItem)
+
+        menu.addItem(.separator())
+        add(selection.contains(clicked) ? "Désélectionner" : "Sélectionner") {
+            $0.selection.toggle(clicked)
+            $0.updateStrip()
+        }
+        if !selected.isEmpty {
+            add("Tout désélectionner") {
+                $0.selection.clear()
+                $0.updateStrip()
+            }
+        }
+        if count >= 2 {
+            add("Comparer les \(count) photos") { $0.enterComparison(target.photos) }
+        }
+
+        menu.addItem(.separator())
+        add(count == 1 ? "Mettre à la corbeille" : "Mettre les \(count) photos à la corbeille") {
+            $0.trashFromMenu(target.photos, isSelection: target.isSelection)
+        }
+        return menu
+    }
+
+    private func trashFromMenu(_ photos: [PhotoKey], isSelection: Bool) {
+        if photos.count == 1, photos[0] == session.list.current {
+            trashCurrentPhoto()
+        } else {
+            deleteSelection(photos, isSelection: isSelection)
+        }
+    }
+
+    /// Always asked, even for one photo: sending a folder to a catalog by mistake is
+    /// tedious to undo there.
+    private func confirmOpen(_ photos: [PhotoKey], in app: ExternalApps.App) {
+        guard !photos.isEmpty, window.attachedSheet == nil else { return }
+        let one = photos.count == 1
+        let alert = NSAlert()
+        alert.messageText = one ? "Ouvrir \(photos[0].name) dans \(app.name) ?" : "Ouvrir \(photos.count) photos dans \(app.name) ?"
+        alert.informativeText = app.importsFirst
+            ? "\(app.name) \(one ? "la" : "les") proposera dans sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer."
+            : "\(app.name) va s'ouvrir avec \(one ? "cette photo" : "ces photos")."
+        alert.addButton(withTitle: "Ouvrir")
+        alert.addButton(withTitle: "Annuler")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn else { return }
+                self?.openPhotos(photos, in: app)
+            }
+        }
+    }
+
+    private func openPhotos(_ photos: [PhotoKey], in app: ExternalApps.App) {
+        ExternalApps.open(photos, with: app) { [weak self] failure in
+            guard let self else { return }
+            switch failure {
+            case .changed:
+                self.session.requestScan()
+                self.alert(
+                    "Rien n'a été envoyé à \(app.name)",
+                    info: "\(photos.count == 1 ? "La photo a" : "Des photos ont") changé sur le disque depuis l'ouverture du menu. Le dossier est relu : recommence ensuite."
+                )
+            case .refused(let message):
+                self.alert("Impossible d'ouvrir les photos dans \(app.name)", info: message)
+            }
+        }
+    }
+
     // MARK: Comparison
 
     /// The Shift-clicked photos, or else the burst around the current photo, or else the
@@ -807,8 +1056,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         return index + 1 < photos.count ? [photos[index], photos[index + 1]] : [photos[index - 1], photos[index]]
     }
 
-    private func enterComparison() {
-        guard let model = ComparisonModel(photos: photosToCompare(), focusing: session.list.current) else {
+    private func enterComparison(_ photos: [PhotoKey]? = nil) {
+        guard let model = ComparisonModel(photos: photos ?? photosToCompare(), focusing: session.list.current) else {
             NSSound.beep()
             return
         }
@@ -821,12 +1070,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
         selection.clear()
         strip.setVisible(false)
         comparedVisible = []
+        comparisonShown = Set(model.shown)
         comparisonView.reset()
         // The viewer leaves the window: it must not keep a surface alive that the cache let go.
         view.showMessage(nil)
         visiblePhoto = nil
         comparisonView.frame = window.contentLayoutRect
-        window.contentView = comparisonView
+        setContent(comparisonView)
         window.makeFirstResponder(comparisonView)
         setWindowButtonsVisible(true)
         // Four photos at 100 % have to fit at once, or each render would push another out.
@@ -841,7 +1091,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Close to the whole screen: this is the one view that wants the room.
     private func placeComparisonWindow() {
-        guard let screen = window.screen ?? NSScreen.main else { return }
+        guard !fullScreen, let screen = window.screen ?? NSScreen.main else { return }
         applyingShape = true
         window.setFrame(screen.visibleFrame.insetBy(dx: 16, dy: 12), display: true)
         applyingShape = false
@@ -855,12 +1105,16 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.reset()
         pipeline.cache.setBudget(.full, normalFullBudget)
         applyingShape = true
-        window.contentView = view
-        if let preComparisonFrame { window.setFrame(preComparisonFrame, display: true) }
-        window.contentAspectRatio = preComparisonFrame?.size ?? window.frame.size
+        setContent(view)
+        // In full screen, the way out gives the window back; the shape follows then.
+        if !fullScreen {
+            if let preComparisonFrame { window.setFrame(preComparisonFrame, display: true) }
+            window.contentAspectRatio = preComparisonFrame?.size ?? window.frame.size
+        }
         applyingShape = false
         // Without a photo shown yet, the first shape enables it: the small frame is not kept.
-        if !welcoming { window.setFrameAutosaveName("Viewer") }
+        // Nor the screen's, in full screen: the way out enables it.
+        if !welcoming, !fullScreen { window.setFrameAutosaveName("Viewer") }
         window.makeFirstResponder(view)
         shapeCenter = preComparisonCenter
         shapedAspect = nil
@@ -888,35 +1142,60 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     private func displayComparison() {
         guard let model = comparison else { return }
-        comparisonView.arrange(layout: model.layout, focus: model.focus, photos: model.slots)
+        let shown = Set(model.shown)
+        let arriving = !shown.subtracting(comparisonShown).isEmpty
+        comparisonShown = shown
+        if arriving, comparisonView.followsFocus, !keepsZoomAcrossPhotos() {
+            // Back to the fit; that change displays the comparison again.
+            comparisonView.exitZoom()
+            return
+        }
+        comparisonView.arrange(layout: model.layout, photos: model.slots)
         let left = model.remaining
         comparisonView.setTitle("Comparer  ·  \(left) photo\(left > 1 ? "s" : "") restante\(left > 1 ? "s" : "")")
         comparedVisible = []
         let zoomed = comparisonView.zoom
+        let followsFocus = comparisonView.followsFocus
         for (slot, entry) in model.slots.enumerated() {
-            guard let photo = entry else { continue }
+            guard let photo = entry else {
+                comparisonView.setFocus(nil, photo: nil, slot: slot)
+                continue
+            }
             let known = metadata.metadata(for: photo)
             let locked = !session.protection(of: photo).isEmpty
+            let note: String?
+            if followsFocus {
+                let focus = pipeline.cameraFocus(photo)
+                comparisonView.setFocus(focus, photo: photo, slot: slot)
+                note = Self.focusNote(focus)
+            } else {
+                note = nil
+            }
+            // The AF note stays on every state of the slot, next to the protection.
+            func badge(_ text: String?, locked: Bool) -> String? {
+                let parts = [text, note].compactMap { $0 }
+                return Self.badge(parts.isEmpty ? nil : parts.joined(separator: "  ·  "), locked: locked)
+            }
             comparisonView.setCaption(slot: slot, number: slot + 1, name: photo.name, settings: known?.settingsText ?? "")
             if let frame = pipeline.cache.best(photo, zoomed: zoomed != nil) {
                 comparisonView.showFrame(frame, slot: slot)
                 comparedVisible.insert(slot)
                 if frame.key.tier == .preview {
-                    comparisonView.setBadge(Self.badge("Aperçu", locked: locked), slot: slot)
+                    comparisonView.setBadge(badge("Aperçu", locked: locked), slot: slot)
                 } else if let zoomed {
                     // Under memory pressure, only the focused photo is rendered at 100 %.
                     let coming = pipeline.memoryLevel == .normal || slot == model.focus
-                    comparisonView.setBadge(Self.badge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), locked: locked), slot: slot)
+                    comparisonView.setBadge(badge(frame.key.tier == .full ? "\(Int((zoomed * 100).rounded())) %" : (coming ? "Rendu 100 %…" : nil), locked: locked), slot: slot)
                 } else {
-                    comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
+                    comparisonView.setBadge(badge(nil, locked: locked), slot: slot)
                 }
             } else if pipeline.hasFailed(FrameKey(photo: photo, tier: .screen)) {
                 comparisonView.showMessage("Impossible de décoder \(photo.name)", slot: slot)
-                comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
+                comparisonView.setBadge(badge(nil, locked: locked), slot: slot)
                 comparedVisible.insert(slot)
             } else {
                 comparisonView.showMessage(photo.name, slot: slot)
-                comparisonView.setBadge(Self.badge(nil, locked: locked), slot: slot)
+                comparisonView.setBadge(badge(nil, locked: locked), slot: slot)
             }
         }
         metadata.request(model.shown + model.waiting.prefix(ComparisonModel.slotCount))
@@ -933,6 +1212,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func updateComparisonRow() {
         guard let model = comparison else { return }
         let members = model.members
+        // Its own size, smaller than a stretched strip's: a large group stays within budget.
+        thumbnails.pixels = ThumbnailStore.pixels(forHeight: comparisonView.row.metrics.height, scale: window.backingScaleFactor)
         thumbnails.request(members)
         let cells = members.map { photo -> StripCell in
             let inSlot = model.shown.contains(photo)
@@ -940,7 +1221,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return StripCell(
                 photo: photo,
                 image: thumbnails.image(for: photo),
-                mark: photo == model.focused ? .current : .none,
+                // Nothing is selected in the comparison: no photo is marked as current.
+                mark: .none,
                 opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14)
             )
         }
@@ -950,14 +1232,23 @@ final class ViewerController: NSObject, NSWindowDelegate {
         comparisonView.setRowNote(waiting > 0 ? "\(waiting) en attente" : nil)
     }
 
-    private func comparisonRowClicked(_ photo: PhotoKey) {
-        guard let slot = comparison?.slots.firstIndex(of: photo) else { return }
-        selectSlot(slot)
-    }
-
-    private func selectSlot(_ slot: Int) {
-        comparison?.setFocus(slot: slot)
-        focusChanged()
+    /// A button over a photo, the only way to keep or delete here. That photo becomes the
+    /// model's reference (the one the viewer comes back to, rendered first), then the action
+    /// runs with its guards. Nothing happens if the slot no longer shows that photo.
+    private func performOnSlot(_ action: ComparisonAction, slot: Int, photo: PhotoKey?) {
+        guard let model = comparison, photo != nil, model.slots.indices.contains(slot), model.slots[slot] == photo else {
+            NSSound.beep()
+            return
+        }
+        if model.focus != slot {
+            comparison?.setFocus(slot: slot)
+            focusChanged()
+        }
+        guard comparison?.focus == slot else { return }
+        switch action {
+        case .trash: trashFocusedInComparison()
+        case .keep: keepFocusedInComparison()
+        }
     }
 
     private func focusChanged() {
@@ -969,16 +1260,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private func performInComparison(_ action: ShortcutAction) {
         guard comparison != nil else { return }
         switch action {
-        case .next, .jumpForward:
-            comparison?.moveFocus(by: 1)
-            focusChanged()
-        case .previous, .jumpBackward:
-            comparison?.moveFocus(by: -1)
-            focusChanged()
-        case .delete:
-            trashFocusedInComparison()
-        case .keepSelected:
-            keepFocusedInComparison()
         case .undo:
             undo()
         case .toggleZoom:
@@ -993,8 +1274,24 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .compare:
             leaveComparison()
         case .revealInFinder:
-            revealInFinder()
-        case .toggleInfo, .toggleStrip, .zoomToFocus, .first, .last, .extendNext, .extendPrevious,
+            // The photo under the pointer: none is selected here.
+            if let photo = comparisonView.hoveredSlot.flatMap({ comparison?.slots[$0] }) {
+                NSWorkspace.shared.activateFileViewerSelecting([photo.url])
+            } else {
+                NSSound.beep()
+            }
+        case .zoomToFocus:
+            // Same key to leave, as in the viewer.
+            if comparisonView.followsFocus {
+                comparisonView.exitZoom()
+            } else {
+                comparisonView.zoomOnFocus()
+                displayComparison()
+            }
+        // Mouse only: keeping and deleting go through the buttons over a photo, and no key
+        // picks a photo.
+        case .next, .previous, .jumpForward, .jumpBackward, .delete,
+             .toggleInfo, .toggleStrip, .first, .last, .extendNext, .extendPrevious,
              .toggleSelection, .zoomIn, .zoomOut, .zoomFit:
             break
         }
@@ -1136,21 +1433,101 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         session.requestScan()
-        view.refreshHover()
+        if comparison != nil { comparisonView.refreshHover() } else { view.refreshHover() }
     }
 
+    /// The window's frame while it can hold the strip: a photo's shape, on screen.
+    private var stripHolderFrame: CGRect? {
+        guard window.isVisible, !window.isMiniaturized, comparison == nil, !welcoming else { return nil }
+        return window.frame
+    }
+
+    func windowWillClose(_ notification: Notification) { strip.setVisible(false) }
+
+    // MARK: Full screen
+
+    /// The photo goes above the strip, in a container of the screen's size. The strip waits
+    /// for the end of the transition, then spans the bottom of the screen.
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        fullScreen = true
+        strip.setVisible(false)
+        guard let current = window.contentView else { return }
+        let container = FullScreenContainer(frame: current.frame)
+        container.autoresizingMask = [.width, .height]
+        window.contentView = container
+        fullScreenContainer = container
+        setContent(current)
+        // The photo's shape no longer constrains the window.
+        window.contentResizeIncrements = NSSize(width: 1, height: 1)
+        if let screen = window.screen?.frame {
+            container.bottomInset = comparison == nil && stripVisible && session.list.count > 1 ? strip.fullScreenHeight(on: screen) : 0
+        }
+        window.makeFirstResponder(current)
+        setWindowButtonsVisible(true)
+    }
+
+    /// A screen changed under a full screen window (resolution, another display): the strip
+    /// and the photo's room follow it.
+    private func refreshFullScreenScreen() {
+        guard fullScreen, strip.fullScreenFrame != nil, let screen = window.screen?.frame else { return }
+        strip.setFullScreen(screen)
+        updateFullScreenRoom()
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) { refreshFullScreenScreen() }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        strip.setFullScreen(window.screen?.frame ?? window.frame)
+        updateStrip()
+    }
+
+    func windowWillExitFullScreen(_ notification: Notification) {
+        strip.setVisible(false)
+        strip.setFullScreen(nil)
+    }
+
+    /// Back in its own window, which the system gave back: the photo's shape again, and the
+    /// strip at its own place.
+    func windowDidExitFullScreen(_ notification: Notification) {
+        let content = fullScreenContainer?.content
+        fullScreenContainer?.content = nil
+        fullScreenContainer = nil
+        fullScreen = false
+        if let content {
+            content.frame = window.contentLayoutRect
+            window.contentView = content
+            window.makeFirstResponder(content)
+        }
+        if comparison == nil {
+            shapedAspect = nil
+            display()
+            // Saved from here on, now that the window has its photo's shape again.
+            if !welcoming { window.setFrameAutosaveName("Viewer") }
+            view.refreshHover()
+            setWindowButtonsVisible(view.isHovered)
+        } else {
+            placeComparisonWindow()
+        }
+        updateStrip()
+    }
+
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification, object: window))
+    }
     func windowDidMiniaturize(_ notification: Notification) { updateStrip() }
     func windowDidDeminiaturize(_ notification: Notification) { updateStrip() }
 
     /// A size the user chose stays for the next photos, whatever their orientation.
     func windowDidResize(_ notification: Notification) {
-        guard !applyingShape, comparison == nil, !welcoming else { return }
+        strip.followViewer()
+        guard !applyingShape, comparison == nil, !welcoming, !fullScreen else { return }
         chosenHeight = window.frame.height
         shapeCenter = nil
     }
 
     func windowDidMove(_ notification: Notification) {
-        guard !applyingShape, comparison == nil else { return }
+        strip.followViewer()
+        guard !applyingShape, comparison == nil, !fullScreen else { return }
         // The photo opens where the small window was taken.
         shapeCenter = welcoming ? CGPoint(x: window.frame.midX, y: window.frame.midY) : nil
     }

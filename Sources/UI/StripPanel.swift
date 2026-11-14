@@ -1,17 +1,31 @@
 import AppKit
 
 /// Where the strip sits. The magnets are remembered rather than just their result, so that a
-/// strip held by the Dock stays by the Dock when the Dock or the screen changes.
+/// strip held by the Dock stays by the Dock when the Dock or the screen changes, and a strip
+/// held by the photo's window follows it.
 struct StripPlacement: Codable, Equatable, Sendable {
     var origin: CGPoint?
     var docked = true
     var centeredX = true
     var centeredY = false
+    /// Set while the photo's window holds the strip: the screen's magnets then do not apply.
+    var window: StripWindowHold?
 }
 
-/// Pure geometry of the strip's two magnets: the Dock's edge of the screen, and its centre.
+/// How the photo's window holds the strip: under its bottom edge, outside the window.
+struct StripWindowHold: Codable, Equatable, Sendable {
+    /// Centred under the window, whatever its width.
+    var centered: Bool
+    /// From the window's centre to the strip's, along x, when not centred. The window changes
+    /// width around its centre at each photo, so this keeps the strip where it was dropped.
+    var offset: CGFloat = 0
+}
+
+/// Pure geometry of the strip's magnets: the Dock's edge of the screen, its centre, and the
+/// photo's window.
 enum StripMagnet {
     enum DockEdge: Equatable, Sendable { case bottom, left, right }
+    static let windowReach: CGFloat = 36
 
     /// How close the strip must come for a magnet to catch it. The drag keeps following the
     /// pointer behind the scenes, so moving this far past it lets go.
@@ -43,11 +57,48 @@ enum StripMagnet {
         )
     }
 
-    /// Where a strip dragged to `proposed` lands, and which magnets now hold it.
-    static func snap(proposed: CGRect, screen: CGRect, visible: CGRect) -> (origin: CGPoint, placement: StripPlacement) {
+    /// The strip's bottom when the window holds it: under the window, with the Dock's gap.
+    static func windowY(height: CGFloat, window: CGRect) -> CGFloat {
+        window.minY - dockGap - height
+    }
+
+    /// Where a strip held by the window sits: clamped to the visible screen when the window
+    /// leaves no room (a window as tall as the screen), back in place once it does.
+    static func windowOrigin(_ hold: StripWindowHold, size: CGSize, window: CGRect, visible: CGRect) -> CGPoint {
+        let midX = window.midX + (hold.centered ? 0 : hold.offset)
+        let origin = clamped(CGPoint(x: midX - size.width / 2, y: windowY(height: size.height, window: window)), size: size, visible: visible)
+        return CGPoint(x: origin.x.rounded(), y: origin.y.rounded())
+    }
+
+    /// The window's hold on a strip dragged to `proposed`, if its bottom edge is within reach.
+    /// Only a strip that overlaps the window across is caught, and only if there is room for
+    /// it under the window on screen.
+    static func windowSnap(proposed origin: CGPoint, size: CGSize, window: CGRect, visible: CGRect) -> (origin: CGPoint, hold: StripWindowHold)? {
+        guard origin.x < window.maxX, origin.x + size.width > window.minX else { return nil }
+        let y = windowY(height: size.height, window: window)
+        guard y >= visible.minY, y + size.height <= visible.maxY, abs(origin.y - y) <= windowReach else { return nil }
+        let centered = abs(origin.x + size.width / 2 - window.midX) <= centerReach
+        var hold = StripWindowHold(centered: centered)
+        let x = centered ? window.midX - size.width / 2 : origin.x
+        let landed = clamped(CGPoint(x: x, y: y), size: size, visible: visible)
+        if !centered { hold.offset = landed.x + size.width / 2 - window.midX }
+        return (CGPoint(x: landed.x.rounded(), y: landed.y.rounded()), hold)
+    }
+
+    /// Where a strip dragged to `proposed` lands, and which magnets now hold it. The photo's
+    /// window, when given, comes first: it is what the strip was brought to, and its place
+    /// moves with it, while the Dock and the screen's centre stay.
+    static func snap(proposed: CGRect, screen: CGRect, visible: CGRect, window: CGRect? = nil) -> (origin: CGPoint, placement: StripPlacement) {
         let size = proposed.size
         var origin = clamped(proposed.origin, size: size, visible: visible)
         var placement = StripPlacement(origin: nil, docked: false, centeredX: false, centeredY: false)
+        // Measured from where the pointer puts the strip, not where the screen stops it:
+        // pushing on past the screen's edge leaves the reach and lets go.
+        if let window, let held = windowSnap(proposed: proposed.origin, size: size, window: window, visible: visible) {
+            placement.origin = held.origin
+            placement.window = held.hold
+            return (held.origin, placement)
+        }
 
         let dock = dockedOrigin(size: size, visible: visible, edge: dockEdge(screen: screen, visible: visible))
         if let x = dock.x, abs(origin.x - x) <= dockReach {
@@ -71,8 +122,14 @@ enum StripMagnet {
         return (origin, placement)
     }
 
-    /// Applies a remembered placement to the screen as it is now.
-    static func origin(for placement: StripPlacement, size: CGSize, screen: CGRect, visible: CGRect) -> CGPoint {
+    /// Applies a remembered placement to the screen as it is now. A strip held by the window
+    /// follows `window`; without one (the window is away), it stays where it last was.
+    static func origin(for placement: StripPlacement, size: CGSize, screen: CGRect, visible: CGRect, window: CGRect? = nil) -> CGPoint {
+        if let hold = placement.window {
+            if let window { return windowOrigin(hold, size: size, window: window, visible: visible) }
+            let last = clamped(placement.origin ?? CGPoint(x: visible.midX - size.width / 2, y: visible.minY + dockGap), size: size, visible: visible)
+            return CGPoint(x: last.x.rounded(), y: last.y.rounded())
+        }
         var origin = clamped(placement.origin ?? CGPoint(x: visible.midX, y: visible.midY), size: size, visible: visible)
         // The Dock wins on its own axis, as when dragging: it may have moved since.
         let dock = dockedOrigin(size: size, visible: visible, edge: dockEdge(screen: screen, visible: visible))
@@ -86,6 +143,175 @@ enum StripMagnet {
     }
 }
 
+/// The strip's size, as chosen by stretching it. Its height sets the thumbnails' height.
+struct StripSize: Codable, Equatable, Sendable {
+    var width: CGFloat
+    var height: CGFloat
+
+    static let standard = StripSize(width: 820, height: 82)
+}
+
+/// The strip's size, chosen in the settings or by stretching it. The width is a maximum: a
+/// folder of a few photos gets a strip just wide enough for them.
+enum StripSizePreset: String, CaseIterable, Identifiable, Sendable {
+    case small, normal, large, custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .small: "Petite"
+        case .normal: "Normale"
+        case .large: "Grande"
+        case .custom: "Personnalisée"
+        }
+    }
+
+    /// One step either side of the usual size, in thumbnail height (50, 66, 106 pt) and width.
+    /// Custom is whatever the strip was last stretched to.
+    var size: StripSize? {
+        switch self {
+        case .small: StripSize(width: 620, height: 66)
+        case .normal: .standard
+        case .large: StripSize(width: 1200, height: 122)
+        case .custom: nil
+        }
+    }
+}
+
+/// Pure geometry of stretching the strip by its sides or corners.
+enum StripResize {
+    /// The sides being pulled: one, or two at a corner.
+    struct Sides: OptionSet, Hashable, Sendable {
+        let rawValue: Int
+        static let left = Sides(rawValue: 1)
+        static let right = Sides(rawValue: 2)
+        static let bottom = Sides(rawValue: 4)
+        static let top = Sides(rawValue: 8)
+    }
+
+    /// What stays put on one axis while the strip stretches: its centre, its lower side (left
+    /// or bottom) or its upper side (right or top).
+    enum Anchor: Equatable, Sendable { case center, lower, upper }
+
+    /// Thumbnails a little smaller than the usual ones.
+    static let minHeight: CGFloat = 66
+
+    /// Room for one portrait photo, with the margins around it.
+    nonisolated static func minWidth(height: CGFloat) -> CGFloat {
+        let metrics = StripPanel.metrics(height: height)
+        return (metrics.height * 2 / 3).rounded() + 2 * metrics.top
+    }
+    /// Thumbnails up to twice the usual height (66 → 146 pt). The thumbnails' pixel size, and so
+    /// their memory, grows with the square of this.
+    static let maxHeight: CGFloat = 162
+    /// How far inside each side a press stretches rather than clicks, scrolls or moves. Across,
+    /// it covers the faded edges; along, the margins above and below the photos, which are
+    /// 8 pt: the photos themselves still click and move the strip.
+    static let grip = CGSize(width: 8, height: 6)
+
+    /// Never larger than the visible screen, with the Dock's gap on each side.
+    static func maxSize(visible: CGRect) -> CGSize {
+        CGSize(
+            width: max(visible.width - 2 * StripMagnet.dockGap, 1).rounded(.down),
+            height: max(min(maxHeight, visible.height - 2 * StripMagnet.dockGap), 1).rounded(.down)
+        )
+    }
+
+    /// The size to show: the one chosen, as far as this screen allows. The chosen size is
+    /// kept, so that coming back to a larger screen brings it back.
+    static func fitted(_ size: StripSize, visible: CGRect) -> CGSize {
+        let upper = maxSize(visible: visible)
+        let height = min(max(size.height, min(minHeight, upper.height)), upper.height).rounded()
+        return CGSize(
+            width: min(max(size.width, min(minWidth(height: height), upper.width)), upper.width).rounded(),
+            height: height
+        )
+    }
+
+    /// On each axis: a centred strip stays centred, a strip held by the Dock or under the
+    /// window keeps the side held, and any other keeps the side opposite the one pulled.
+    static func anchors(for placement: StripPlacement, sides: Sides, screen: CGRect, visible: CGRect) -> (x: Anchor, y: Anchor) {
+        let freeX: Anchor = sides.contains(.left) ? .upper : .lower
+        let freeY: Anchor = sides.contains(.bottom) ? .upper : .lower
+        if let hold = placement.window {
+            // Its top hangs from the window: the bottom side moves.
+            return (hold.centered ? .center : freeX, .upper)
+        }
+        let dock = StripMagnet.dockEdge(screen: screen, visible: visible)
+        let x: Anchor, y: Anchor
+        if placement.docked, dock != .bottom {
+            x = dock == .left ? .lower : .upper
+        } else {
+            x = placement.centeredX ? .center : freeX
+        }
+        if placement.docked, dock == .bottom {
+            y = .lower
+        } else {
+            y = placement.centeredY ? .center : freeY
+        }
+        return (x, y)
+    }
+
+    /// One axis: where the strip starts and how long it is, once the pulled side has grown by
+    /// `grow` (outwards positive). The pulled side follows the pointer; around the centre,
+    /// both sides do.
+    private static func axis(start: (min: CGFloat, length: CGFloat), grow: CGFloat, anchor: Anchor, bounds: (min: CGFloat, max: CGFloat), length: ClosedRange<CGFloat>) -> (min: CGFloat, length: CGFloat) {
+        let mid = start.min + start.length / 2
+        let room: CGFloat
+        switch anchor {
+        case .center: room = 2 * Swift.min(mid - bounds.min, bounds.max - mid)
+        case .lower: room = bounds.max - start.min
+        case .upper: room = start.min + start.length - bounds.min
+        }
+        // A strip already past a bound (a smaller screen) may still shrink, never grow.
+        let upper = Swift.max(Swift.min(length.upperBound, room), Swift.min(start.length, length.lowerBound))
+        let lower = Swift.min(length.lowerBound, upper)
+        let size = Swift.min(Swift.max(start.length + (anchor == .center ? 2 * grow : grow), lower), upper).rounded()
+        switch anchor {
+        case .center: return ((mid - size / 2).rounded(), size)
+        case .lower: return (start.min, size)
+        case .upper: return (start.min + start.length - size, size)
+        }
+    }
+
+    /// `frame` at `width`, keeping what the anchor holds (its centre or a side), within the
+    /// visible screen.
+    static func withWidth(_ frame: CGRect, _ width: CGFloat, anchor: Anchor, visible: CGRect) -> CGRect {
+        guard width != frame.width else { return frame }
+        var changed = frame
+        changed.size.width = width
+        switch anchor {
+        case .center: changed.origin.x = (frame.midX - width / 2).rounded()
+        case .lower: break
+        case .upper: changed.origin.x = frame.maxX - width
+        }
+        changed.origin.x = min(max(changed.origin.x, visible.minX), max(visible.minX, visible.maxX - width))
+        return changed
+    }
+
+    /// The strip's frame once the pulled sides have travelled `travel` points since the press,
+    /// in screen coordinates (right and up positive).
+    static func frame(start: CGRect, sides: Sides, travel: CGPoint, anchors: (x: Anchor, y: Anchor), visible: CGRect) -> CGRect {
+        let largest = maxSize(visible: visible)
+        var frame = start
+        if !sides.isDisjoint(with: [.bottom, .top]) {
+            let grow = sides.contains(.top) ? travel.y : -travel.y
+            let y = axis(start: (start.minY, start.height), grow: grow, anchor: anchors.y, bounds: (visible.minY, visible.maxY), length: minHeight...Swift.max(largest.height, minHeight))
+            frame.origin.y = y.min
+            frame.size.height = y.length
+        }
+        if !sides.isDisjoint(with: [.left, .right]) {
+            let grow = sides.contains(.right) ? travel.x : -travel.x
+            let least = minWidth(height: frame.height)
+            let x = axis(start: (start.minX, start.width), grow: grow, anchor: anchors.x, bounds: (visible.minX, visible.maxX), length: least...Swift.max(largest.width, least))
+            frame.origin.x = x.min
+            frame.size.width = x.length
+        }
+        return frame
+    }
+}
+
 /// Keeps the keyboard on the viewer: clicking the strip never takes it away, and the strip goes
 /// away with the app.
 private final class FloatingStripPanel: NSPanel {
@@ -96,27 +322,70 @@ private final class FloatingStripPanel: NSPanel {
 /// The strip's own small window, detached from the viewer, whose size follows each photo.
 @MainActor
 final class StripPanel {
-    private static let metrics = StripView.Metrics(height: 66, gap: 6, top: 8, fadesEdges: true)
-    /// As much room under the photos as above: no line of text under them.
-    private static let height: CGFloat = 82
-    private static let wantedWidth: CGFloat = 820
+    /// As much room under the photos as above: no line of text under them. The thumbnails take
+    /// the rest of the strip's height.
+    nonisolated static func metrics(height: CGFloat) -> StripView.Metrics {
+        StripView.Metrics(height: height - 16, gap: 6, top: 8, fadesEdges: true)
+    }
 
-    let view = StripView(metrics: StripPanel.metrics)
+    let view: StripView = {
+        let view = StripView(metrics: StripPanel.metrics(height: StripSize.standard.height))
+        view.showsRingOnHover = true
+        return view
+    }()
     private let panel: NSPanel
-    private var placement = Preferences.stripPlacement ?? StripPlacement()
+    private var placement: StripPlacement
+    private var size: StripSize
+    /// Where the placement goes once a gesture ends, and the size after a stretch, which makes
+    /// the size setting custom.
+    var save: (StripPlacement, StripSize?) -> Void = { placement, size in
+        Preferences.stripPlacement = placement
+        if let size {
+            Preferences.stripSize = size
+            Preferences.stripSizePreset = .custom
+        }
+    }
     private var dragOrigin: CGPoint?
+    private var resizeStart: (frame: CGRect, anchors: (x: StripResize.Anchor, y: StripResize.Anchor), visible: CGRect)?
     /// The screen the viewer is on, for a first placement.
     var preferredScreen: () -> NSScreen? = { nil }
+    /// The size changed: a wider strip needs more photos to stay filled, a taller one larger
+    /// thumbnails.
+    var onSizeChanged: () -> Void = {}
+    /// The photo's window, which the strip can be held by. Its frame is given only while the
+    /// strip may follow it: shown with a photo, not minimised, not comparing.
+    weak var viewer: NSWindow?
+    var viewerFrame: () -> CGRect? = { nil }
+    private var backingObserver: NSObjectProtocol?
+    /// Whether BetterView is the active app. The strip never floats over another app; within
+    /// this one it stays while the settings, the history or a sheet have the focus.
+    var isAppActive: () -> Bool = { NSApp.isActive }
+    /// The strip may show: the app active and the photo's window on screen, neither closed
+    /// nor in the Dock.
+    var mayShow: Bool {
+        guard isAppActive(), let viewer else { return false }
+        return viewer.isVisible && !viewer.isMiniaturized
+    }
+    /// The screen the photo's window fills, while it is full screen: the strip then spans its
+    /// bottom, and its own place, magnets and size wait untouched for the way back.
+    private(set) var fullScreenFrame: CGRect?
+    /// The viewer wants the strip shown; it shows when the rule allows.
+    private var wanted = false
+    private var focusObservers: [NSObjectProtocol] = []
 
-    init() {
+    init(placement: StripPlacement? = Preferences.stripPlacement, size: StripSize? = Preferences.chosenStripSize) {
+        self.placement = placement ?? StripPlacement()
+        self.size = size ?? .standard
         panel = FloatingStripPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: Self.height),
+            contentRect: NSRect(x: 0, y: 0, width: StripSize.standard.width, height: StripSize.standard.height),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
         )
         panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = true
+        // Hidden by the rule below, not by AppKit: AppKit would show it again on reactivation
+        // even with the photo's window closed or in the Dock.
+        panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -132,23 +401,159 @@ final class StripPanel {
         view.layer?.borderWidth = 1
         panel.contentView = view
         view.onDrag = { [weak self] in self?.drag($0) }
+        view.onResize = { [weak self] in self?.resize($0) }
+        // A gesture sizes the strip itself; between gestures, the photos given do.
+        view.onContentChanged = { [weak self] in
+            guard let self, self.dragOrigin == nil, self.resizeStart == nil else { return }
+            self.fitToScreen()
+        }
         fitToScreen()
+        // A screen of another scale needs thumbnails of another size, at the same strip size.
+        backingObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeBackingPropertiesNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.onSizeChanged() }
+        }
+        let center = NotificationCenter.default
+        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+            focusObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyVisibility() }
+            })
+        }
+        // Only the photo's window: its going to the Dock or coming back.
+        for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+            focusObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let window = (note.object as AnyObject?).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated {
+                    guard let self, let viewer = self.viewer, window == ObjectIdentifier(viewer) else { return }
+                    self.applyVisibility()
+                }
+            })
+        }
+    }
+
+    isolated deinit {
+        for observer in focusObservers + [backingObserver].compactMap({ $0 }) { NotificationCenter.default.removeObserver(observer) }
     }
 
     var isVisible: Bool { panel.isVisible }
+    var frame: CGRect { panel.frame }
 
+    /// How many photos to give on each side of the middle one, so that even portrait photos
+    /// fill the widest strip this screen allows: stretching it never shows an empty end while
+    /// the next update brings more photos.
+    var reach: Int {
+        let width = (screen?.visibleFrame).map { StripResize.maxSize(visible: $0).width } ?? panel.frame.width
+        return StripView.reach(width: max(width, panel.frame.width), metrics: view.metrics)
+    }
+
+    /// Full screen across the bottom of `screen`, or back to the strip's own place with nil.
+    /// It neither moves nor stretches there: the photo's room is what is left above it.
+    func setFullScreen(_ screen: CGRect?) {
+        guard screen != fullScreenFrame else { return }
+        fullScreenFrame = screen
+        // Only a full screen space needs it: elsewhere the strip stays in its own space.
+        panel.collectionBehavior = screen == nil ? [.ignoresCycle, .fullScreenNone] : [.ignoresCycle, .fullScreenAuxiliary]
+        // Edge to edge at the bottom of the screen: no rounded corner, no light border and no
+        // shadow, which would draw a line along the screen's edges and over the photo.
+        view.layer?.cornerRadius = screen == nil ? 12 : 0
+        view.layer?.borderWidth = screen == nil ? 1 : 0
+        panel.hasShadow = screen == nil
+        if screen == nil {
+            view.onDrag = { [weak self] in self?.drag($0) }
+            view.onResize = { [weak self] in self?.resize($0) }
+        } else {
+            view.onDrag = nil
+            view.onResize = nil
+        }
+        updateChildWindow()
+        fitToScreen()
+    }
+
+    /// The strip's height in full screen on `screen`: the size chosen, as that screen allows.
+    func fullScreenHeight(on screen: CGRect) -> CGFloat {
+        StripResize.fitted(size, visible: screen).height
+    }
+
+    /// A size from the settings, at once.
+    func applySize(_ size: StripSize) {
+        self.size = size
+        fitToScreen()
+    }
+
+    /// The size shown on `visible`: the size chosen, as far as the screen allows, and no wider
+    /// than the photos given when they are the whole list.
+    private func shownSize(visible: CGRect) -> CGSize {
+        var shown = StripResize.fitted(size, visible: visible)
+        shown.width = shownWidth(upTo: shown.width, height: shown.height)
+        return shown
+    }
+
+    /// At most `width`, and no wider than the photos given at that height, but never narrower
+    /// than one portrait photo.
+    private func shownWidth(upTo width: CGFloat, height: CGFloat) -> CGFloat {
+        guard let content = view.fittingWidth(thumbnailHeight: Self.metrics(height: height).height) else { return width }
+        return min(width, max(content.rounded(.up), StripResize.minWidth(height: height)))
+    }
+
+    /// The thumbnails' size in pixels for the strip as it is now, on its screen.
+    var thumbnailPixels: Int {
+        ThumbnailStore.pixels(forHeight: view.metrics.height, scale: panel.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
+    }
+
+    var isHeldByViewer: Bool { placement.window != nil }
+
+    /// Asks for the strip, or not. It shows only while the app is active and the photo's window
+    /// on screen, and comes and goes with them from then on, without ever taking the keyboard.
     func setVisible(_ visible: Bool) {
-        guard visible != panel.isVisible else { return }
-        if visible {
+        wanted = visible
+        applyVisibility()
+    }
+
+    private func applyVisibility() {
+        let shown = wanted && mayShow
+        guard shown != panel.isVisible else { return }
+        if shown {
             fitToScreen()
             panel.orderFront(nil)
         } else {
             panel.orderOut(nil)
+            view.clearHover()
+        }
+        updateChildWindow()
+    }
+
+    /// A strip held by the window is its child while nothing else moves it: the window server
+    /// then carries it along with the window as it is dragged, with no delay. A shape change
+    /// still goes through `followViewer`, as the window grows around its centre.
+    private func updateChildWindow() {
+        let wanted = panel.isVisible && placement.window != nil && dragOrigin == nil && resizeStart == nil && fullScreenFrame == nil && viewerFrame() != nil
+        let parent = panel.parent
+        if wanted, let viewer {
+            if parent !== viewer {
+                parent?.removeChildWindow(panel)
+                viewer.addChildWindow(panel, ordered: .above)
+                // A child takes its parent's level: the strip stays a floating panel.
+                panel.level = .floating
+            }
+        } else if let parent {
+            parent.removeChildWindow(panel)
         }
     }
 
-    /// The screen holding the remembered position, or the viewer's until there is one.
+    /// The window moved or changed shape: a strip it holds goes with it, in the same turn so
+    /// that both land together.
+    func followViewer() {
+        guard placement.window != nil, panel.isVisible, dragOrigin == nil, resizeStart == nil else { return }
+        fitToScreen()
+        updateChildWindow()
+        // Moved under a still pointer, as a child even before its frame is set here: the ring
+        // goes to what is under the pointer now.
+        view.refreshHover()
+    }
+
+    /// The screen holding the remembered position, or the viewer's until there is one. A strip
+    /// held by the window is on the window's screen.
     private var screen: NSScreen? {
+        if placement.window != nil, viewerFrame() != nil, let screen = viewer?.screen { return screen }
         if let origin = placement.origin,
            let holding = NSScreen.screens.first(where: { $0.frame.contains(origin) }) {
             return holding
@@ -158,29 +563,96 @@ final class StripPanel {
 
     /// Follows the Dock and the screens. They change under the strip without any drag.
     func fitToScreen() {
+        if let fullScreenFrame {
+            let height = fullScreenHeight(on: fullScreenFrame)
+            setFrame(CGRect(x: fullScreenFrame.minX, y: fullScreenFrame.minY, width: fullScreenFrame.width, height: height), display: panel.isVisible)
+            return
+        }
         guard let screen else { return }
         let visible = screen.visibleFrame
-        let size = CGSize(width: min(Self.wantedWidth, visible.width - 2 * StripMagnet.dockGap).rounded(), height: Self.height)
-        let origin = StripMagnet.origin(for: placement, size: size, screen: screen.frame, visible: visible)
-        panel.setFrame(CGRect(origin: origin, size: size), display: panel.isVisible)
+        let size = shownSize(visible: visible)
+        let origin = StripMagnet.origin(for: placement, size: size, screen: screen.frame, visible: visible, window: viewerFrame())
+        setFrame(CGRect(origin: origin, size: size), display: panel.isVisible)
+    }
+
+    /// The thumbnails' height follows the strip's before the new size is drawn: both change
+    /// in the same pass, with nothing stretched in between.
+    private func setFrame(_ frame: CGRect, display: Bool) {
+        guard frame != panel.frame else { return }
+        let sizeChanged = frame.size != panel.frame.size
+        if frame.height != panel.frame.height { view.metrics = Self.metrics(height: frame.height) }
+        panel.setFrame(frame, display: display)
+        if sizeChanged { onSizeChanged() }
+    }
+
+    /// Stretches the strip by a side or a corner, then remembers its size and where it ended.
+    private func resize(_ pull: (sides: StripResize.Sides, travel: CGPoint)?) {
+        guard let pull else {
+            resizeStart = nil
+            // The photos may have changed during the gesture, and a centred strip that the
+            // screen pushed aside may fit centred again.
+            fitToScreen()
+            save(placement, size)
+            updateChildWindow()
+            return
+        }
+        guard let screen = panel.screen ?? self.screen else { return }
+        let start = resizeStart ?? (
+            panel.frame,
+            StripResize.anchors(for: placement, sides: pull.sides, screen: screen.frame, visible: screen.visibleFrame),
+            screen.visibleFrame
+        )
+        if resizeStart == nil {
+            resizeStart = start
+            updateChildWindow()
+        }
+        let pulled = StripResize.frame(start: start.frame, sides: pull.sides, travel: pull.travel, anchors: start.anchors, visible: start.visible)
+        let acrossPulled = !pull.sides.isDisjoint(with: [.left, .right])
+        let alongPulled = !pull.sides.isDisjoint(with: [.bottom, .top])
+        // Only the axes pulled: a size the screen holds back on the other axis stays chosen.
+        if alongPulled { size.height = pulled.height }
+        // The photos given at the new height: a strip as wide as its few photos cannot show
+        // more, and a taller one needs more room for them, up to the width chosen.
+        let content = shownWidth(upTo: .infinity, height: pulled.height)
+        let widest = acrossPulled ? pulled.width : StripResize.fitted(size, visible: start.visible).width
+        let frame = StripResize.withWidth(pulled, min(widest, content), anchor: start.anchors.x, visible: start.visible)
+        // A width narrower than the photos is what the user sees. Pulled past them, the strip
+        // shows them all: the chosen maximum is at least that, and a larger one stays.
+        if acrossPulled { size.width = pulled.width <= content ? pulled.width : max(size.width, frame.width) }
+        guard frame != panel.frame else { return }
+        placement.origin = frame.origin
+        if placement.window != nil, let window = viewerFrame() {
+            placement.window?.offset = frame.midX - window.midX
+        }
+        setFrame(frame, display: true)
     }
 
     private func drag(_ travel: CGPoint?) {
         guard let travel else {
             dragOrigin = nil
-            Preferences.stripPlacement = placement
+            // The photos may have changed during the gesture: the strip takes their width now.
+            fitToScreen()
+            save(placement, nil)
+            updateChildWindow()
             return
         }
         let start = dragOrigin ?? panel.frame.origin
-        dragOrigin = start
+        if dragOrigin == nil {
+            dragOrigin = start
+            updateChildWindow()
+        }
         // The screen under the pointer: the strip can be dragged across to another one.
-        let pointer = NSEvent.mouseLocation
+        let pointer = view.pointerLocation()
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(pointer) }) ?? panel.screen else { return }
-        let proposed = CGRect(origin: CGPoint(x: start.x + travel.x, y: start.y + travel.y), size: panel.frame.size)
-        let (origin, landed) = StripMagnet.snap(proposed: proposed, screen: screen.frame, visible: screen.visibleFrame)
+        // The size chosen, as far as that screen allows: a strip widened on a larger screen
+        // narrows when brought to a smaller one, and widens again on the way back.
+        let fitted = shownSize(visible: screen.visibleFrame)
+        let proposed = CGRect(origin: CGPoint(x: start.x + travel.x, y: start.y + travel.y), size: fitted)
+        let (origin, landed) = StripMagnet.snap(proposed: proposed, screen: screen.frame, visible: screen.visibleFrame, window: viewerFrame())
         let caught = (landed.docked && !placement.docked) || (landed.centeredX && !placement.centeredX) || (landed.centeredY && !placement.centeredY)
+            || (landed.window != nil && placement.window == nil) || (landed.window?.centered == true && placement.window?.centered != true)
         if caught { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
         placement = landed
-        panel.setFrameOrigin(origin)
+        setFrame(CGRect(origin: origin, size: fitted), display: true)
     }
 }
