@@ -493,6 +493,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     // MARK: Window shape
 
+    /// A size picked in the settings, applied at once; custom brings back the size stretched.
+    func setStripSizePreset(_ preset: StripSizePreset) {
+        strip.applySize(preset.size ?? Preferences.stripSize ?? .standard)
+    }
+
     func setStripOtherOpacity(_ opacity: Double) {
         stripOtherOpacity = Float(opacity)
         updateStrip()

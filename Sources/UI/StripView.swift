@@ -193,6 +193,18 @@ final class StripView: NSView {
         redraw()
         updateTips()
         if !scrollGestureActive { settle() }
+        onContentChanged()
+    }
+
+    /// Called after each update: the width the row needs may have changed.
+    var onContentChanged: () -> Void = {}
+
+    /// The width the whole row needs, margins included, with thumbnails `height` points tall,
+    /// when it holds every photo of the list; nil when more photos lie beyond an end.
+    func fittingWidth(thumbnailHeight height: CGFloat) -> CGFloat? {
+        guard !cutAtStart, !cutAtEnd, !cells.isEmpty else { return nil }
+        let widths = cells.reduce(0) { $0 + width(of: $1, height: height) }
+        return widths + metrics.gap * CGFloat(cells.count - 1) + 2 * inset
     }
 
     /// A new photo in the middle first leaves the photos where they were, the shift rebased
@@ -230,9 +242,11 @@ final class StripView: NSView {
 
     private func centre(of index: Int) -> CGFloat { centres(of: cells)[index] }
 
-    private func width(of cell: StripCell) -> CGFloat {
-        guard let image = cell.image, image.width > 0, image.height > 0 else { return (metrics.height * Self.defaultAspect).rounded() }
-        return (metrics.height * CGFloat(image.width) / CGFloat(image.height)).rounded()
+    private func width(of cell: StripCell) -> CGFloat { width(of: cell, height: metrics.height) }
+
+    private func width(of cell: StripCell, height: CGFloat) -> CGFloat {
+        guard let image = cell.image, image.width > 0, image.height > 0 else { return (height * Self.defaultAspect).rounded() }
+        return (height * CGFloat(image.width) / CGFloat(image.height)).rounded()
     }
 
     private func layoutFrames() {

@@ -61,7 +61,23 @@ enum Preferences {
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: stripPlacementKey) }
     }
 
-    /// nil until the user first moves or stretches the strip.
+    static let stripSizePresetKey = "stripSizePreset"
+
+    /// The size setting. A strip stretched before the setting existed counts as custom.
+    static var stripSizePreset: StripSizePreset {
+        get {
+            UserDefaults.standard.string(forKey: stripSizePresetKey).flatMap(StripSizePreset.init(rawValue:))
+                ?? (stripSize == nil ? .normal : .custom)
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: stripSizePresetKey) }
+    }
+
+    /// The size the strip takes: the preset's, or the one it was stretched to.
+    static var chosenStripSize: StripSize {
+        stripSizePreset.size ?? stripSize ?? .standard
+    }
+
+    /// The size the strip was last stretched to: the custom size. nil until then.
     static var stripSize: StripSize? {
         get {
             UserDefaults.standard.data(forKey: stripSizeKey).flatMap { try? JSONDecoder().decode(StripSize.self, from: $0) }
@@ -245,10 +261,12 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
     @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
     @AppStorage(Preferences.stripDimmingKey) private var stripOtherOpacity = 0.7
+    @AppStorage(Preferences.stripSizePresetKey) private var stripSizePreset = Preferences.stripSizePreset
     @State private var confirmsClear = false
     let onInfoVisibleChange: (Bool) -> Void
     let onStripVisibleChange: (Bool) -> Void
     let onStripOpacityChange: (Double) -> Void
+    var onStripSizeChange: (StripSizePreset) -> Void = { _ in }
 
     var body: some View {
         Form {
@@ -267,6 +285,11 @@ struct GeneralSettingsView: View {
                     }
                 }
                 .onChange(of: stripOtherOpacity) { _, value in onStripOpacityChange(value) }
+                // Stretching the strip by hand turns this to custom; picking a size applies it.
+                Picker("Taille de la bande", selection: $stripSizePreset) {
+                    ForEach(StripSizePreset.allCases) { Text($0.label).tag($0) }
+                }
+                .onChange(of: stripSizePreset) { _, value in onStripSizeChange(value) }
                 Toggle("Conserver le zoom en changeant de photo", isOn: $keepsZoomAcrossPhotos)
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
                 Toggle("Demander avant de supprimer plusieurs photos sélectionnées", isOn: $confirmsMultipleDelete)
@@ -682,7 +705,8 @@ enum SettingsWindow {
             cache: CacheSettings(disk: disk),
             onInfoVisibleChange: { [weak viewer] in viewer?.setInfoVisible($0) },
             onStripVisibleChange: { [weak viewer] in viewer?.setStripVisible($0) },
-            onStripOpacityChange: { [weak viewer] in viewer?.setStripOtherOpacity($0) }
+            onStripOpacityChange: { [weak viewer] in viewer?.setStripOtherOpacity($0) },
+            onStripSizeChange: { [weak viewer] in viewer?.setStripSizePreset($0) }
         )
         tabs.addTabViewItem(tab("Général", "gearshape", general))
         tabs.addTabViewItem(tab("Raccourcis", "keyboard", ShortcutsSettingsView(store: shortcuts)))

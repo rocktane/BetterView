@@ -49,8 +49,8 @@ final class StripResizeTests: XCTestCase {
 
     func testNeverNarrowerThanTheMinimum() {
         let start = CGRect(x: 346, y: 88, width: 820, height: 82)
-        XCTAssertEqual(resized(start, .right, -5000, .lower).width, StripResize.minSize.width)
-        XCTAssertEqual(resized(start, .right, -5000, .center).width, StripResize.minSize.width)
+        XCTAssertEqual(resized(start, .right, -5000, .lower).width, StripResize.minWidth(height: 82))
+        XCTAssertEqual(resized(start, .right, -5000, .center).width, StripResize.minWidth(height: 82))
         XCTAssertEqual(resized(start, .right, -5000, .center).midX, start.midX)
     }
 
@@ -59,7 +59,7 @@ final class StripResizeTests: XCTestCase {
         XCTAssertEqual(stretched(start, .top, CGPoint(x: 30, y: 40), (.lower, .lower)), CGRect(x: 200, y: 300, width: 820, height: 122), "the bottom stays, the width does not move")
         XCTAssertEqual(stretched(start, .bottom, CGPoint(x: 0, y: -40), (.lower, .upper)), CGRect(x: 200, y: 260, width: 820, height: 122), "the top stays")
         XCTAssertEqual(stretched(start, .top, CGPoint(x: 0, y: 5000), (.lower, .lower)).height, StripResize.maxHeight)
-        XCTAssertEqual(stretched(start, .top, CGPoint(x: 0, y: -5000), (.lower, .lower)).height, StripResize.minSize.height)
+        XCTAssertEqual(stretched(start, .top, CGPoint(x: 0, y: -5000), (.lower, .lower)).height, StripResize.minHeight)
     }
 
     func testACornerStretchesBothWays() {
@@ -112,7 +112,7 @@ final class StripResizeTests: XCTestCase {
         let chosen = StripSize(width: 1400, height: 120)
         XCTAssertEqual(StripResize.fitted(chosen, visible: small).width, 1000 - 2 * StripMagnet.dockGap)
         XCTAssertEqual(StripResize.fitted(chosen, visible: bottomDock).width, 1400)
-        XCTAssertEqual(StripResize.fitted(StripSize(width: 10, height: 10), visible: bottomDock), StripResize.minSize)
+        XCTAssertEqual(StripResize.fitted(StripSize(width: 10, height: 10), visible: bottomDock), CGSize(width: StripResize.minWidth(height: StripResize.minHeight), height: StripResize.minHeight))
         XCTAssertEqual(StripResize.fitted(chosen, visible: small).height, 120)
         XCTAssertEqual(StripResize.fitted(StripSize(width: 800, height: 900), visible: small).height, StripResize.maxHeight)
     }
@@ -161,7 +161,7 @@ final class StripResizeTests: XCTestCase {
 @MainActor
 final class StripPanelStretchTests: XCTestCase {
     private var pointer = CGPoint.zero
-    private var saved: [(StripPlacement, StripSize)] = []
+    private var saved: [(StripPlacement, StripSize?)] = []
 
     private func makePanel(placement: StripPlacement, size: StripSize = .standard) -> StripPanel {
         let strip = StripPanel(placement: placement, size: size)
@@ -203,7 +203,7 @@ final class StripPanelStretchTests: XCTestCase {
         XCTAssertEqual(strip.frame.minX, start.minX, "the left side stays")
         XCTAssertEqual(strip.frame.width, start.width + 150, "the right side follows the pointer")
         XCTAssertEqual(strip.frame.minY, start.minY, "a stretch never moves it up or down")
-        XCTAssertEqual(saved.last?.1.width, start.width + 150, "the width is saved once let go")
+        XCTAssertEqual(saved.last?.1?.width, start.width + 150, "the width is saved once let go")
         XCTAssertEqual(saved.count, 1)
     }
 
@@ -232,7 +232,7 @@ final class StripPanelStretchTests: XCTestCase {
         let reach = strip.reach
         gesture(strip, from: CGPoint(x: strip.frame.width - 3, y: 40), steps: Array(repeating: CGPoint(x: 60, y: 0), count: 8))
         XCTAssertEqual(asked, 8, "each step, so the photos come in while stretching")
-        XCTAssertGreaterThan(strip.reach, reach)
+        XCTAssertEqual(strip.reach, reach, "the photos for the widest strip are given from the start: none come in while stretching")
     }
 
     func testTheTopGripMakesTheThumbnailsTaller() {
