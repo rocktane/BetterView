@@ -51,7 +51,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .zoomOut: Spec(title: "Zoom arrière", group: .display, keys: [.character("-", modifiers: .command)], repeats: true)
         case .zoomFit: Spec(title: "Ajuster à la fenêtre", group: .display, keys: [.character("0", modifiers: .command), .character("0", modifiers: [.command, .shift]), .character("à", modifiers: .command)])
         case .toggleInfo: Spec(title: "Informations", group: .display, keys: [.character("i")])
-        case .toggleStrip: Spec(title: "Bande d'aperçu", group: .display, keys: [.character("b")])
+        case .toggleStrip: Spec(title: "Pellicule", group: .display, keys: [.character("b")])
         case .exit: Spec(title: "Quitter le zoom ou la comparaison", group: .display, keys: [.code(53)])
         case .compare: Spec(title: "Comparer les photos", group: .comparison, keys: [.character("c")])
         }
