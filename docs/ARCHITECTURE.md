@@ -259,7 +259,7 @@ Seul l'ARW est supprimé : les JPEG et XMP de même nom ne sont pas touchés en 
 
 ### Fenêtre de réglages
 
-`SettingsWindow` : un `NSTabViewController` en style barre d'outils (convention des réglages macOS), un `NSHostingController` SwiftUI par onglet, largeur 540 pt, la hauteur suit l'onglet (et le détail déplié).
+`SettingsWindow` : un `NSTabViewController` en style barre d'outils (convention des réglages macOS), un `NSHostingController` SwiftUI par onglet, largeur 640 pt, la hauteur suit l'onglet.
 
 - **Général > Affichage** : informations (synchronisées avec I et le menu Présentation, qui coche son entrée), pellicule, taille de la pellicule, conserver le zoom en changeant de photo (désactivé par défaut), sens de navigation après une suppression.
 - **Général > Formats RAW** : un interrupteur « Ouvrir les RAW avec BetterView » et une ligne de résumé (« 10 formats sur 11. ARW s'ouvre avec… »), puis un bouton « Détails… » qui ouvre une feuille de taille fixe (un interrupteur par format, avec l'app qui l'ouvre sinon) : la fenêtre des réglages ne change jamais de taille. Une erreur survenue feuille ouverte s'affiche sur la feuille. `NSWorkspace.setDefaultApplication(at:toOpen:completion:)` est appelé **un format à la fois**, y compris pour l'interrupteur global ; les erreurs sont regroupées en une alerte (le système peut demander un consentement ou refuser). L'état affiché est relu via `urlForApplication(toOpen:)` à l'ouverture, au retour au premier plan et après chaque changement, jamais stocké. Le bundle précédent est mémorisé ; il n'est restauré à la désactivation que si BetterView est toujours le gestionnaire effectif et que cette app existe encore.
