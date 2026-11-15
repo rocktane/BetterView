@@ -1,4 +1,5 @@
 import AppKit
+import Sparkle
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,6 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcuts = ShortcutStore()
     private var shortcutItems: [(action: ShortcutAction, item: NSMenuItem)] = []
     private var terminating = false
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil
+    )
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Runs alongside the first preview: no photo depends on the other finishing first.
@@ -32,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewer.showWindow()
         NSApp.activate(ignoringOtherApps: true)
+        // Test hosts and benchmarks must not prompt or make update requests.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+           !CommandLine.arguments.contains("--bench") {
+            updaterController.startUpdater()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -145,9 +154,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return entry
         }
 
+        let checkForUpdates = NSMenuItem(
+            title: "Rechercher les mises à jour…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdates.target = updaterController
+
         let quit = NSMenuItem(title: "Quitter BetterView", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         submenu("BetterView", [
             item("Réglages…", #selector(showSettings), ","),
+            checkForUpdates,
             .separator(),
             quit,
         ])

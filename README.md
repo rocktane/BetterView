@@ -8,11 +8,29 @@ Visionneuse RAW pour macOS, faite pour trier des photos le plus vite possible.
 - Au survol de la photo : boutons de fenêtre, nom, EXIF (ISO, vitesse, ouverture, focale), date et position dans le dossier.
 - Une pellicule flottante (le *filmstrip* de Lightroom), détachée de la fenêtre avec détection des rafales.
 - Un clic droit sur la photo ou une vignette pour l'envoyer dans Lightroom ou l'app choisie dans les réglages.
-- Aucune dépendance, aucun catalogue : un dossier, des photos.
+- Aucun catalogue : un dossier, des photos. Mises à jour intégrées avec Sparkle.
 
 ## Installation
 
-Il faut macOS 14 ou plus récent, Xcode et `xcodegen` (`brew install xcodegen`). Le projet Xcode n'est pas versionné : il est généré depuis `project.yml`.
+Il faut macOS 14 ou plus récent, sur Mac Intel ou Apple Silicon.
+
+La distribution Homebrew est préparée dans [docs/HOMEBREW.md](docs/HOMEBREW.md) et sera disponible après la première release universelle.
+
+Télécharger le ZIP depuis les [releases GitHub](https://github.com/rocktane/BetterView/releases/latest), le décompresser et déplacer BetterView dans `/Applications`.
+
+L'app n'a pas de certificat Apple et n'est pas notarisée. Au premier lancement, macOS peut refuser de l'ouvrir : après cette tentative, aller dans **Réglages Système > Confidentialité et sécurité > Ouvrir quand même**, puis confirmer.
+
+Si macOS indique que l'app est endommagée et ne propose pas cette option, après avoir vérifié que le ZIP provient bien des releases de ce dépôt, retirer uniquement la quarantaine de BetterView depuis Terminal :
+
+```sh
+xattr -dr com.apple.quarantine /Applications/BetterView.app
+```
+
+Les mises à jour suivantes sont proposées dans l'app par Sparkle. Le menu **BetterView > Rechercher les mises à jour…** permet aussi de vérifier manuellement. Sparkle demande l'autorisation d'activer les vérifications automatiques. Les archives sont authentifiées par une signature Sparkle Ed25519, indépendante d'un certificat Apple.
+
+### Construire depuis les sources
+
+Il faut Xcode et `xcodegen` (`brew install xcodegen`). Le projet Xcode n'est pas versionné : il est généré depuis `project.yml`. Sparkle est téléchargé automatiquement via Swift Package Manager.
 
 ```sh
 scripts/install.sh
@@ -31,6 +49,8 @@ La pellicule montre les photos du dossier, la photo courante au milieu ; clic po
 `C` compare, dans cet ordre : les photos sélectionnées, la rafale de la photo courante (prises à 2 s d'écart au plus), ou la photo courante et la suivante. Le tri se fait à la souris, sur la photo survolée : « Corbeille » la retire, « Garder celle-ci » met les autres photos affichées à la corbeille ; ⌘Z annule le geste d'un coup. Quand il n'en reste qu'une, retour à la vue normale. Z zoome à 100 % au même endroit sur toutes les photos, A chacune sur son point AF ; glisser, défiler ou pincer déplace ensuite tout le groupe.
 
 Une photo protégée porte un cadenas et refuse la suppression. Le marqueur « Aperçu » signale le JPEG embarqué, remplacé par le rendu RAW dès qu'il est prêt.
+
+La procédure de publication et la gestion de la clé Sparkle sont décrites dans [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Développement
 

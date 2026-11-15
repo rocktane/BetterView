@@ -1,0 +1,101 @@
+name: Update Homebrew
+
+on:
+  # Releases created with GITHUB_TOKEN do not emit a usable release event.
+  # workflow_run also covers the existing Sparkle publisher.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-tap
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: macos-15
+    steps:
+      # Do not execute source code from the triggering run. Always distribute
+      # the latest stable release, including on retries of an older run.
+      - name: Download latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          VERSION=${TAG#v}
+          mkdir archive
+          gh release download "$TAG" --pattern "BetterView-$VERSION.zip" --pattern SHA256SUMS.txt --dir archive
+          cd archive
+          # Match precisely the archive we install, rather than trusting arbitrary
+          # filenames or extra commands from the published checksum file.
+          SHA=$(shasum -a 256 "BetterView-$VERSION.zip" | awk '{print $1}')
+          grep -Fx "$SHA  BetterView-$VERSION.zip" SHA256SUMS.txt
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "SHA256=$SHA" >> "$GITHUB_ENV"
+
+      - name: Verify universal app
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, zipfile
+          with zipfile.ZipFile(f"archive/BetterView-{os.environ['VERSION']}.zip") as archive:
+              for name in archive.namelist():
+                  path = pathlib.PurePosixPath(name)
+                  if path.is_absolute() or '..' in path.parts:
+                      raise SystemExit(f"Unsafe archive path: {name}")
+          PY
+          ditto -x -k "archive/BetterView-$VERSION.zip" unpacked
+          APP=unpacked/BetterView.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = com.yohan.betterview
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist")" = 14.0
+          lipo "$APP/Contents/MacOS/BetterView" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict "$APP"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: rocktane/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+
+      - name: Update cask
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          cat > tap/Casks/betterview.rb <<CASK
+          cask "betterview" do
+            version "$VERSION"
+            sha256 "$SHA256"
+
+            url "https://github.com/$REPO/releases/download/v#{version}/BetterView-#{version}.zip"
+            name "BetterView"
+            desc "Fast RAW photo viewer and culling app"
+            homepage "https://github.com/$REPO"
+
+            depends_on macos: ">= :sonoma"
+
+            app "BetterView.app"
+          end
+          CASK
+          ruby -c tap/Casks/betterview.rb
+
+      - name: Push to tap
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add Casks/betterview.rb
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Update betterview to v$VERSION"
+          git push
