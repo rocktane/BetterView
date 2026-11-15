@@ -10,6 +10,7 @@ enum Preferences {
     static let confirmsMultipleDeleteKey = "confirmsMultipleDelete"
     static let keepsZoomAcrossPhotosKey = "keepsZoomAcrossPhotos"
     static let stripVisibleKey = "stripVisible"
+    static let openAppKey = "openApp"
     static let stripDimmingKey = "stripOtherOpacity"
     private static let stripPlacementKey = "stripPlacement"
     private static let stripSizeKey = "stripSize"
@@ -59,6 +60,11 @@ enum Preferences {
             UserDefaults.standard.data(forKey: stripPlacementKey).flatMap { try? JSONDecoder().decode(StripPlacement.self, from: $0) }
         }
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: stripPlacementKey) }
+    }
+
+    /// The app of the context menu's first items: automatic until one is picked.
+    static var openAppChoice: ExternalApps.Choice {
+        ExternalApps.Choice(stored: UserDefaults.standard.string(forKey: openAppKey))
     }
 
     static let stripSizePresetKey = "stripSizePreset"
@@ -262,6 +268,11 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
     @AppStorage(Preferences.stripDimmingKey) private var stripOtherOpacity = 0.7
     @AppStorage(Preferences.stripSizePresetKey) private var stripSizePreset = Preferences.stripSizePreset
+    @AppStorage(Preferences.openAppKey) private var openApp = ExternalApps.Choice.automaticValue
+    /// Read when the window opens or comes back: apps come and go while it is closed.
+    @State private var candidates: [ExternalApps.App] = []
+    @State private var automaticApp: ExternalApps.App?
+    @State private var chosenApp: ExternalApps.App?
     @State private var confirmsClear = false
     let onInfoVisibleChange: (Bool) -> Void
     let onStripVisibleChange: (Bool) -> Void
@@ -298,6 +309,26 @@ struct GeneralSettingsView: View {
                 Toggle("Conserver le zoom en changeant de photo", isOn: $keepsZoomAcrossPhotos)
                 Toggle("Après une suppression, garder le sens de navigation", isOn: $deleteFollowsDirection)
                 Toggle("Demander avant de supprimer plusieurs photos sélectionnées", isOn: $confirmsMultipleDelete)
+            }
+
+            Section {
+                Picker("Ouvrir dans", selection: openAppSelection) {
+                    Text(automaticApp.map { "Automatique (\($0.name))" } ?? "Automatique (aucune app trouvée)")
+                        .tag(ExternalApps.Choice.automaticValue)
+                    Divider()
+                    ForEach(listedApps, id: \.url) { app in
+                        Label { Text(app.name) } icon: { Image(nsImage: ExternalApps.icon(of: app)) }
+                            .tag(app.bundleIdentifier ?? "")
+                    }
+                    Divider()
+                    Text("Aucune").tag(ExternalApps.Choice.noneValue)
+                    Text("Autre…").tag(Self.otherTag)
+                }
+            } header: {
+                Text("Menu contextuel")
+            } footer: {
+                Text("App proposée en tête du menu d'une photo. Automatique : Lightroom, sinon Photomator, Affinity Photo, puis Photos. Les autres restent dans « Ouvrir avec ».")
+                    .settingsFooter()
             }
 
             Section {
@@ -345,9 +376,11 @@ struct GeneralSettingsView: View {
         .onAppear {
             associations.refresh()
             cache.refresh()
+            refreshApps()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             associations.refresh()
+            refreshApps()
         }
         .confirmationDialog("Vider le cache disque ?", isPresented: $confirmsClear) {
             Button("Vider le cache", role: .destructive) { cache.clear() }
@@ -359,6 +392,50 @@ struct GeneralSettingsView: View {
         .sheet(isPresented: $showsFormats) {
             FormatDetailsSheet(associations: associations)
         }
+    }
+
+    private static let otherTag = "\u{0}other"
+
+    /// The candidates installed here, plus an app picked by hand that is not one of them.
+    private var listedApps: [ExternalApps.App] {
+        guard let chosenApp, !candidates.contains(where: { $0.bundleIdentifier == chosenApp.bundleIdentifier }) else { return candidates }
+        return candidates + [chosenApp]
+    }
+
+    private var openAppSelection: Binding<String> {
+        Binding(
+            get: {
+                // An app chosen then removed shows as automatic, which is what the menu uses.
+                if case .app = ExternalApps.Choice(stored: openApp), chosenApp == nil { return ExternalApps.Choice.automaticValue }
+                return openApp
+            },
+            set: { value in
+                if value == Self.otherTag { pickOtherApp() } else { openApp = value; refreshApps() }
+            }
+        )
+    }
+
+    private func refreshApps() {
+        candidates = ExternalApps.installedCandidates()
+        automaticApp = ExternalApps.resolve(.automatic) { ExternalApps.installed($0) != nil }.flatMap(ExternalApps.installed)
+        if case .app(let identifier) = ExternalApps.Choice(stored: openApp) {
+            chosenApp = ExternalApps.installed(identifier)
+        } else {
+            chosenApp = nil
+        }
+    }
+
+    private func pickOtherApp() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.prompt = "Choisir"
+        panel.message = "App à proposer en tête du menu d'une photo"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let identifier = Bundle(url: url)?.bundleIdentifier,
+              identifier != Bundle.main.bundleIdentifier else { return }
+        openApp = identifier
+        refreshApps()
     }
 }
 

@@ -7,7 +7,7 @@ Visionneuse RAW pour macOS, faite pour trier des photos le plus vite possible.
 - Une fenêtre qui prend la forme de chaque photo, sans bordure ni barre de titre : on ne voit que la photo.
 - Au survol de la photo : boutons de fenêtre, nom, EXIF (ISO, vitesse, ouverture, focale), date et position dans le dossier.
 - Une pellicule flottante (le *filmstrip* de Lightroom), détachée de la fenêtre avec détection des rafales.
-- Un clic droit sur la photo ou une vignette pour l'envoyer dans l'application de son choix.
+- Un clic droit sur la photo ou une vignette pour l'envoyer dans Lightroom ou l'app choisie dans les réglages.
 - Aucune dépendance, aucun catalogue : un dossier, des photos.
 
 ## Installation
