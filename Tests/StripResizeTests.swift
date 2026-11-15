@@ -263,11 +263,12 @@ final class StripPanelStretchTests: XCTestCase {
         let strip = makePanel(placement: StripPlacement(origin: CGPoint(x: 100, y: 300), docked: false, centeredX: false))
         let start = strip.frame
         let before = strip.view.cellFrames[14]
-        gesture(strip, from: CGPoint(x: start.width / 2, y: start.height - 2), steps: Array(repeating: CGPoint(x: 0, y: 10), count: 4))
-        XCTAssertEqual(strip.frame, CGRect(x: start.minX, y: start.minY, width: start.width, height: start.height + 40), "the bottom stays")
-        XCTAssertEqual(strip.view.cellFrames[14].height, before.height + 40, "the thumbnails take the height")
+        // Reach the larger pixel bucket on standard displays as well as Retina.
+        gesture(strip, from: CGPoint(x: start.width / 2, y: start.height - 2), steps: Array(repeating: CGPoint(x: 0, y: 10), count: 8))
+        XCTAssertEqual(strip.frame, CGRect(x: start.minX, y: start.minY, width: start.width, height: start.height + 80), "the bottom stays")
+        XCTAssertEqual(strip.view.cellFrames[14].height, before.height + 80, "the thumbnails take the height")
         XCTAssertEqual(strip.view.cellFrames[14].minY, before.minY, "the margins stay the same")
-        XCTAssertEqual(saved.last?.1, StripSize(width: start.width, height: start.height + 40))
+        XCTAssertEqual(saved.last?.1, StripSize(width: start.width, height: start.height + 80))
         XCTAssertGreaterThan(strip.thumbnailPixels, 200, "and asks for larger thumbnails")
     }
 

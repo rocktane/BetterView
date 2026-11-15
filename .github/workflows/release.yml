@@ -52,13 +52,13 @@ jobs:
           brew install displayplacer
           displayplacer list
           DISPLAY_ID=$(swift -e 'import CoreGraphics; print(CGMainDisplayID())')
-          displayplacer "id:$DISPLAY_ID res:1920x1080 scaling:on"
+          displayplacer "id:$DISPLAY_ID res:1920x1080 scaling:off"
           swift -e '
             import AppKit
             guard let screen = NSScreen.main else { fatalError("No test display") }
             print("Test display:", screen.visibleFrame, "scale:", screen.backingScaleFactor)
-            precondition(screen.visibleFrame.width >= 1800 && screen.backingScaleFactor >= 2,
-                         "Window tests require a wide Retina display")
+            precondition(screen.visibleFrame.width >= 1800,
+                         "Window tests require a wide display")
           '
       - name: Build and test
         run: |
