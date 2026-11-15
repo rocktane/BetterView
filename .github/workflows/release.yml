@@ -54,7 +54,7 @@ jobs:
       - name: Diagnose test failures
         if: failure()
         run: |
-          swift -e 'import AppKit; print(NSScreen.screens.map { $0.visibleFrame })'
+          swift -e 'import AppKit; print(NSScreen.screens.map { screen in screen.visibleFrame })'
           if [ -d build/Tests.xcresult ]; then
             xcrun xcresulttool get test-results summary --path build/Tests.xcresult --format json
           fi
