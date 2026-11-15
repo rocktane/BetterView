@@ -926,24 +926,24 @@ final class ViewerController: NSObject, NSWindowDelegate {
             })
         }
 
-        let lightroom = ExternalApps.lightroom()
-        if let lightroom {
-            let icon = ExternalApps.icon(of: lightroom)
-            add(PhotoMenuTarget.openTitle(app: lightroom.name, count: count, selected: target.isSelection), image: icon) {
-                $0.confirmOpen(target.photos, in: lightroom)
+        let preferred = ExternalApps.preferred()
+        if let preferred {
+            let icon = ExternalApps.icon(of: preferred)
+            add(PhotoMenuTarget.openTitle(app: preferred.name, count: count, selected: target.isSelection), image: icon) {
+                $0.confirmOpen(target.photos, in: preferred)
             }
             if !target.otherSelection.isEmpty {
-                add(PhotoMenuTarget.openTitle(app: lightroom.name, count: target.otherSelection.count, selected: true), image: icon) {
-                    $0.confirmOpen(target.otherSelection, in: lightroom)
+                add(PhotoMenuTarget.openTitle(app: preferred.name, count: target.otherSelection.count, selected: true), image: icon) {
+                    $0.confirmOpen(target.otherSelection, in: preferred)
                 }
             }
             if !target.folder.isEmpty {
-                add(PhotoMenuTarget.openTitle(app: lightroom.name, count: target.folder.count, folder: true), image: icon) {
-                    $0.confirmOpen(target.folder, in: lightroom)
+                add(PhotoMenuTarget.openTitle(app: preferred.name, count: target.folder.count, folder: true), image: icon) {
+                    $0.confirmOpen(target.folder, in: preferred)
                 }
             }
         }
-        let apps = ExternalApps.apps(opening: clicked.url).filter { $0.url != lightroom?.url }
+        let apps = ExternalApps.apps(opening: clicked.url).filter { $0.url != preferred?.url }
         if !apps.isEmpty {
             let submenu = NSMenu()
             for app in apps {
@@ -1011,6 +1011,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         alert.messageText = one ? "Ouvrir \(photos[0].name) dans \(app.name) ?" : "Ouvrir \(photos.count) photos dans \(app.name) ?"
         alert.informativeText = app.importsFirst
             ? "\(app.name) \(one ? "la" : "les") proposera dans sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer."
+            : app.importsIntoLibrary
+            ? "\(app.name) \(one ? "la copiera" : "les copiera") dans sa photothèque."
             : "\(app.name) va s'ouvrir avec \(one ? "cette photo" : "ces photos")."
         alert.addButton(withTitle: "Ouvrir")
         alert.addButton(withTitle: "Annuler")

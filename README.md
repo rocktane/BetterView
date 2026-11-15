@@ -8,7 +8,7 @@ Visionneuse RAW pour macOS, faite pour trier des photos Sony A7C le plus vite po
 - Au survol de la photo : boutons de fenêtre, nom, puis ISO, vitesse, ouverture et focale, puis date de prise de vue, et position dans le dossier. Rien quand le pointeur est ailleurs. Informations masquées (I, ou Réglages > Général) : un petit « i » en bas à gauche, au survol, les réaffiche d'un clic.
 - Une pellicule flottante (le *filmstrip* de Lightroom), détachée de la fenêtre : les photos d'avant et d'après, et les rafales repérées. Elle se déplace en la glissant, s'aimante au Dock, au centre de l'écran et à la fenêtre de la photo, et s'agrandit en tirant ses bords.
 - Une vue Comparer pour garder la meilleure de plusieurs photos : jusqu'à 4 côte à côte, zoom à 100 % synchronisé, et corbeille directement depuis cette vue.
-- Un clic droit sur la photo ou une vignette pour l'envoyer dans Lightroom, avec la sélection ou tout le dossier.
+- Un clic droit sur la photo ou une vignette pour l'envoyer dans Lightroom (ou l'app choisie dans les réglages), avec la sélection ou tout le dossier.
 - Aucune dépendance, aucun catalogue : un dossier, des photos.
 
 ## Installation
@@ -72,7 +72,7 @@ A zoome sur la position AF que le boîtier Sony a écrite dans le fichier (repè
 
 Clic droit (ou ⌃+clic) sur la photo ou sur une vignette de la pellicule. Comme dans le Finder, le menu agit sur toute la sélection quand la photo cliquée en fait partie, sinon sur cette photo seule.
 
-- Ouvrir dans Lightroom Classic (ou Lightroom) : la photo ou la sélection, et, en plus, les photos sélectionnées et toutes les photos du dossier quand elles sont plus nombreuses. Une confirmation est toujours demandée, même pour une photo. Lightroom Classic montre ensuite sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer.
+- Ouvrir dans l'app choisie dans Réglages > Menu contextuel (automatique par défaut : Lightroom Classic, Lightroom, Photomator, Affinity Photo, puis Photos, la première installée ; « Aucune » retire ces lignes) : la photo ou la sélection, et, en plus, les photos sélectionnées et toutes les photos du dossier quand elles sont plus nombreuses. Une confirmation est toujours demandée, même pour une photo. Photos copie les photos dans sa photothèque. Lightroom Classic montre ensuite sa fenêtre d'importation : rien n'entre dans le catalogue avant d'y cliquer sur Importer.
 - Ouvrir avec : les autres apps qui ouvrent ce format, celle par défaut en premier. Un autre Lightroom installé demande la même confirmation.
 - Afficher dans le Finder, Copier (les fichiers, à coller dans le Finder ou une autre app), Partager.
 - Sélectionner ou désélectionner la photo, Tout désélectionner, Comparer les photos visées.

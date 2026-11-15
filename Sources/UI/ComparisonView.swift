@@ -736,21 +736,31 @@ final class ComparisonView: NSView {
 
     // MARK: Pointer
 
+    /// As in the viewer: a click toggles 100 % on the point clicked, a double-click counts as
+    /// its first click only, and dragging moves the window, or the photos once zoomed.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        // A click selects nothing: a double-click zooms where it is.
-        if event.clickCount == 2, slot(at: convert(event.locationInWindow, from: nil)) != nil {
-            toggleZoom(atWindowPoint: event.locationInWindow)
-            return
+        guard event.clickCount == 1, let window else { return }
+        let start = event.locationInWindow
+        var moved = false
+        while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+            if next.type == .leftMouseUp {
+                if !moved, slot(at: convert(start, from: nil)) != nil { toggleZoom(atWindowPoint: start) }
+                return
+            }
+            hover(atWindowPoint: next.locationInWindow)
+            if !moved {
+                guard hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) >= 3 else { continue }
+                moved = true
+                guard zoom != nil else {
+                    window.performDrag(with: event)
+                    return
+                }
+                pan(dx: next.locationInWindow.x - start.x, dy: start.y - next.locationInWindow.y)
+                continue
+            }
+            pan(dx: next.deltaX, dy: next.deltaY)
         }
-        // As in the viewer: dragging moves the window, or the photos once zoomed.
-        if zoom == nil { window?.performDrag(with: event) }
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        hover(atWindowPoint: event.locationInWindow)
-        guard zoom != nil else { return }
-        pan(dx: event.deltaX, dy: event.deltaY)
     }
 
     // MARK: Keyboard

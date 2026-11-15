@@ -82,4 +82,20 @@ final class PhotoMenuTargetTests: XCTestCase {
         wait(for: [reported], timeout: 5)
         XCTAssertEqual(failure, .changed)
     }
+
+    func testOpenAppResolvesInOrderAndFallsBack() {
+        let photomator = "com.pixelmatorteam.pixelmator.touch.x.photo"
+        let only: (Set<String>) -> (String) -> Bool = { set in { set.contains($0) } }
+        XCTAssertEqual(ExternalApps.resolve(.automatic, installed: only([ExternalApps.applePhotos, photomator])), photomator)
+        XCTAssertEqual(ExternalApps.resolve(.automatic, installed: only([ExternalApps.applePhotos, ExternalApps.lightroomClassic])), ExternalApps.lightroomClassic)
+        XCTAssertNil(ExternalApps.resolve(.automatic, installed: only([])))
+        XCTAssertNil(ExternalApps.resolve(.none, installed: only([ExternalApps.applePhotos])))
+        XCTAssertEqual(ExternalApps.resolve(.app("com.apple.Preview"), installed: only(["com.apple.Preview", ExternalApps.applePhotos])), "com.apple.Preview")
+        // Removed since: the automatic order rather than nothing.
+        XCTAssertEqual(ExternalApps.resolve(.app("gone"), installed: only([ExternalApps.applePhotos])), ExternalApps.applePhotos)
+        for choice in [ExternalApps.Choice.automatic, .none, .app("x.y")] {
+            XCTAssertEqual(ExternalApps.Choice(stored: choice.stored), choice)
+        }
+        XCTAssertEqual(ExternalApps.Choice(stored: nil), .automatic)
+    }
 }
