@@ -20,10 +20,10 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: xcode-27
     env:
-      # macos-15 defaults to Xcode 16.4; isolated deinit needs Swift 6.2.
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      # Match the toolchain used to validate the tests and universal archive locally.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
