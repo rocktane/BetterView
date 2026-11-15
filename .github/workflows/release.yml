@@ -50,7 +50,19 @@ jobs:
       - name: Build and test
         run: |
           xcodegen generate
-          xcodebuild test -scheme BetterView -destination 'platform=macOS' -derivedDataPath build -quiet
+          xcodebuild test -scheme BetterView -destination 'platform=macOS' -derivedDataPath build -resultBundlePath build/Tests.xcresult -quiet
+      - name: Diagnose test failures
+        if: failure()
+        run: |
+          swift -e 'import AppKit; print(NSScreen.screens.map { $0.visibleFrame })'
+          if [ -d build/Tests.xcresult ]; then
+            xcrun xcresulttool get test-results summary --path build/Tests.xcresult --format json
+          fi
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: build/Tests.xcresult
       - name: Package and sign Sparkle update
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
