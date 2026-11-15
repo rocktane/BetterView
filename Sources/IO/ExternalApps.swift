@@ -1,6 +1,7 @@
 import AppKit
 
-/// The other apps photos can be sent to: Lightroom first, then whatever opens the file.
+/// The other apps photos can be sent to: the one chosen in the settings first, then whatever
+/// opens the file.
 @MainActor
 enum ExternalApps {
     struct App: Equatable {
@@ -13,6 +14,9 @@ enum ExternalApps {
 
         /// Any Lightroom, wherever it is installed: sending photos to one is always confirmed.
         var isLightroom: Bool { bundleIdentifier.map(ExternalApps.lightroomIdentifiers.contains) ?? false }
+
+        /// Photos copies what it opens into its library at once.
+        var importsIntoLibrary: Bool { bundleIdentifier == ExternalApps.applePhotos }
     }
 
     enum OpenFailure: Equatable, Sendable {
@@ -25,10 +29,65 @@ enum ExternalApps {
     /// Classic first: it is the one that sorts and develops a folder of RAW files.
     nonisolated static let lightroomIdentifiers = [lightroomClassic, "com.adobe.lightroomCC"]
 
-    static func lightroom() -> App? {
-        lightroomIdentifiers.lazy
-            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-            .first.map { app(at: $0) }
+    nonisolated static let applePhotos = "com.apple.Photos"
+
+    /// Tried in this order while the setting is automatic: the first one installed wins.
+    nonisolated static let automaticOrder = lightroomIdentifiers + [
+        "com.pixelmatorteam.pixelmator.touch.x.photo", // Photomator
+        "com.seriflabs.affinityphoto2",
+        "com.seriflabs.affinityphoto",
+        "com.canva.affinity", // Affinity, the app that replaced Photo, Designer and Publisher
+        applePhotos,
+    ]
+
+    /// What the setting holds: automatic, no app, or one app by its bundle identifier.
+    enum Choice: Equatable, Hashable, Sendable {
+        case automatic
+        case none
+        case app(String)
+
+        nonisolated static let automaticValue = ""
+        nonisolated static let noneValue = "-"
+
+        nonisolated init(stored: String?) {
+            switch stored {
+            case nil, Self.automaticValue?: self = .automatic
+            case Self.noneValue?: self = .none
+            case let identifier?: self = .app(identifier)
+            }
+        }
+
+        nonisolated var stored: String {
+            switch self {
+            case .automatic: Self.automaticValue
+            case .none: Self.noneValue
+            case .app(let identifier): identifier
+            }
+        }
+    }
+
+    /// The first identifier that resolves, in order: pure so it can be tested without apps.
+    nonisolated static func resolve(_ choice: Choice, installed: (String) -> Bool) -> String? {
+        switch choice {
+        case .none: return nil
+        case .automatic: return automaticOrder.first(where: installed)
+        // An app chosen then removed falls back to the automatic order rather than to nothing.
+        case .app(let identifier): return installed(identifier) ? identifier : automaticOrder.first(where: installed)
+        }
+    }
+
+    static func installed(_ identifier: String) -> App? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier).map { app(at: $0) }
+    }
+
+    /// The app of the first items of the context menu, as set in the settings.
+    static func preferred() -> App? {
+        resolve(Preferences.openAppChoice) { installed($0) != nil }.flatMap(installed)
+    }
+
+    /// The apps the automatic order would pick from, as installed here.
+    static func installedCandidates() -> [App] {
+        automaticOrder.compactMap(installed)
     }
 
     /// The apps that open this file, the default one first, without BetterView itself.
