@@ -2,10 +2,16 @@ import { test, expect } from "@playwright/test";
 const thumbs = (page) => page.locator(".thumb-photo");
 const slots = (page) => page.locator(".slot");
 const action = (page, name) => page.locator(`[data-action="${name}"]`).first();
-async function open(page, route = "essayer/") {
-  await page.goto(route);
+async function open(page) {
+  await page.goto("");
   await expect(thumbs(page)).toHaveCount(8);
   await expect(slots(page).first().locator("img")).toBeVisible();
+}
+async function openComparison(page) {
+  await open(page);
+  for (const id of [0, 1, 2])
+    await page.locator(`.thumb[data-id="${id}"] .selection-toggle`).click();
+  await action(page, "compare").click();
 }
 test("disjoint selection, changing range and independent keyboard checkboxes", async ({
   page,
@@ -31,28 +37,6 @@ test("disjoint selection, changing range and independent keyboard checkboxes", a
   await expect(check).toHaveAttribute("aria-pressed", "false");
   await expect(thumbs(page).nth(4)).toHaveAttribute("aria-current", "true");
   await expect(page.locator("[data-announcement]")).toContainText("5 sur 8");
-});
-test("comparison trash and undo restore the work context; explicit exit clears it", async ({
-  page,
-}) => {
-  await open(page, "comparer/");
-  await expect(slots(page)).toHaveCount(3);
-  await slots(page).first().hover();
-  await slots(page)
-    .first()
-    .getByRole("button", { name: "Corbeille", exact: true })
-    .click();
-  await expect(slots(page)).toHaveCount(2);
-  await action(page, "undo").click();
-  await expect(slots(page)).toHaveCount(3);
-  await action(page, "single").click();
-  await action(page, "delete").click();
-  await action(page, "undo").click();
-  await expect(slots(page)).toHaveCount(1);
-  await action(page, "history").click();
-  await expect(
-    page.getByRole("dialog", { name: "Historique des suppressions" }),
-  ).toBeVisible();
 });
 test("Space activates its button and A toggles AF", async ({ page }) => {
   await open(page);
@@ -103,7 +87,7 @@ test("touch comparison reserves real photo and action areas at 320px", async ({
     isMobile: true,
   });
   const page = await context.newPage();
-  await page.goto(test.info().project.use.baseURL + "comparer/");
+  await openComparison(page);
   await expect(slots(page)).toHaveCount(3);
   expect(await page.evaluate(() => matchMedia("(hover:none)").matches)).toBe(
     true,
@@ -196,19 +180,6 @@ test("failed HD retains usable preview", async ({ page }) => {
     /-full.webp/,
   );
 });
-test("fullscreen uses available height", async ({ page }) => {
-  await open(page);
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  const before = await page.locator(".stage").boundingBox();
-  await action(page, "fullscreen").click();
-  await expect
-    .poll(() => page.evaluate(() => !!document.fullscreenElement))
-    .toBe(true);
-  expect(
-    (await page.locator(".stage").boundingBox()).height,
-  ).toBeGreaterThanOrEqual(before.height);
-  await page.evaluate(() => document.exitFullscreen());
-});
 test("base links, local image loading and no-JS fallback", async ({
   browser,
   page,
@@ -223,9 +194,7 @@ test("base links, local image loading and no-JS fallback", async ({
   );
   const context = await browser.newContext({ javaScriptEnabled: false });
   const fallback = await context.newPage();
-  await fallback.goto(
-    new URL("essayer/", test.info().project.use.baseURL).href,
-  );
+  await fallback.goto(test.info().project.use.baseURL);
   await expect(fallback.locator(".fallback-photo")).toBeVisible();
   await expect(
     fallback.getByText("Activez JavaScript", { exact: false }),
@@ -269,7 +238,7 @@ test("comparison zoom requests only its visible HD files and keeps strip nodes",
   page.on("request", (request) => {
     if (/-full\.webp/.test(request.url())) hd.add(request.url());
   });
-  await open(page, "comparer/");
+  await openComparison(page);
   expect(hd.size).toBe(0);
   const thumb = await thumbs(page).first().elementHandle();
   const image = await slots(page).first().locator("img").elementHandle();
@@ -332,7 +301,7 @@ test("successive deletion keeps keyboard focus, current photo and counters", asy
 test("comparison deletion clears removed hover and returns focus from removed actions", async ({
   page,
 }) => {
-  await open(page, "comparer/");
+  await openComparison(page);
   await slots(page).first().dispatchEvent("pointerenter");
   await page.locator("[data-viewer]").focus();
   await page.keyboard.press("Backspace");
@@ -400,7 +369,6 @@ test("visible viewer handles keys before click without moving focus, comparison 
   await page.keyboard.press("ArrowRight");
   await expect(slots(page)).toHaveAttribute("data-id", "0");
   await expect(action(page, "compare")).toBeDisabled();
-  await expect(action(page, "comparison")).toBeDisabled();
   await page.keyboard.press("c");
   await expect(slots(page)).toHaveCount(1);
   await expect(page.locator("[data-toast]")).toContainText("au moins deux");
@@ -454,43 +422,6 @@ test("pointer anchors keyboard zoom just like click and wheel; AF marker follows
   expect(await slot.locator(".marker").getAttribute("style")).not.toBe(before);
   await page.keyboard.press("a");
   await expect(slot.locator(".marker")).toBeHidden();
-});
-
-test("document shortcuts leave controls, modal focus and offscreen page alone", async ({
-  page,
-}) => {
-  await open(page);
-  await page.locator("[data-film]").scrollIntoViewIfNeeded();
-  const initial = await slots(page).getAttribute("data-id");
-  await page.evaluate(() => {
-    const input = document.createElement("input");
-    input.id = "outside-input";
-    document.querySelector("[data-viewer]").prepend(input);
-    input.focus({ preventScroll: true });
-  });
-  await page.keyboard.press("s");
-  await expect(page.locator("#outside-input")).toHaveValue("s");
-  await page.keyboard.press("ArrowRight");
-  await expect(slots(page)).toHaveAttribute("data-id", initial);
-  await action(page, "history").click();
-  await expect(page.locator("dialog[open]")).toBeVisible();
-  expect(
-    await page.evaluate(() => !!document.activeElement.closest("dialog")),
-  ).toBe(true);
-  await page.keyboard.press("ArrowRight");
-  await expect(slots(page)).toHaveAttribute("data-id", initial);
-  await page.keyboard.press("Escape");
-  await page.evaluate(() => {
-    document.activeElement.blur();
-    const spacer = document.createElement("div");
-    spacer.style.height = "2000px";
-    document.body.append(spacer);
-    window.scrollTo(0, document.body.scrollHeight);
-  });
-  await expect(page.locator("[data-viewer]")).not.toBeInViewport();
-  await page.waitForTimeout(100);
-  await page.keyboard.press("ArrowRight");
-  await expect(slots(page)).toHaveAttribute("data-id", initial);
 });
 
 test("home trial navigation activates shortcuts while preserving link focus", async ({

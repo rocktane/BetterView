@@ -8,8 +8,7 @@ pnpm install
 pnpm dev
 ```
 
-- `/` : présentation de l’app.
-- `/essayer` : simulation interactive sur huit photos WebP distinctes, dont quatre portraits.
+- `/` : présentation de l’app et simulation interactive sur huit photos WebP distinctes, dont quatre portraits.
 - `pnpm build` : sortie statique dans `dist/`.
 - `pnpm test` : tests du modèle de sélection, comparaison, suppression et restauration.
 
