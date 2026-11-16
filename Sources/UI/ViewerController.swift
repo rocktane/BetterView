@@ -48,6 +48,15 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Set while comparing, when the comparison view has the window.
     private var comparison: ComparisonModel?
+    // One transient screen-sized result, never inserted into either cache or exported.
+    private(set) var autoPhoto: PhotoKey?
+    private(set) var autoFrame: Frame?
+    private var autoOriginalFrame: Frame?
+    private var autoGeneration = 0
+    private(set) var autoRunning = false
+    var autoPreviewRenderer: @Sendable (PhotoKey, CGSize) -> Frame? = { photo, target in
+        Decoders.render(photo, tier: .screen, target: target, autoEnhance: true)
+    }
     /// What to give back on leaving: the comparison window has no photo's shape.
     private var preComparisonFrame: CGRect?
     private var preComparisonCenter: CGPoint?
@@ -140,6 +149,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
         pipeline.onFocus = { [weak self] in self?.focusArrived($0) }
         pipeline.onEvicted = { [weak self] in
+            if let self, self.pipeline.memoryLevel != .normal {
+                self.clearAutoPreview()
+                self.display()
+            }
             if self?.comparison != nil { self?.displayComparison() }
         }
         metadata.onLoaded = { [weak self] photo in
@@ -233,6 +246,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
         case .clicked: showOpenPanel()
+        case .toggleAuto: toggleAutoPreview()
         case .zoomChanged:
             if !view.isZoomed { stopFollowingFocus() }
             display()
@@ -250,6 +264,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// Whether the command does something where the user is: in the comparison, keeping and
     /// deleting go through the buttons over a photo, and no key picks one. The menu greys the rest.
     func isAvailable(_ action: ShortcutAction) -> Bool {
+        if action == .toggleAutoVersion { return comparison == nil && autoFrame != nil }
         guard comparison != nil else { return true }
         switch action {
         case .undo, .toggleZoom, .zoomToFocus, .exit, .compare: return true
@@ -274,6 +289,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .extendNext: extendSelection(by: 1, repeating: isRepeat)
         case .extendPrevious: extendSelection(by: -1, repeating: isRepeat)
         case .toggleSelection: toggleCurrentSelection()
+        case .toggleAutoVersion: if autoFrame != nil { view.toggleAutoVersion() }
         case .delete: deleteCurrent()
         case .undo: undo()
         case .toggleZoom: toggleZoom()
@@ -614,8 +630,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         input.repeating = repeating
         input.settled = settled
         input.focused = focused
-        input.zoomed = view.isZoomed
-        input.idle = idle && Pipeline.canWorkInBackground
+        input.zoomed = view.isZoomed && autoPhoto == nil
+        input.idle = idle && autoPhoto == nil && Pipeline.canWorkInBackground
         pipeline.applyWindowSizes(to: &input)
         pipeline.plan(photos: session.list.photos, input: input)
     }
@@ -624,10 +640,14 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Shows the current photo's best frame, or nothing: never another photo's pixels.
     func display() {
+        if autoPhoto != nil && (autoPhoto != session.list.current || comparison != nil) {
+            clearAutoPreview()
+        }
         if comparison != nil {
             displayComparison()
             return
         }
+        view.setAutoPreview(available: session.list.current != nil, active: autoPhoto != nil, busy: autoRunning)
         scheduleTitleUpdate()
         let photoChanged = session.list.current?.path != displayedPath
         displayedPath = session.list.current?.path
@@ -652,9 +672,12 @@ final class ViewerController: NSObject, NSWindowDelegate {
             onDisplayed?(PhotoKey(path: "", device: 0, inode: 0, size: 0, mtimeSeconds: 0, mtimeNanoseconds: 0), nil)
             return
         }
-        if let frame = pipeline.cache.best(current, zoomed: view.isZoomed) {
+        if autoFrame != nil, autoOriginalFrame == nil {
+            autoOriginalFrame = pipeline.cache.best(current, zoomed: false)
+        }
+        if let frame = autoOriginalFrame ?? pipeline.cache.best(current, zoomed: view.isZoomed) {
             applyWindowShape(aspect: frame.nativeSize.width / frame.nativeSize.height, approximate: frame.key.tier == .preview)
-            view.show(frame)
+            view.show(frame, auto: autoFrame)
             visiblePhoto = current
             shownTier = frame.key.tier
         } else if pipeline.hasFailed(FrameKey(photo: current, tier: .screen)) {
@@ -670,6 +693,64 @@ final class ViewerController: NSObject, NSWindowDelegate {
         updateProtectionBadge()
         updateInfo()
         onDisplayed?(current, shownTier)
+    }
+
+    private func clearAutoPreview() {
+        autoGeneration += 1
+        autoPhoto = nil
+        autoFrame = nil
+        autoOriginalFrame = nil
+    }
+
+    /// Preview only: bounded to 2560 pixels even at 100% zoom. Navigation invalidates it.
+    func toggleAutoPreview() {
+        guard comparison == nil, let photo = session.list.current else { return }
+        if autoFrame != nil {
+            view.restoreAutoSplit()
+            return
+        }
+        if autoPhoto != nil {
+            clearAutoPreview()
+            display()
+            replan()
+            return
+        }
+        guard !autoRunning, pipeline.memoryLevel == .normal else {
+            view.flash("Aperçu indisponible pour le moment")
+            return
+        }
+        autoPhoto = photo
+        autoRunning = true
+        autoGeneration += 1
+        let generation = autoGeneration
+        let size = pipeline.target
+        let scale = min(1, 2560 / max(size.width, size.height, 1))
+        let target = CGSize(width: max(1, size.width * scale), height: max(1, size.height * scale))
+        display()
+        replan()
+        let render = autoPreviewRenderer
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let frame: Frame? = PhotoKey.read(path: photo.path) == photo
+                ? render(photo, target) : nil
+            let unchanged = PhotoKey.read(path: photo.path) == photo
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.autoRunning = false
+                    guard generation == self.autoGeneration, self.session.list.current == photo,
+                          self.comparison == nil else { self.display(); return }
+                    if unchanged, let frame, self.pipeline.memoryLevel == .normal {
+                        self.autoFrame = frame
+                        self.view.flash("Aperçu Auto · non enregistré · résolution écran", duration: 3)
+                    } else {
+                        self.clearAutoPreview()
+                        self.replan()
+                        self.view.flash("Impossible de créer l’aperçu Auto")
+                    }
+                    self.display()
+                }
+            }
+        }
     }
 
     /// After the image commit: one dictionary lookup, no I/O.
@@ -1063,6 +1144,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
+        clearAutoPreview()
         view.exitZoom()
         preComparisonFrame = window.frame
         preComparisonCenter = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
@@ -1294,7 +1376,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         // picks a photo.
         case .next, .previous, .jumpForward, .jumpBackward, .delete,
              .toggleInfo, .toggleStrip, .first, .last, .extendNext, .extendPrevious,
-             .toggleSelection, .zoomIn, .zoomOut, .zoomFit:
+             .toggleSelection, .toggleAutoVersion, .zoomIn, .zoomOut, .zoomFit:
             break
         }
     }

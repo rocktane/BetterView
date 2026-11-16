@@ -72,8 +72,8 @@ final class SelectionRingViewerTests: XCTestCase {
         XCTAssertNotNil(comparison())
         let focused = comparison()?.focused
         let decision = controller.view.shortcuts.decide(.code(49), isRepeat: false)
-        XCTAssertEqual(decision, .perform(.toggleSelection, repeating: false))
-        controller.perform(.toggleSelection)
+        XCTAssertEqual(decision, .perform(.toggleAutoVersion, repeating: false))
+        controller.perform(.toggleAutoVersion)
         XCTAssertEqual(comparison()?.focused, focused, "no move")
         XCTAssertEqual(selection()?.isEmpty, true, "no selection in this view")
         controller.perform(.exit)

@@ -1,0 +1,69 @@
+---
+import LegalLayout from "../layouts/LegalLayout.astro";
+import { legal } from "../config/legal";
+---
+
+<LegalLayout title="Confidentialité">
+  <section>
+    <h2>Navigation et démonstration</h2>
+    <p>
+      Le site n’intègre ni formulaire, ni compte utilisateur, ni publicité. La
+      démonstration ne dépose pas de cookies et ne conserve pas vos actions dans
+      un stockage persistant du navigateur.
+    </p>
+    <p>
+      La démonstration utilise des photographies d’illustration fournies avec le
+      site. Elle ne demande pas l’accès à vos photos. Les sélections et
+      suppressions simulées restent en mémoire pendant la session de
+      démonstration.
+    </p>
+  </section>
+  <section>
+    <h2>Mesure d’audience sans cookies</h2>
+    <p>
+      Sur le domaine public, nous utilisons Umami, auto-hébergé sur notre
+      serveur ibox en Allemagne, à l’adresse stats.yohan.one, pour mesurer les
+      visites et les pages consultées. Cette mesure ne dépose aucun cookie. Les
+      paramètres de recherche et les fragments des adresses sont exclus du
+      suivi.
+    </p>
+    <p>
+      Le navigateur transmet des informations techniques au serveur de mesure,
+      notamment pour établir les statistiques de navigation. Le suivi respecte
+      le signal « Do Not Track » lorsqu’il est activé dans votre navigateur. Les
+      visites locales et les domaines de prévisualisation ne sont pas suivis.
+    </p>
+  </section>
+  <section>
+    <h2>Hébergement et données de connexion</h2>
+    <p>
+      La consultation d’un site transmet des données techniques au serveur,
+      notamment l’adresse IP et les informations de requête. Le site sera
+      hébergé chez Hetzner Online GmbH en Allemagne. La machine retenue et la
+      configuration de ses journaux de connexion restent à préciser.
+    </p>
+    <p>
+      {legal.privacyDetails ||
+        "À compléter avant publication : responsable du traitement et coordonnées, données journalisées, finalités, bases légales, destinataires, durées de conservation, éventuels transferts hors de l’Union européenne et garanties, ainsi que modalités d’exercice des droits applicables."}
+    </p>
+    <p>
+      Selon le traitement, vous pouvez disposer de droits d’accès, de
+      rectification, d’effacement, de limitation, d’opposition et de
+      portabilité. Pour exercer vos droits, écrivez à contact@23o.dev. Vous
+      pouvez adresser une{" "}
+      <a href="https://www.cnil.fr/fr/adresser-une-plainte">
+        réclamation à la CNIL
+      </a>
+      .
+    </p>
+  </section>
+  <section>
+    <h2>Liens externes</h2>
+    <p>
+      Les liens vers GitHub et les autres sites externes vous conduisent vers
+      des services régis par leurs propres règles de confidentialité. Cette page
+      décrit le site web et sa démonstration ; elle ne couvre pas l’application
+      macOS.
+    </p>
+  </section>
+</LegalLayout>

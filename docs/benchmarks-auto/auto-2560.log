@@ -1,0 +1,18 @@
+mode=auto target=2560 files=5 rssStartMB=9.25696
+round=0 file=A7C04171.ARW ms=1031.8 surfaceMB=17.5 rssMB=126.4 size=2560x1707
+round=0 file=A7C04172.ARW ms=591.8 surfaceMB=17.5 rssMB=127.7 size=2560x1707
+round=0 file=A7C04173.ARW ms=606.4 surfaceMB=17.5 rssMB=126.4 size=2560x1707
+round=0 file=A7C04174.ARW ms=590.6 surfaceMB=17.5 rssMB=126.5 size=2560x1707
+round=0 file=A7C04175.ARW ms=570.4 surfaceMB=17.5 rssMB=126.7 size=2560x1707
+round=1 file=A7C04171.ARW ms=560.1 surfaceMB=17.5 rssMB=126.8 size=2560x1707
+round=1 file=A7C04172.ARW ms=576.6 surfaceMB=17.5 rssMB=126.9 size=2560x1707
+round=1 file=A7C04173.ARW ms=583.9 surfaceMB=17.5 rssMB=126.9 size=2560x1707
+round=1 file=A7C04174.ARW ms=574.3 surfaceMB=17.5 rssMB=126.9 size=2560x1707
+round=1 file=A7C04175.ARW ms=589.4 surfaceMB=17.5 rssMB=126.9 size=2560x1707
+round=2 file=A7C04171.ARW ms=591.6 surfaceMB=17.5 rssMB=127.0 size=2560x1707
+round=2 file=A7C04172.ARW ms=566.1 surfaceMB=17.5 rssMB=127.1 size=2560x1707
+round=2 file=A7C04173.ARW ms=576.6 surfaceMB=17.5 rssMB=127.2 size=2560x1707
+round=2 file=A7C04174.ARW ms=552.3 surfaceMB=17.5 rssMB=127.2 size=2560x1707
+round=2 file=A7C04175.ARW ms=594.2 surfaceMB=17.5 rssMB=127.2 size=2560x1707
+firstMS=1031.8 warmMedianMS=583.9 warmP95MS=606.4
+rssAfterIdleMB=126.828544

@@ -1,0 +1,114 @@
+<div class="handwritten-trials" aria-hidden="true">
+  <div class="handwritten-choice choice-1">
+    <span class="writing">Essayer directement</span>
+    <svg
+      class="hand-drawn-arrow"
+      viewBox="-14 -12 204 120"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <marker
+          id="handwritten-tip-1"
+          viewBox="0 0 20 20"
+          markerWidth="20"
+          markerHeight="20"
+          refX="17"
+          refY="10"
+          orient="auto"
+          markerUnits="userSpaceOnUse"
+          overflow="visible"
+        >
+          <path
+            d="M3 3 L17 10 L3 17"
+            vector-effect="non-scaling-stroke"
+            stroke="currentColor"
+            stroke-width="2.1"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </marker>
+      </defs>
+      <path
+        d="M8 18 C42 2 121 5 139 27 C154 47 129 57 112 47 C94 36 116 25 132 37 C148 50 136 70 119 83"
+        vector-effect="non-scaling-stroke"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        marker-end="url(#handwritten-tip-1)"
+      />
+    </svg>
+  </div>
+</div>
+
+<style>
+  @font-face {
+    font-family: "Caveat";
+    src: url("../assets/fonts/Caveat-Variable.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+  }
+
+  .handwritten-trials {
+    width: min(100%, 610px);
+    margin: clamp(22px, 4vw, 34px) auto 0;
+  }
+
+  .handwritten-choice {
+    display: grid;
+    grid-template-columns: max-content 110px;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    min-width: 0;
+    min-height: 94px;
+    padding: 4px 0;
+    color: var(--blue);
+  }
+
+  .writing {
+    display: inline-block;
+    font-family: "Caveat", "Bradley Hand", cursive;
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1.1;
+    white-space: nowrap;
+    transform: rotate(-1.5deg);
+    transform-origin: 50% 70%;
+  }
+
+  .hand-drawn-arrow {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    transform: translateY(14px);
+  }
+
+  @media (max-width: 520px) {
+    .handwritten-choice {
+      grid-template-columns: max-content 82px;
+      gap: 18px;
+      min-height: 86px;
+    }
+
+    .writing {
+      justify-self: end;
+      font-size: 27px;
+    }
+  }
+
+  @media (max-width: 350px) {
+    .handwritten-choice {
+      grid-template-columns: max-content 68px;
+      gap: 15px;
+    }
+
+    .writing {
+      font-size: 25px;
+    }
+  }
+</style>

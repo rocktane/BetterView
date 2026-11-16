@@ -223,8 +223,8 @@ final class SpaceShortcutTests: XCTestCase {
         defaults.set(try JSONEncoder().encode(stored), forKey: "shortcuts")
     }
 
-    func testSpaceChecksThePhotoByDefault() {
-        XCTAssertEqual(ShortcutMap.defaults.action(for: space), .toggleSelection)
+    func testSpaceComparesAutoByDefault() {
+        XCTAssertEqual(ShortcutMap.defaults.action(for: space), .toggleAutoVersion)
         XCTAssertFalse(ShortcutMap.defaults.keys(for: .next).isEmpty, "the next photo keeps its other keys")
         XCTAssertEqual(ShortcutMap.defaults.action(for: .code(124)), .next)
         XCTAssertEqual(ShortcutMap.defaults.menuBinding(for: .toggleSelection), .character("s"), "the menu still shows S")
@@ -234,10 +234,22 @@ final class SpaceShortcutTests: XCTestCase {
         try saveOldKeys()
         let before = defaults.data(forKey: "shortcuts")
         let store = ShortcutStore(defaults: defaults)
-        XCTAssertEqual(store.map.action(for: space), .toggleSelection)
+        XCTAssertEqual(store.map.action(for: space), .toggleAutoVersion)
         XCTAssertEqual(store.map.keys(for: .next), [.code(124), .code(125)])
         XCTAssertEqual(defaults.data(forKey: "shortcuts"), before, "a launch writes nothing")
         XCTAssertEqual(defaults.integer(forKey: "shortcutsVersion"), 0)
+    }
+
+    func testVersionTwoSelectionSpaceMigratesToAuto() throws {
+        try saveOldKeys {
+            $0["next"] = [.code(124), .code(125)]
+            $0["toggleSelection"] = [.character("s"), .code(49)]
+            $0.removeValue(forKey: "toggleAutoVersion")
+        }
+        defaults.set(2, forKey: "shortcutsVersion")
+        let store = ShortcutStore(defaults: defaults)
+        XCTAssertEqual(store.map.action(for: space), .toggleAutoVersion)
+        XCTAssertEqual(store.map.action(for: .character("s")), .toggleSelection)
     }
 
     func testSpaceMovedElsewhereByTheUserStaysThere() throws {

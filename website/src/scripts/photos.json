@@ -1,0 +1,274 @@
+[
+  {
+    "id": 1,
+    "name": "DSC_2042.ARW",
+    "src": "/images/coast-full.webp",
+    "preview": "/images/coast-preview.webp",
+    "thumb": "/images/coast-thumb.webp",
+    "width": 4000,
+    "height": 2591,
+    "alt": "Côte au coucher du soleil",
+    "burst": 1,
+    "locked": false,
+    "focus": {
+      "x": 0.483,
+      "y": 0.38
+    },
+    "responsive": [
+      {
+        "src": "/images/coast-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/coast-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/coast-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/coast-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 0,
+    "name": "DSC_2041.ARW",
+    "src": "/images/mountain-full.webp",
+    "preview": "/images/mountain-preview.webp",
+    "thumb": "/images/mountain-thumb.webp",
+    "width": 4000,
+    "height": 2667,
+    "alt": "Vallée alpine",
+    "burst": 1,
+    "locked": false,
+    "focus": {
+      "x": 0.81,
+      "y": 0.34
+    },
+    "responsive": [
+      {
+        "src": "/images/mountain-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/mountain-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/mountain-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/mountain-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "DSC_2043.ARW",
+    "src": "/images/forest-full.webp",
+    "preview": "/images/forest-preview.webp",
+    "thumb": "/images/forest-thumb.webp",
+    "width": 4000,
+    "height": 2667,
+    "alt": "Forêt",
+    "burst": 1,
+    "locked": false,
+    "focus": {
+      "x": 0.6,
+      "y": 0.57
+    },
+    "responsive": [
+      {
+        "src": "/images/forest-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/forest-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/forest-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/forest-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "DSC_2044.ARW",
+    "src": "/images/lake-full.webp",
+    "preview": "/images/lake-preview.webp",
+    "thumb": "/images/lake-thumb.webp",
+    "width": 4000,
+    "height": 2667,
+    "alt": "Lac de montagne",
+    "burst": 2,
+    "locked": false,
+    "focus": {
+      "x": 0.76,
+      "y": 0.79
+    },
+    "responsive": [
+      {
+        "src": "/images/lake-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/lake-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/lake-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/lake-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "name": "DSC_2045.ARW",
+    "src": "/images/portrait-1-full.webp",
+    "preview": "/images/portrait-1-preview.webp",
+    "thumb": "/images/portrait-1-thumb.webp",
+    "width": 2268,
+    "height": 4032,
+    "alt": "Pins sous un ciel bleu",
+    "burst": 2,
+    "locked": false,
+    "focus": {
+      "x": 0.58,
+      "y": 0.69
+    },
+    "responsive": [
+      {
+        "src": "/images/portrait-1-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/portrait-1-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/portrait-1-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/portrait-1-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "name": "DSC_2046.ARW",
+    "src": "/images/portrait-2-full.webp",
+    "preview": "/images/portrait-2-preview.webp",
+    "thumb": "/images/portrait-2-thumb.webp",
+    "width": 3264,
+    "height": 4896,
+    "alt": "Montagne verticale",
+    "burst": 2,
+    "locked": false,
+    "focus": {
+      "x": 0.55,
+      "y": 0.43
+    },
+    "responsive": [
+      {
+        "src": "/images/portrait-2-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/portrait-2-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/portrait-2-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/portrait-2-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "name": "DSC_2047.ARW",
+    "src": "/images/portrait-3-full.webp",
+    "preview": "/images/portrait-3-preview.webp",
+    "thumb": "/images/portrait-3-thumb.webp",
+    "width": 4000,
+    "height": 6000,
+    "alt": "Montagne à travers les arbres",
+    "burst": 3,
+    "locked": false,
+    "focus": {
+      "x": 0.48,
+      "y": 0.21
+    },
+    "responsive": [
+      {
+        "src": "/images/portrait-3-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/portrait-3-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/portrait-3-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/portrait-3-1400.webp",
+        "width": 1400
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "name": "DSC_2048.ARW",
+    "src": "/images/portrait-4-full.webp",
+    "preview": "/images/portrait-4-preview.webp",
+    "thumb": "/images/portrait-4-thumb.webp",
+    "width": 3456,
+    "height": 5184,
+    "alt": "Route dans la brume",
+    "burst": 3,
+    "locked": true,
+    "focus": {
+      "x": 0.34,
+      "y": 0.26
+    },
+    "responsive": [
+      {
+        "src": "/images/portrait-4-320.webp",
+        "width": 320
+      },
+      {
+        "src": "/images/portrait-4-640.webp",
+        "width": 640
+      },
+      {
+        "src": "/images/portrait-4-960.webp",
+        "width": 960
+      },
+      {
+        "src": "/images/portrait-4-1400.webp",
+        "width": 1400
+      }
+    ]
+  }
+]

@@ -1,0 +1,292 @@
+---
+interface Props {
+  label: string;
+  variant?: number | "current";
+}
+
+const { label, variant = "current" } = Astro.props;
+const hasVolume = variant !== "current" && variant !== 7;
+---
+
+{hasVolume ? (
+  <kbd class:list={["keycap", "keycap--volume", `keycap--${variant}`]}>
+    <span class="keycap__solid">
+      <span class="keycap__side keycap__side--front" aria-hidden="true" />
+      <span class="keycap__side keycap__side--back" aria-hidden="true" />
+      <span class="keycap__side keycap__side--right" aria-hidden="true" />
+      <span class="keycap__side keycap__side--left" aria-hidden="true" />
+      <span class="keycap__face">
+        <span class="keycap__label">{label}</span>
+      </span>
+    </span>
+  </kbd>
+) : (
+  <kbd class:list={["keycap", `keycap--${variant}`]}>{label}</kbd>
+)}
+
+<style>
+  .keycap {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    min-width: 32px;
+    height: 31px;
+    padding: 0 7px;
+    color: inherit;
+    border: 1px solid #aeb8c3;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  /* The existing BetterView key, kept separate from the ten proposals. */
+  .keycap--current {
+    color: #34465d;
+    background: linear-gradient(180deg, #fff 0%, #f7f9fc 65%, #e7edf4 100%);
+    border-color: #bcc9d8;
+    border-bottom-color: #a2b2c5;
+    box-shadow:
+      0 4px 0 #aab9cb,
+      0 5px 0 #91a4bc,
+      0 7px 5px #172b461c,
+      inset 0 1px 0 #fff;
+    transform: translateY(-2px);
+  }
+
+  .keycap--volume {
+    --key-top: #fff;
+    --key-edge: #a8b2bd;
+    --key-front: #c3ccd6;
+    --key-back: #dbe2e9;
+    --key-side: #aeb9c5;
+    --key-depth: 8px;
+    --key-radius: 5px;
+    --key-transform: rotateX(52deg) rotateZ(-10deg);
+    position: relative;
+    display: inline-block;
+    min-width: 40px;
+    width: 40px;
+    height: 34px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    perspective: 150px;
+    overflow: visible;
+  }
+
+  .keycap__solid {
+    position: absolute;
+    inset: 3px 4px 7px;
+    transform: var(--key-transform);
+    transform-style: preserve-3d;
+    transition: transform 70ms ease;
+  }
+
+  .keycap__face,
+  .keycap__side {
+    position: absolute;
+    display: block;
+    margin: 0;
+    backface-visibility: hidden;
+  }
+
+  .keycap__face {
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #26384b;
+    background: var(--key-top);
+    border: 1px solid var(--key-edge);
+    border-radius: var(--key-radius);
+    box-shadow: inset 0 1px 0 #ffffffcc;
+    transform: translateZ(0.4px);
+  }
+
+  .keycap__label {
+    display: block;
+    line-height: 1;
+    transform: translateZ(0.5px);
+  }
+
+  .keycap__side--front,
+  .keycap__side--back {
+    left: 0;
+    width: 100%;
+    height: var(--key-depth);
+    border-right: 1px solid var(--key-edge);
+    border-left: 1px solid var(--key-edge);
+  }
+
+  .keycap__side--front {
+    top: 100%;
+    background: var(--key-front);
+    border-bottom: 1px solid var(--key-edge);
+    transform: rotateX(-90deg);
+    transform-origin: top;
+  }
+
+  .keycap__side--back {
+    bottom: 100%;
+    background: var(--key-back);
+    border-top: 1px solid var(--key-edge);
+    transform: rotateX(90deg);
+    transform-origin: bottom;
+  }
+
+  .keycap__side--right,
+  .keycap__side--left {
+    top: 0;
+    width: var(--key-depth);
+    height: 100%;
+    border-top: 1px solid var(--key-edge);
+    border-bottom: 1px solid var(--key-edge);
+  }
+
+  .keycap__side--right {
+    left: 100%;
+    background: var(--key-side);
+    border-right: 1px solid var(--key-edge);
+    transform: rotateY(90deg);
+    transform-origin: left;
+  }
+
+  .keycap__side--left {
+    right: 100%;
+    background: var(--key-back);
+    border-left: 1px solid var(--key-edge);
+    transform: rotateY(-90deg);
+    transform-origin: right;
+  }
+
+  .keycap--1 {
+    --key-top: linear-gradient(145deg, #fff 5%, #e8edf3 92%);
+    --key-front: #b6c2cf;
+    --key-side: #8f9fae;
+    --key-depth: 9px;
+    --key-transform: rotateX(54deg) rotateZ(-12deg);
+  }
+
+  .keycap--2 {
+    --key-top: #fbfcfd;
+    --key-edge: #98a3ae;
+    --key-front: #c6cdd4;
+    --key-back: #e1e5e9;
+    --key-side: #96a2ad;
+    --key-depth: 11px;
+    --key-transform: rotateX(49deg) rotateZ(14deg);
+  }
+
+  .keycap--3 {
+    --key-edge: #89949f;
+    --key-front: #aeb8c1;
+    --key-side: #818e9a;
+    --key-depth: 10px;
+    --key-radius: 3px;
+    --key-transform: rotateX(60deg) rotateZ(-4deg);
+  }
+
+  .keycap--3 .keycap__face {
+    box-shadow:
+      inset 0 0 0 2px #fff,
+      inset 0 0 0 3px #c6cfd7;
+  }
+
+  .keycap--4 {
+    --key-top: #dfe5eb;
+    --key-edge: #8996a3;
+    --key-front: #96a3b0;
+    --key-back: #c3ccd4;
+    --key-side: #748391;
+    --key-depth: 7px;
+    --key-transform: rotateX(52deg) rotateZ(-17deg) translateZ(-3px);
+  }
+
+  .keycap--4 .keycap__face {
+    box-shadow:
+      inset 0 2px 3px #26384b29,
+      inset 0 -1px 0 #fff;
+  }
+
+  .keycap--5 {
+    --key-top: linear-gradient(135deg, #fff 0 48%, #dfe5ea 100%);
+    --key-edge: #929da8;
+    --key-front: #a8b3bd;
+    --key-back: #d5dce2;
+    --key-side: #7e8b97;
+    --key-depth: 10px;
+    --key-radius: 1px;
+    --key-transform: rotateX(45deg) rotateZ(8deg);
+  }
+
+  .keycap--5 .keycap__face::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border: 1px solid #aab4bd;
+    pointer-events: none;
+  }
+
+  .keycap--6 {
+    --key-edge: #65717d;
+    --key-front: #a4aeb8;
+    --key-back: #d1d7dd;
+    --key-side: #788590;
+    --key-depth: 12px;
+    --key-radius: 4px;
+    --key-transform: rotateX(48deg) rotateY(-22deg) rotateZ(-4deg);
+  }
+
+  /* Choice 7 is intentionally pixel-for-pixel the former proposal. */
+  .keycap--7 {
+    background: #fff;
+    border-color: #b9bdc1;
+    box-shadow:
+      0 2px 0 #e0e2e4,
+      0 4px 0 #b9bec3,
+      0 5px 2px #0000000d;
+    transform: translateY(-2px);
+  }
+
+  .keycap--8 {
+    --key-top: #f7f8f9;
+    --key-edge: #818c97;
+    --key-front: #b2bbc4;
+    --key-back: #d5dade;
+    --key-side: #87939e;
+    --key-depth: 9px;
+    --key-radius: 2px;
+    --key-transform: rotateX(52deg) rotateY(24deg) rotateZ(5deg);
+  }
+
+  .keycap--9 {
+    --key-top: #f1f4f6;
+    --key-edge: #98a3ad;
+    --key-front: #b9c2ca;
+    --key-back: #dbe0e4;
+    --key-side: #939faa;
+    --key-depth: 6px;
+    --key-radius: 4px;
+    --key-transform: rotateX(64deg) rotateZ(-10deg);
+  }
+
+  .keycap--10 {
+    --key-top: linear-gradient(180deg, #fff, #eef1f4);
+    --key-front: #bcc5cd;
+    --key-back: #dce1e5;
+    --key-side: #96a2ad;
+    --key-depth: 10px;
+    --key-radius: 9px 9px 6px 6px;
+    --key-transform: rotateX(52deg) rotateZ(14deg);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .keycap__solid {
+      transition: none;
+    }
+  }
+</style>

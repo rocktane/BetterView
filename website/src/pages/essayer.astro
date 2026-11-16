@@ -1,0 +1,22 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Viewer from "../components/Viewer.astro";
+---
+
+<Layout title="Essayer BetterView">
+  <main class="playground">
+    <header class="demo-heading">
+      <div>
+        <h1>À vous de trier.</h1>
+        <p>Utilisez les flèches pour parcourir les photos.</p>
+      </div>
+      <span>Démo interactive · WebP d’exemple, pas de décodage RAW</span>
+    </header>
+    <Viewer interactive />
+    <p class="demo-note">
+      Les suppressions restent dans cette démo. Les réglages et points AF sont
+      illustratifs. Finder, Lightroom et la vitesse de rendu RAW se testent dans
+      l’application Mac.
+    </p>
+  </main>
+</Layout>

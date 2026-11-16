@@ -1,0 +1,160 @@
+---
+import Keycap from "./Keycap.astro";
+
+const choices = [
+  { id: 1, name: "Perspective franche" },
+  { id: 2, name: "Capuchon profond" },
+  { id: 3, name: "Double biseau" },
+  { id: 4, name: "Plan incliné" },
+  { id: 5, name: "Arête taillée" },
+  { id: 6, name: "Volume latéral" },
+  { id: 7, name: "Empilement fin" },
+  { id: 8, name: "Profil d’équerre" },
+  { id: 9, name: "Dessus plongé" },
+  { id: 10, name: "Capuchon bombé" },
+];
+---
+
+<section class="keycap-gallery" aria-labelledby="keycap-gallery-title">
+  <header>
+    <p class="gallery-status">Galerie temporaire, à retirer après choix.</p>
+    <h2 id="keycap-gallery-title">Quel relief pour les touches ?</h2>
+    <p class="gallery-note">
+      Dix variantes monochromes, dont le choix 7 strictement inchangé. Maintenez
+      un choix pour prévisualiser l’appui ; rien ne persiste au relâchement. Les
+      raccourcis actuels de la démo restent intacts.
+    </p>
+  </header>
+
+  <ol>
+    {choices.map((choice) => (
+      <li>
+        <div class="choice-copy">
+          <h3>Choix {choice.id}</h3>
+          <p>{choice.name}</p>
+        </div>
+        <button
+          class="keycap-sample"
+          type="button"
+          aria-label={`Prévisualiser l’appui du choix ${choice.id} : C, Z, A`}
+        >
+          <Keycap label="C" variant={choice.id} />
+          <Keycap label="Z" variant={choice.id} />
+          <Keycap label="A" variant={choice.id} />
+        </button>
+      </li>
+    ))}
+  </ol>
+</section>
+
+<style>
+  .keycap-gallery {
+    margin-top: clamp(42px, 7vw, 76px);
+    padding-top: clamp(24px, 4vw, 38px);
+    border-top: 1px solid #bdccdd;
+  }
+
+  .keycap-gallery header {
+    max-width: 590px;
+  }
+
+  .gallery-status {
+    margin: 0 0 9px !important;
+    color: var(--muted);
+    font-size: 11px !important;
+    font-weight: 600;
+  }
+
+  .keycap-gallery h2 {
+    margin: 0;
+    font-size: clamp(23px, 3vw, 30px);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.04em;
+  }
+
+  .gallery-note {
+    max-width: 58ch;
+    margin-top: 10px !important;
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+  }
+
+  .keycap-gallery ol {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 clamp(28px, 5vw, 58px);
+    margin: 28px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .keycap-gallery li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-width: 0;
+    min-height: 112px;
+    padding: 20px 0 24px;
+    border-top: 1px solid #cfdae7;
+  }
+
+  .choice-copy h3 {
+    font-size: 14px !important;
+    font-weight: 650;
+    letter-spacing: -0.015em !important;
+  }
+
+  .choice-copy p {
+    margin-top: 5px !important;
+    font-size: 12px !important;
+  }
+
+  .keycap-sample {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 12px 7px 13px;
+    color: #172b46;
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    perspective: 180px;
+  }
+
+  .keycap-sample:active :global(.keycap--volume .keycap__solid) {
+    transform: var(--key-transform) translateZ(-4px);
+  }
+
+  @media (max-width: 650px) {
+    .keycap-gallery ol {
+      grid-template-columns: minmax(0, 1fr);
+      margin-top: 22px;
+    }
+
+    .keycap-gallery li {
+      min-height: 102px;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .keycap-gallery li {
+      gap: 6px;
+    }
+
+    .keycap-sample {
+      gap: 6px;
+      padding-right: 2px;
+      padding-left: 2px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .keycap-sample:active :global(.keycap--volume .keycap__solid) {
+      transition: none;
+    }
+  }
+</style>
