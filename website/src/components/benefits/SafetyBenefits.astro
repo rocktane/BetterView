@@ -1,0 +1,202 @@
+<section class="safety-benefits" aria-label="Tri par lots et garde-fous">
+  <article>
+    <div class="safety-visual" aria-hidden="true">
+      <span class="undo-key">
+        <b>⌘</b> Z
+      </span>
+    </div>
+    <div class="safety-copy">
+      <h3>Une erreur ? Annulez.</h3>
+      <p>⌘Z restaure la dernière suppression.</p>
+    </div>
+  </article>
+
+  <article>
+    <div class="safety-visual batch-visual" aria-hidden="true">
+      <span class="selected-photos">
+        <i>✓</i>
+        <i>✓</i>
+        <i>✓</i>
+      </span>
+      <span class="batch-key">⌫</span>
+    </div>
+    <div class="safety-copy">
+      <h3>Triez par lots</h3>
+      <p>
+        Sélectionnez plusieurs photos, mettez-les à la corbeille d’un geste.
+      </p>
+    </div>
+  </article>
+
+  <article>
+    <div class="safety-visual" aria-hidden="true">
+      <svg class="lock-icon" viewBox="0 0 64 64" fill="none">
+        <rect x="13" y="28" width="38" height="29" rx="5" />
+        <path d="M22 28v-8a10 10 0 0 1 20 0v8M32 39v7" />
+      </svg>
+    </div>
+    <div class="safety-copy">
+      <h3>Vos prises protégées le restent</h3>
+      <p>
+        BetterView respecte la protection du boîtier ou du Finder et refuse leur
+        suppression.
+      </p>
+    </div>
+  </article>
+</section>
+
+<style>
+  .safety-benefits {
+    border-top: 1px solid #bdccdd;
+    border-bottom: 1px solid #bdccdd;
+  }
+
+  .safety-benefits article {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    grid-template-areas: "visual copy";
+    align-items: center;
+    gap: 34px;
+    min-height: 126px;
+    padding: 23px 40px;
+  }
+
+  .safety-benefits article:nth-child(even) {
+    grid-template-columns: minmax(0, 1fr) 220px;
+    grid-template-areas: "copy visual";
+  }
+
+  .safety-benefits article + article {
+    border-top: 1px solid #cfdae7;
+  }
+
+  .safety-visual {
+    grid-area: visual;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    color: #2057d4;
+  }
+
+  .safety-copy {
+    grid-area: copy;
+    max-width: 470px;
+  }
+
+  .safety-copy p {
+    margin-top: 8px !important;
+  }
+
+  .undo-key {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    width: 112px;
+    height: 60px;
+    color: #172b46;
+    background: #fff;
+    border: 1px solid #9fb2c9;
+    border-bottom-width: 4px;
+    border-radius: 9px;
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+  }
+
+  .undo-key b {
+    color: #2057d4;
+    font-size: 24px;
+    font-weight: 500;
+  }
+
+  .batch-visual {
+    gap: 14px;
+  }
+
+  .selected-photos {
+    display: flex;
+    gap: 4px;
+  }
+
+  .selected-photos i {
+    display: grid;
+    place-items: end center;
+    width: 35px;
+    height: 43px;
+    padding-bottom: 3px;
+    color: #fff;
+    background: #2057d4;
+    border: 2px solid #fff;
+    outline: 1px solid #2057d4;
+    border-radius: 3px;
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .selected-photos i:nth-child(2) {
+    transform: translateY(-5px);
+  }
+
+  .batch-key {
+    display: grid;
+    place-items: center;
+    width: 45px;
+    height: 43px;
+    color: #172b46;
+    background: #fff;
+    border: 1px solid #9fb2c9;
+    border-bottom-width: 3px;
+    border-radius: 7px;
+    font-size: 22px;
+  }
+
+  .lock-icon {
+    width: 64px;
+    height: 64px;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  @media (max-width: 650px) {
+    .safety-benefits article,
+    .safety-benefits article:nth-child(even) {
+      grid-template-columns: 130px minmax(0, 1fr);
+      grid-template-areas: "visual copy";
+      gap: 22px;
+      min-height: 116px;
+      padding: 22px 18px;
+    }
+
+    .selected-photos i {
+      width: 25px;
+      height: 34px;
+    }
+
+    .batch-visual {
+      gap: 9px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .safety-benefits article,
+    .safety-benefits article:nth-child(even) {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "visual" "copy";
+      gap: 16px;
+      padding: 24px 8px;
+    }
+
+    .safety-visual {
+      justify-content: flex-start;
+      padding-left: 8px;
+    }
+
+    .safety-copy {
+      max-width: none;
+    }
+  }
+</style>

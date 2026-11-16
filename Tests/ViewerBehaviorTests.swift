@@ -48,6 +48,74 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertTrue(condition(), "timed out")
     }
 
+    func testAutoPreviewIsTemporaryAndRestoresOriginal() async {
+        controller.autoPreviewRenderer = { photo, _ in
+            Frame(key: FrameKey(photo: photo, tier: .screen),
+                  surface: PixelFormat.makeSurface(width: 64, height: 48)!,
+                  nativeSize: CGSize(width: 6000, height: 4000))
+        }
+        let photo = controller.session.list.current!
+        let original = try! Data(contentsOf: photo.url)
+        controller.pipeline.cache.insert(Frame(key: FrameKey(photo: photo, tier: .screen),
+            surface: PixelFormat.makeSurface(width: 64, height: 48)!, nativeSize: CGSize(width: 6000, height: 4000)))
+        controller.toggleAutoPreview()
+        await spin { !self.controller.autoRunning }
+        XCTAssertEqual(controller.autoFrame?.key.photo, photo)
+        XCTAssertEqual(controller.autoPhoto, photo)
+        XCTAssertEqual(try! Data(contentsOf: photo.url), original)
+        XCTAssertEqual(controller.view.autoDisplayMode, .split)
+        controller.perform(.toggleAutoVersion)
+        XCTAssertEqual(controller.view.autoDisplayMode, .original)
+        controller.perform(.toggleAutoVersion)
+        XCTAssertEqual(controller.view.autoDisplayMode, .enhanced)
+        let corrected = controller.autoFrame
+        controller.toggleAutoPreview()
+        XCTAssertEqual(controller.view.autoDisplayMode, .split)
+        XCTAssertTrue(corrected === controller.autoFrame, "returning to the separator needs no render")
+        XCTAssertEqual(try! Data(contentsOf: photo.url), original)
+    }
+
+    func testLateAutoResultCannotAppearOnAnotherPhoto() async {
+        let release = DispatchSemaphore(value: 0)
+        controller.autoPreviewRenderer = { photo, _ in
+            release.wait()
+            return Frame(key: FrameKey(photo: photo, tier: .screen),
+                         surface: PixelFormat.makeSurface(width: 64, height: 48)!,
+                         nativeSize: CGSize(width: 6000, height: 4000))
+        }
+        controller.toggleAutoPreview()
+        controller.step(1)
+        XCTAssertNil(controller.autoPhoto)
+        release.signal()
+        await spin { !self.controller.autoRunning }
+        XCTAssertNil(controller.autoFrame)
+        XCTAssertNil(controller.autoPhoto)
+    }
+
+    func testCancelAutoWhileRenderingDiscardsTheResult() async {
+        let release = DispatchSemaphore(value: 0)
+        controller.autoPreviewRenderer = { photo, _ in
+            release.wait()
+            return Frame(key: FrameKey(photo: photo, tier: .screen),
+                         surface: PixelFormat.makeSurface(width: 64, height: 48)!,
+                         nativeSize: CGSize(width: 6000, height: 4000))
+        }
+        controller.toggleAutoPreview()
+        controller.toggleAutoPreview()
+        release.signal()
+        await spin { !self.controller.autoRunning }
+        XCTAssertNil(controller.autoPhoto)
+        XCTAssertNil(controller.autoFrame)
+    }
+
+    func testFailedAutoPreviewReturnsToOriginal() async {
+        controller.autoPreviewRenderer = { _, _ in nil }
+        controller.toggleAutoPreview()
+        await spin { !self.controller.autoRunning }
+        XCTAssertNil(controller.autoPhoto)
+        XCTAssertNil(controller.autoFrame)
+    }
+
     // MARK: Zoom across photos
 
     func testAnotherPhotoOpensFitted() {
@@ -173,7 +241,7 @@ final class ViewerBehaviorTests: XCTestCase {
         view.refreshHover()
         XCTAssertTrue(view.offersToShowInfo)
         XCTAssertFalse(view.overlaysShown)
-        let button = try XCTUnwrap(view.subviews.compactMap { $0 as? NSButton }.first)
+        let button = try XCTUnwrap(view.subviews.compactMap { $0 as? NSButton }.first { $0.accessibilityIdentifier() == "photoInfo" })
         button.performClick(nil)
         XCTAssertTrue(commands.contains { if case .perform(.toggleInfo, _) = $0 { true } else { false } })
         view.setInfo(name: "A.arw", settings: "", date: "", position: "1 / 4")

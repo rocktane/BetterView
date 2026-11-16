@@ -8,6 +8,7 @@ enum ViewerCommand {
     case openDropped([URL])
     /// A click that did not move the window, while `opensOnClick`.
     case clicked
+    case toggleAuto
     case zoomChanged
     /// In the comparison: a button of this slot, showing this photo, was pressed.
     case slotAction(ComparisonAction, slot: Int, photo: PhotoKey?)
@@ -41,6 +42,76 @@ final class ViewerView: NSView {
     private var focusMarker: CGPoint?
     private var focusNote: String?
     private var tierBadge: String?
+
+    enum AutoDisplayMode { case split, original, enhanced }
+    private(set) var autoDisplayMode: AutoDisplayMode = .split
+    private(set) var autoSplitFraction: CGFloat = 0.5
+    private var autoSurface: IOSurface?
+    private let autoClipLayer = CALayer()
+    private let autoImageLayer = CALayer()
+    private let autoPanel = ViewerView.panel()
+    private var autoAvailable = false
+    private var autoBusy = false
+    private let autoDivider = AutoDividerHandle()
+
+    func toggleAutoVersion() {
+        guard autoSurface != nil else { return }
+        autoDisplayMode = autoDisplayMode == .original ? .enhanced : .original
+        refreshAutoGeometry()
+    }
+
+    func restoreAutoSplit() {
+        guard autoSurface != nil else { return }
+        autoDisplayMode = .split
+        refreshAutoGeometry()
+    }
+
+    func moveAutoDivider(to x: CGFloat) {
+        guard autoSurface != nil, bounds.width > 0 else { return }
+        autoSplitFraction = min(max(x / bounds.width, 0), 1)
+        autoDisplayMode = .split
+        refreshAutoGeometry()
+    }
+
+    /// Visible layer geometry in the same coordinates, including the clip translation.
+    var autoComparisonFrames: (original: CGRect, enhanced: CGRect, clip: CGRect) {
+        (imageLayer.frame, autoImageLayer.convert(autoImageLayer.bounds, to: host.layer), autoClipLayer.frame)
+    }
+
+    private func refreshAutoGeometry() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        updateGeometry()
+        CATransaction.commit()
+        updateBadge()
+    }
+
+    private let autoButton: NSButton = {
+        let button = NSButton(title: "Amélioration auto", target: nil, action: nil)
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 13, weight: .medium)
+        button.contentTintColor = NSColor(white: 1, alpha: 0.9)
+        button.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
+        button.imagePosition = .imageTrailing
+        button.refusesFirstResponder = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        button.toolTip = "Aperçu automatique temporaire — aucun fichier modifié"
+        button.setAccessibilityIdentifier("autoPreview")
+        return button
+    }()
+
+    func setAutoPreview(available: Bool, active: Bool, busy: Bool) {
+        autoAvailable = available
+        autoBusy = busy
+        autoButton.isHidden = false
+        autoButton.title = busy ? "Amélioration auto…" : "Amélioration auto"
+        autoButton.isEnabled = !busy || active
+        autoButton.toolTip = active ? "Revenir au séparateur original / Auto (Espace : basculer)" : "Aperçu automatique temporaire — aucun fichier modifié"
+        applyOverlayVisibility()
+    }
+
+    @objc private func autoButtonPressed() { onCommand(.toggleAuto) }
 
     private let host = NSView()
     private let imageLayer = CALayer()
@@ -146,8 +217,21 @@ final class ViewerView: NSView {
         imageLayer.magnificationFilter = .linear
         imageLayer.minificationFilter = .linear
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        root.masksToBounds = true
         root.addSublayer(imageLayer)
+        autoClipLayer.actions = ["bounds": NSNull(), "position": NSNull(), "hidden": NSNull()]
+        autoImageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        autoClipLayer.masksToBounds = true
+        autoClipLayer.isHidden = true
+        autoImageLayer.contentsGravity = .resize
+        autoImageLayer.minificationFilter = .linear
+        autoClipLayer.addSublayer(autoImageLayer)
+        root.addSublayer(autoClipLayer)
         root.addSublayer(markerLayer)
+        autoDivider.isHidden = true
+        autoDivider.toolTip = "Glisser : original à gauche, Auto à droite · Espace : basculer"
+        autoDivider.onMove = { [weak self] x in self?.moveAutoDivider(to: x) }
+        addSubview(autoDivider)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: Self.nameSize, weight: .semibold)
@@ -162,7 +246,12 @@ final class ViewerView: NSView {
         bannerLabel.backgroundColor = NSColor(white: 0, alpha: 0.55)
         bannerLabel.layer?.cornerRadius = 4
         for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
+        autoButton.target = self
+        autoButton.action = #selector(autoButtonPressed)
+        addSubview(autoPanel)
+        autoPanel.addSubview(autoButton)
         addSubview(infoPanel)
+        infoButton.setAccessibilityIdentifier("photoInfo")
         infoButton.target = self
         infoButton.action = #selector(infoButtonPressed)
         addSubview(infoButton)
@@ -185,6 +274,13 @@ final class ViewerView: NSView {
         shrinkToText.priority = .defaultLow
         NSLayoutConstraint.activate([
             shrinkToText,
+            autoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            autoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            autoPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            autoButton.leadingAnchor.constraint(equalTo: autoPanel.leadingAnchor, constant: 10),
+            autoButton.trailingAnchor.constraint(equalTo: autoPanel.trailingAnchor, constant: -10),
+            autoButton.topAnchor.constraint(equalTo: autoPanel.topAnchor, constant: 7),
+            autoButton.bottomAnchor.constraint(equalTo: autoPanel.bottomAnchor, constant: -7),
             messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             badges.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -193,8 +289,8 @@ final class ViewerView: NSView {
             bannerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 44),
             infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             infoButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            infoButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            infoButton.bottomAnchor.constraint(equalTo: autoPanel.topAnchor, constant: -8),
+            infoPanel.bottomAnchor.constraint(equalTo: autoPanel.topAnchor, constant: -8),
             infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
             positionPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             positionPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
@@ -228,7 +324,13 @@ final class ViewerView: NSView {
     // MARK: Showing
 
     /// Hands the surface to the layer without copying it, and pushes it out immediately.
-    func show(_ frame: Frame) {
+    func show(_ frame: Frame, auto: Frame? = nil) {
+        if auto?.surface !== autoSurface {
+            autoSurface = auto?.surface
+            autoImageLayer.contents = auto?.surface
+            autoDisplayMode = .split
+            autoSplitFraction = 0.5
+        }
         if frame.surface !== shownSurface {
             shownSurface = frame.surface
             nativeSize = frame.nativeSize
@@ -239,6 +341,8 @@ final class ViewerView: NSView {
             CATransaction.commit()
             CATransaction.flush()
         }
+        refreshAutoGeometry()
+        applyOverlayVisibility()
         setLabel(messageLabel, nil)
         tierBadge = frame.key.tier == .preview ? "Aperçu" : nil
         updateBadge()
@@ -246,6 +350,10 @@ final class ViewerView: NSView {
 
     /// Shows no pixels at all: a photo must never appear under another photo's name.
     func showMessage(_ text: String?) {
+        autoSurface = nil
+        autoImageLayer.contents = nil
+        autoClipLayer.isHidden = true
+        autoDivider.isHidden = true
         shownSurface = nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -284,6 +392,7 @@ final class ViewerView: NSView {
 
     private func applyOverlayVisibility() {
         let showInfo = hasInfo && isHovered
+        autoPanel.fade(visible: autoAvailable && (isHovered || autoSurface != nil || autoBusy))
         infoPanel.fade(visible: showInfo)
         positionPanel.fade(visible: showInfo)
         infoButton.fade(visible: !hasInfo && offersInfo && isHovered)
@@ -303,8 +412,14 @@ final class ViewerView: NSView {
     }
 
     private func updateBadge() {
-        let parts = [tierBadge, focusNote].compactMap { $0 }
-        setLabel(badgeLabel, parts.isEmpty || (!isHovered && focusNote == nil) ? nil : parts.joined(separator: "  ·  "))
+        let modeNote: String = switch autoDisplayMode {
+        case .split: "Original ← | → Auto · Espace : basculer"
+        case .original: "Original · Espace : Auto"
+        case .enhanced: "Auto · Espace : original"
+        }
+        let autoNote: String? = autoSurface == nil ? nil : modeNote
+        let parts = [tierBadge, focusNote, autoNote].compactMap { $0 }
+        setLabel(badgeLabel, parts.isEmpty || (!isHovered && focusNote == nil && autoNote == nil) ? nil : parts.joined(separator: "  ·  "))
         lockBadge.fade(visible: isProtected && isHovered)
     }
 
@@ -371,6 +486,16 @@ final class ViewerView: NSView {
         )
         imageLayer.frame = CGRect(origin: origin, size: size)
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
+        let splitX = bounds.width * autoSplitFraction
+        let clipX: CGFloat = autoDisplayMode == .enhanced ? 0 : splitX
+        autoClipLayer.frame = CGRect(x: clipX, y: 0, width: max(0, bounds.width - clipX), height: bounds.height)
+        // Both images use exactly the same native geometry, including pan and zoom.
+        autoImageLayer.frame = imageLayer.frame.offsetBy(dx: -clipX, dy: 0)
+        autoImageLayer.magnificationFilter = imageLayer.magnificationFilter
+        autoClipLayer.isHidden = autoSurface == nil || autoDisplayMode == .original
+        autoDivider.isHidden = autoSurface == nil || autoDisplayMode != .split
+        autoDivider.frame = CGRect(x: splitX - 12, y: 0, width: 24, height: bounds.height)
+        autoDivider.needsDisplay = true
         if let zoom {
             let text = "\(Int((zoom * 100).rounded())) %"
             if zoomLabel.stringValue != text { zoomLabel.stringValue = text }
@@ -716,5 +841,35 @@ extension NSView {
                 self.alphaValue = 0
             }
         }
+    }
+}
+
+/// Narrow hit target independent of the image: dragging it never pans or moves the window.
+private final class AutoDividerHandle: NSView {
+    var onMove: (CGFloat) -> Void = { _ in }
+    override var acceptsFirstResponder: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.black.withAlphaComponent(0.4).setFill()
+        NSRect(x: 10, y: 0, width: 4, height: bounds.height).fill()
+        NSColor.white.setFill()
+        NSRect(x: 11.5, y: 0, width: 1, height: bounds.height).fill()
+        let grip = NSRect(x: 1, y: bounds.midY - 18, width: 22, height: 36)
+        NSColor(white: 0.12, alpha: 0.85).setFill()
+        NSBezierPath(roundedRect: grip, xRadius: 8, yRadius: 8).fill()
+        let icon = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: nil)
+        icon?.draw(in: grip.insetBy(dx: 3, dy: 10))
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+    override func mouseDown(with event: NSEvent) {
+        if let parent = superview { window?.makeFirstResponder(parent) }
+        move(with: event)
+    }
+    override func mouseDragged(with event: NSEvent) { move(with: event) }
+    private func move(with event: NSEvent) {
+        guard let parent = superview else { return }
+        onMove(parent.convert(event.locationInWindow, from: nil).x)
     }
 }

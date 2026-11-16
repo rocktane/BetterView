@@ -1,0 +1,19 @@
+---
+// Restrict tracking to the public domain; previews stay out of the dashboard.
+const domains = (
+  import.meta.env.PUBLIC_UMAMI_DOMAINS ?? "betterview.photos"
+).trim();
+---
+
+{import.meta.env.PROD && domains && (
+  <script
+    is:inline
+    defer
+    src="https://stats.yohan.one/script.js"
+    data-website-id="3e82cbfe-f982-4832-8fec-dbc22cbf965a"
+    data-domains={domains}
+    data-do-not-track="true"
+    data-exclude-search="true"
+    data-exclude-hash="true"
+  />
+)}

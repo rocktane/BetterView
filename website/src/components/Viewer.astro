@@ -1,0 +1,132 @@
+---
+const {
+  interactive = false,
+  comparison = false,
+  controls = true,
+} = Astro.props;
+const base = import.meta.env.BASE_URL;
+const historyTitleId = `history-title-${crypto.randomUUID()}`;
+---
+
+<section
+  class:list={["viewer", { interactive: interactive }]}
+  data-viewer
+  data-base={base}
+  data-interactive={String(interactive)}
+  data-comparison={String(comparison)}
+  tabindex="0"
+  aria-label="Visionneuse de démonstration BetterView"
+>
+  {interactive && controls && (
+    <div class="view-switch" aria-label="Mode d’affichage">
+      <button data-action="single" aria-pressed={!comparison}>
+        Photo
+      </button>
+      <button data-action="comparison" aria-pressed={comparison}>
+        Comparaison
+      </button>
+      <span data-comparison-hint hidden={!comparison}>
+        2 photos minimum dans la sélection. Gardez-en une ou supprimez-les avec
+        leurs boutons.
+      </span>
+    </div>
+  )}
+  <div class="stage" data-stage>
+    <img
+      class="fallback-photo"
+      src={`${base}images/mountain-preview.webp`}
+      srcset={[320, 640, 960, 1400]
+        .map((width) => `${base}images/mountain-${width}.webp ${width}w`)
+        .join(", ")}
+      sizes="(max-width: 650px) calc(100vw - 32px), 1000px"
+      loading="lazy"
+      alt="Vallée alpine"
+      width="1400"
+      height="933"
+    />
+  </div>
+  <p class="demo-note" data-fallback-note>
+    Activez JavaScript pour parcourir, comparer et trier les photos dans cette
+    démo.
+  </p>
+  <p
+    class="visually-hidden"
+    data-announcement
+    aria-live="polite"
+    aria-atomic="true"
+  ></p>
+  <div class="film" data-film>
+    <div class="thumbnails" data-thumbnails></div>
+  </div>
+  {interactive && (
+    <div class="shortcut-bar" aria-label="Raccourcis clavier">
+      <button data-action="previous" aria-label="Photo précédente">
+        <kbd>←</kbd>
+      </button>
+      <button data-action="next">
+        <kbd>→</kbd> Parcourir
+      </button>
+      <button data-action="select">
+        <kbd>S</kbd> Sélectionner
+      </button>
+      <button data-action="compare">
+        <kbd>C</kbd> Comparer
+      </button>
+      <button data-action="zoom">
+        <kbd>Z</kbd> Zoom
+      </button>
+      <button data-action="focus">
+        <kbd>A</kbd> Point AF
+      </button>
+      <button data-action="delete">
+        <kbd>⌫</kbd> Corbeille
+      </button>
+      <button data-action="undo">
+        <kbd data-key="meta">⌘</kbd>
+        <kbd data-key="z">Z</kbd> Annuler
+      </button>
+    </div>
+  )}
+  <p class="toast" role="status" aria-live="polite" data-toast></p>
+  {interactive && controls && (
+    <>
+      <div class="tools" aria-label="Actions supplémentaires">
+        <button data-action="info">
+          Infos <kbd>I</kbd>
+        </button>
+        <button data-action="strip">
+          Pellicule <kbd>B</kbd>
+        </button>
+        <button data-action="history">Historique</button>
+        <button data-action="fullscreen">Plein écran</button>
+        <button data-action="reset">Recommencer</button>
+      </div>
+      <details class="help">
+        <summary>Raccourcis et gestes</summary>
+        <p>
+          ← → : parcourir · Maj + flèche : étendre · Début / Fin · Page ↑ / ↓ :
+          sauter 10 photos · S ou Espace : sélectionner · C : comparer la
+          sélection (2 photos minimum) · X ou ⌫ : corbeille · ⌘/Ctrl Z : annuler
+          · ⌘/Ctrl Y : historique · Z ou clic : zoom · A : point AF illustratif
+          · + / − : zoomer · 0 : ajuster · I : infos · B : pellicule · Échap :
+          revenir.
+        </p>
+        <p>
+          ⌘/Ctrl + clic ou Maj + clic dans la pellicule pour sélectionner.
+          Glissez la photo zoomée pour déplacer toutes les vues. Pincez le
+          trackpad pour zoomer. Les cadenas signalent les photos protégées.
+        </p>
+      </details>
+    </>
+  )}
+  {interactive && (
+    <dialog data-history aria-labelledby={historyTitleId}>
+      <h2 id={historyTitleId}>Historique des suppressions</h2>
+      <div data-history-list></div>
+      <button data-close>Fermer</button>
+    </dialog>
+  )}
+</section>
+<script>
+  import "../scripts/viewer.js";
+</script>

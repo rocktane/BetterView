@@ -1,0 +1,44 @@
+---
+import "../styles/global.css";
+import "../styles/legal-footer.css";
+import Footer from "../components/Footer.astro";
+import Analytics from "../components/Analytics.astro";
+const base = import.meta.env.BASE_URL;
+const { title = "BetterView — Triez à la vitesse du regard.", draft = false } =
+  Astro.props;
+---
+
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta
+      name="description"
+      content="Une visionneuse RAW pour Mac. Parcourez, comparez et triez vos photos sans attendre."
+    />
+    <title>{title}</title>
+    <Analytics />
+    {draft && <meta name="robots" content="noindex, nofollow" />}
+    <link rel="icon" href={`${base}images/icon.png`} />
+  </head>
+  <body>
+    <nav class="nav">
+      <a class="brand" href={base}>
+        BetterView
+      </a>
+      <div>
+        <a href={`${base}#essayer`}>Essayer</a>
+        <a
+          href="https://github.com/rocktane/BetterView"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          GitHub ↗
+        </a>
+      </div>
+    </nav>
+    <slot />
+    <Footer />
+  </body>
+</html>

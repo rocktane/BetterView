@@ -1,0 +1,18 @@
+---
+import Layout from "./Layout.astro";
+const { title } = Astro.props;
+const base = import.meta.env.BASE_URL;
+---
+
+<Layout title={`${title} — BetterView`} draft={true}>
+  <main class="legal-page">
+    <a class="legal-back" href={base}>
+      Retour à BetterView
+    </a>
+    <h1>{title}</h1>
+    <p class="legal-notice">
+      Document préparatoire : informations à compléter avant publication.
+    </p>
+    <slot />
+  </main>
+</Layout>

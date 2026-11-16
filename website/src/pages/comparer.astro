@@ -1,0 +1,22 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Viewer from "../components/Viewer.astro";
+---
+
+<Layout title="Comparer les photos — BetterView">
+  <main class="playground">
+    <header class="demo-heading">
+      <div>
+        <h1>Gardez la meilleure.</h1>
+        <p>Une rafale côte à côte. Le même zoom sur chaque photo.</p>
+      </div>
+      <span>Démo interactive · WebP d’exemple</span>
+    </header>
+    <Viewer interactive comparison />
+    <p class="demo-note">
+      Pour chaque photo : « Garder celle-ci » retire les autres vues affichées,
+      « Corbeille » retire cette photo. Annulez avec ⌘/Ctrl Z. Z zoome toutes
+      les vues ; Échap revient à la photo.
+    </p>
+  </main>
+</Layout>

@@ -1,0 +1,263 @@
+---
+const base = import.meta.env.BASE_URL;
+---
+
+<section class="compare-benefits" aria-label="Comparer et vérifier la netteté">
+  <div class="comparison-reel" aria-hidden="true">
+    <div class="reel-frame">
+      <img
+        src={`${base}images/portrait-1-960.webp`}
+        alt=""
+        width="960"
+        height="1440"
+        loading="lazy"
+      />
+      <span class="keep-mark">✓</span>
+    </div>
+    <div class="reel-frame zoom-frame">
+      <img
+        src={`${base}images/portrait-2-960.webp`}
+        alt=""
+        width="960"
+        height="1440"
+        loading="lazy"
+      />
+      <span class="crop-mark crop-mark-a"></span>
+      <span class="crop-mark crop-mark-b"></span>
+    </div>
+    <div class="reel-frame focus-frame">
+      <img
+        src={`${base}images/portrait-3-960.webp`}
+        alt=""
+        width="960"
+        height="1440"
+        loading="lazy"
+      />
+      <span class="focus-mark"></span>
+    </div>
+  </div>
+
+  <div class="compare-copy">
+    <article>
+      <span class="compare-key" aria-hidden="true">
+        C
+      </span>
+      <div>
+        <h3>Gardez la meilleure</h3>
+        <p>Comparez une rafale côte à côte.</p>
+      </div>
+    </article>
+    <article>
+      <span class="compare-key" aria-hidden="true">
+        Z
+      </span>
+      <div>
+        <h3>Le détail qui tranche</h3>
+        <p>Zoomez au même endroit sur toutes les photos.</p>
+      </div>
+    </article>
+    <article>
+      <span class="compare-key" aria-hidden="true">
+        A
+      </span>
+      <div>
+        <h3>Visez la netteté</h3>
+        <p>Zoomez à 100 % sur le point AF enregistré, si disponible.</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<style>
+  .compare-benefits {
+    overflow: hidden;
+    background: #fff;
+    border: 1px solid #cfdae7;
+    border-radius: 12px;
+  }
+
+  .comparison-reel {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3px;
+    height: clamp(150px, 20vw, 205px);
+    padding: 3px;
+    background: #172b46;
+  }
+
+  .reel-frame {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    background: #172b46;
+  }
+
+  .reel-frame img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 42%;
+  }
+
+  .zoom-frame img {
+    transform: scale(1.14);
+  }
+
+  .focus-frame img {
+    object-position: 50% 55%;
+  }
+
+  .keep-mark {
+    position: absolute;
+    right: 14px;
+    bottom: 14px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    color: #fff;
+    background: #2057d4;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    font-size: 17px;
+    font-weight: 650;
+  }
+
+  .crop-mark {
+    position: absolute;
+    width: 42px;
+    height: 42px;
+    border-color: #fff;
+    border-style: solid;
+  }
+
+  .crop-mark-a {
+    top: 22px;
+    left: 22px;
+    border-width: 2px 0 0 2px;
+  }
+
+  .crop-mark-b {
+    right: 22px;
+    bottom: 22px;
+    border-width: 0 2px 2px 0;
+  }
+
+  .focus-mark {
+    position: absolute;
+    top: 48%;
+    left: 52%;
+    width: 46px;
+    height: 46px;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .focus-mark::before,
+  .focus-mark::after {
+    position: absolute;
+    content: "";
+    background: #fff;
+  }
+
+  .focus-mark::before {
+    top: 50%;
+    left: -8px;
+    width: 58px;
+    height: 1px;
+  }
+
+  .focus-mark::after {
+    top: -8px;
+    left: 50%;
+    width: 1px;
+    height: 58px;
+  }
+
+  .compare-copy {
+    display: grid;
+    grid-template-columns: 0.9fr 1.05fr 1.15fr;
+  }
+
+  .compare-copy article {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: start;
+    gap: 14px;
+    padding: 27px 25px 29px;
+  }
+
+  .compare-copy article + article {
+    border-left: 1px solid #dbe3ed;
+  }
+
+  .compare-copy p {
+    margin-top: 8px !important;
+  }
+
+  .compare-key {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 30px;
+    color: #2057d4;
+    border: 1px solid #9fb2c9;
+    border-bottom-width: 3px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  @media (max-width: 720px) {
+    .compare-copy {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .compare-copy article {
+      grid-template-columns: 36px minmax(0, 1fr);
+      padding: 20px 24px;
+    }
+
+    .compare-copy article + article {
+      border-top: 1px solid #dbe3ed;
+      border-left: 0;
+    }
+
+    .comparison-reel {
+      height: 150px;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .comparison-reel {
+      height: 122px;
+    }
+
+    .crop-mark-a {
+      top: 13px;
+      left: 13px;
+    }
+
+    .crop-mark-b {
+      right: 13px;
+      bottom: 13px;
+    }
+
+    .focus-mark {
+      width: 34px;
+      height: 34px;
+    }
+
+    .focus-mark::before {
+      left: -6px;
+      width: 42px;
+    }
+
+    .focus-mark::after {
+      top: -6px;
+      height: 42px;
+    }
+  }
+</style>

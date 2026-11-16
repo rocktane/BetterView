@@ -1,0 +1,183 @@
+<section class="speed-benefits" aria-label="Vitesse et simplicité">
+  <article class="speed-lead">
+    <div>
+      <h3>Vos RAW, sans attendre</h3>
+      <p class="speed-measure">
+        <span>&lt; 1</span> <small>ms</small>
+      </p>
+    </div>
+    <p class="speed-condition">Pour passer à une photo déjà préparée.</p>
+  </article>
+
+  <article class="speed-item">
+    <span class="delete-key" aria-hidden="true">
+      ⌫
+    </span>
+    <div>
+      <h3>Triez en une touche</h3>
+      <p>Une pression pour mettre la photo à la corbeille.</p>
+    </div>
+  </article>
+
+  <article class="speed-item">
+    <svg class="folder-icon" viewBox="0 0 56 48" fill="none" aria-hidden="true">
+      <path d="M3 10.5h18l5 6h27v27H3v-33Z" />
+      <path d="M3 17h50" />
+    </svg>
+    <div>
+      <h3>Un dossier suffit</h3>
+      <p>Ouvrez vos photos. Aucun catalogue à importer.</p>
+    </div>
+  </article>
+</section>
+
+<style>
+  .speed-benefits {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    color: #fff;
+    background: #172b46;
+    border-radius: 12px;
+  }
+
+  .speed-lead {
+    display: flex;
+    grid-row: 1 / 3;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 32px;
+    min-height: 286px;
+    padding: 34px 38px;
+    border-right: 1px solid #ffffff29;
+  }
+
+  .speed-lead h3 {
+    max-width: 310px;
+    font-size: clamp(25px, 3vw, 34px);
+  }
+
+  .speed-measure {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-top: 16px !important;
+    color: #fff !important;
+    line-height: 0.9 !important;
+  }
+
+  .speed-measure > span {
+    font-size: clamp(72px, 10vw, 112px);
+    font-weight: 600;
+    letter-spacing: -0.075em;
+  }
+
+  .speed-measure small {
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+  }
+
+  .speed-condition {
+    max-width: 320px;
+    color: #d5e0ec !important;
+    font-size: 14px !important;
+  }
+
+  .speed-item {
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
+    align-items: center;
+    gap: 20px;
+    padding: 27px 30px;
+  }
+
+  .speed-item + .speed-item {
+    border-top: 1px solid #ffffff29;
+  }
+
+  .speed-item p {
+    margin-top: 7px !important;
+    color: #d5e0ec !important;
+  }
+
+  .delete-key {
+    display: grid;
+    place-items: center;
+    width: 58px;
+    height: 48px;
+    border: 1px solid #aec2d9;
+    border-bottom-width: 4px;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 27px;
+    line-height: 1;
+  }
+
+  .folder-icon {
+    width: 56px;
+    color: #aec2d9;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linejoin: round;
+  }
+
+  @media (max-width: 720px) {
+    .speed-benefits {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: auto auto;
+    }
+
+    .speed-lead {
+      grid-column: 1 / -1;
+      grid-row: auto;
+      min-height: 250px;
+      border-right: 0;
+      border-bottom: 1px solid #ffffff29;
+    }
+
+    .speed-item {
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 14px;
+      padding: 24px;
+    }
+
+    .speed-item + .speed-item {
+      border-top: 0;
+      border-left: 1px solid #ffffff29;
+    }
+
+    .delete-key {
+      width: 46px;
+      height: 43px;
+    }
+
+    .folder-icon {
+      width: 46px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .speed-benefits {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto;
+    }
+
+    .speed-lead {
+      grid-column: auto;
+      min-height: 238px;
+      padding: 28px;
+    }
+
+    .speed-item {
+      grid-template-columns: 54px minmax(0, 1fr);
+      padding: 23px 28px;
+    }
+
+    .speed-item + .speed-item {
+      border-top: 1px solid #ffffff29;
+      border-left: 0;
+    }
+  }
+</style>

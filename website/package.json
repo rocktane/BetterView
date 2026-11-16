@@ -1,0 +1,23 @@
+{
+  "name": "betterview-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "astro": "^5.0.0"
+  },
+  "packageManager": "pnpm@12.18.0",
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "prettier": "^3.10.1",
+    "prettier-plugin-astro": "^1.1.2"
+  }
+}

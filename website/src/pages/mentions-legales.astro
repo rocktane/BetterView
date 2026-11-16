@@ -1,0 +1,64 @@
+---
+import LegalLayout from "../layouts/LegalLayout.astro";
+import { legal } from "../config/legal";
+import photos from "../../photo-sources.json";
+const fields = [
+  ["Site", legal.siteUrl],
+  ["Statut de l’éditeur", legal.publisherStatus],
+  ["Identification publique de l’éditeur", legal.publisherPublicDetails],
+  ["Direction de la publication", legal.publicationDirector],
+  ["Contact", legal.contact],
+  ["Téléphone de l’éditeur", legal.publisherPhone],
+  ["Hébergement", legal.hostDetails],
+  ["Prestataires de stockage des données", legal.storageProviders],
+];
+---
+
+<LegalLayout title="Mentions légales">
+  <section>
+    <h2>Édition et hébergement</h2>
+    <dl class="legal-details">
+      {fields.map(([label, value]) => (
+        <div>
+          <dt>{label}</dt>
+          <dd>{value || "À compléter avant publication."}</dd>
+        </div>
+      ))}
+    </dl>
+  </section>
+  <section>
+    <h2>Code source et droits d’utilisation</h2>
+    <p>
+      Le{" "}
+      <a href={legal.repository}>
+        code source de BetterView est accessible sur GitHub
+      </a>
+      . Les conditions de réutilisation sont définies par la licence ci-dessous.
+    </p>
+    <p>
+      {legal.licenseDetails ||
+        "Aucune licence n’a été identifiée dans le dépôt examiné. Les conditions de réutilisation du logiciel et du site restent à préciser par les titulaires des droits."}
+    </p>
+    <p>
+      <a
+        href={`${legal.repository}/blob/main/LICENSE`}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Consulter la licence GPLv3
+      </a>
+    </p>
+    <p>
+      Les photographies de démonstration proviennent d’Unsplash et sont servies
+      depuis les fichiers du site. Leurs droits sont distincts de ceux du
+      logiciel. Sources des illustrations :
+    </p>
+    <ul>
+      {photos.map((photo) => (
+        <li>
+          <a href={photo.source}>{photo.key}</a>
+        </li>
+      ))}
+    </ul>
+  </section>
+</LegalLayout>

@@ -33,3 +33,5 @@ xcuserdata/
 .claude/
 .env
 .env.*
+
+.firecrawl/
