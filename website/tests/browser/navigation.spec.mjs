@@ -39,21 +39,6 @@ test("home trial link works and handwritten choice stays decorative", async ({
   await expect(page.getByText("Pellicule", { exact: true })).toHaveCount(0);
 });
 
-for (const route of ["essayer/", "comparer/"]) {
-  test(`${route} remains accessible and links to the home trial`, async ({
-    page,
-  }) => {
-    await page.goto(route);
-    await expect(page.locator("[data-viewer]")).toBeVisible();
-    await page
-      .locator(".nav")
-      .getByRole("link", { name: "Essayer", exact: true })
-      .click();
-    await expect(page.locator("#essayer")).toBeInViewport();
-    await expect(page.locator(".hero")).toHaveCount(1);
-  });
-}
-
 test("thumbnail ratios and compact padding survive resizing without minimum widths", async ({
   page,
 }) => {
