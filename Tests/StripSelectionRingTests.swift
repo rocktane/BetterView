@@ -139,6 +139,7 @@ final class StripSelectionRingTests: XCTestCase {
 
     func testPhotoActionsStayUnderThePointerAcrossTwoRotations() throws {
         view = StripView(metrics: StripPanel.metrics(height: 82), actionOverhang: StripView.floatingActionOverhang)
+        view.onScroll = { _ in }
         view.frame = CGRect(x: 0, y: 0, width: 600, height: 82 + StripView.floatingActionOverhang)
         let context = try XCTUnwrap(CGContext(data: nil, width: 90, height: 30, bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))

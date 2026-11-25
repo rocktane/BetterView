@@ -12,13 +12,14 @@ final class StripContentWidthTests: XCTestCase {
         (0..<count).map { PhotoKey(path: "/photos/\($0).arw", device: 1, inode: UInt64($0), size: 1, mtimeSeconds: 0, mtimeNanoseconds: 0) }
     }
 
-    private func makePanel(_ count: Int, cut: Bool = false, placement: StripPlacement = StripPlacement(origin: nil, docked: false, centeredX: true), size: StripSize = .standard, portrait: Bool = false) -> StripPanel {
+    private func makePanel(_ count: Int, anchor: Int = 0, cut: Bool = false, placement: StripPlacement = StripPlacement(origin: nil, docked: false, centeredX: true), size: StripSize = .standard, portrait: Bool = false) -> StripPanel {
         let strip = StripPanel(placement: placement, size: size)
         strip.save = { [unowned self] in saved.append(($0, $1)) }
+        strip.view.onScroll = { _ in }
         strip.view.pointerLocation = { [unowned self] in pointer }
         let image = portrait ? Self.image(width: 2, height: 3) : nil
-        let cells = photos(count).enumerated().map { StripCell(photo: $1, image: image, mark: $0 == 0 ? .current : .none) }
-        strip.view.update(cells: cells, anchor: 0, cut: (cut, cut))
+        let cells = photos(count).enumerated().map { StripCell(photo: $1, image: image, mark: $0 == anchor ? .current : .none) }
+        strip.view.update(cells: cells, anchor: anchor, cut: (cut, cut))
         return strip
     }
 
@@ -35,8 +36,85 @@ final class StripContentWidthTests: XCTestCase {
         // Three 3:2 placeholders 66 pt tall: 99 pt each, two 6 pt gaps, 8 pt margins.
         let strip = makePanel(3)
         XCTAssertEqual(strip.frame.width, 3 * 99 + 2 * 6 + 2 * 8)
-        XCTAssertEqual(strip.view.cellFrames[0].midX, strip.frame.width / 2, accuracy: 0.5,
-                       "the current photo stays centred at the start of a short list")
+        XCTAssertEqual(strip.view.cellFrames.first?.minX, 8)
+        XCTAssertEqual(strip.view.cellFrames.last?.maxX, strip.frame.width - 8)
+    }
+
+    func testTheRowFillsTheStripAtEitherEnd() {
+        let start = makePanel(29)
+        XCTAssertEqual(start.view.cellFrames.first?.minX, 8)
+        XCTAssertGreaterThanOrEqual(start.view.cellFrames.last?.maxX ?? 0, start.frame.width - 8)
+
+        let end = makePanel(29, anchor: 28)
+        XCTAssertLessThanOrEqual(end.view.cellFrames.first?.minX ?? .infinity, 8)
+        XCTAssertEqual(end.view.cellFrames.last?.maxX, end.frame.width - 8)
+    }
+
+    func testAFastSwipeStopsAtTheAvailableThumbnails() throws {
+        let strip = makePanel(29, anchor: 14, cut: true)
+        for delta: Int32 in [4000, -4000] {
+            let scroll = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                               wheelCount: 2, wheel1: 0, wheel2: delta, wheel3: 0))
+            let event = try XCTUnwrap(NSEvent(cgEvent: scroll))
+            XCTAssertTrue(event.hasPreciseScrollingDeltas)
+            strip.view.scrollWheel(with: event)
+            XCTAssertLessThanOrEqual(strip.view.cellFrames.first?.minX ?? .infinity, 8)
+            XCTAssertGreaterThanOrEqual(strip.view.cellFrames.last?.maxX ?? 0, strip.frame.width - 8)
+        }
+    }
+
+    func testSwipingPastEitherFolderEdgeBouncesAndReturns() async throws {
+        let start = makePanel(29)
+        let end = makePanel(29, anchor: 28)
+        for (strip, delta): (StripPanel, Int32) in [(start, 4000), (end, -4000)] {
+            strip.view.onScroll = { _ in XCTFail("A bounce must not change the anchor") }
+            let scroll = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                               wheelCount: 2, wheel1: 0, wheel2: delta, wheel3: 0))
+            let event = try XCTUnwrap(NSEvent(cgEvent: scroll))
+            let before = strip.view.cellFrames
+            strip.view.scrollWheel(with: event)
+            let travel = strip.view.cellFrames[0].minX - before[0].minX
+            XCTAssertGreaterThan(travel * (delta > 0 ? 1 : -1), 0)
+            XCTAssertLessThanOrEqual(abs(travel), 12)
+
+            // Quartz encodes momentum begin and continuation as 1 and 2.
+            scroll.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 1)
+            let momentumStart = try XCTUnwrap(NSEvent(cgEvent: scroll))
+            XCTAssertEqual(momentumStart.momentumPhase, .began)
+            strip.view.scrollWheel(with: momentumStart)
+            try await Task.sleep(for: .milliseconds(160))
+            XCTAssertEqual(strip.view.cellFrames, before)
+
+            scroll.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 2)
+            let momentumUpdate = try XCTUnwrap(NSEvent(cgEvent: scroll))
+            XCTAssertEqual(momentumUpdate.momentumPhase, .changed)
+            strip.view.scrollWheel(with: momentumUpdate)
+            XCTAssertEqual(strip.view.cellFrames, before)
+        }
+    }
+
+    func testSwipeReachesAnEdgeLessThanHalfAThumbnailAway() async throws {
+        let strip = makePanel(29, anchor: 3, size: StripSize(width: 680, height: 82))
+        let cells = strip.view.cells
+        let start = try XCTUnwrap(strip.view.cellFrames.first?.minX)
+        XCTAssertGreaterThan(8 - start, 0)
+        XCTAssertLessThan(8 - start, 52)
+        var anchor = 3
+        strip.view.onScroll = { offset in
+            anchor += offset
+            strip.view.update(cells: cells, anchor: anchor)
+        }
+        let scroll = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                           wheelCount: 2, wheel1: 0, wheel2: 4000, wheel3: 0))
+        strip.view.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: scroll)))
+        XCTAssertEqual(anchor, 0)
+        XCTAssertGreaterThan(strip.view.cellFrames.first?.minX ?? 0, 8)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(strip.view.cellFrames.first?.minX, 8)
+
+        scroll.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: -200)
+        strip.view.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: scroll)))
+        XCTAssertGreaterThan(anchor, 3, "reversing skips the anchors that share the edge")
     }
 
     func testACentredStripStaysCentredAsItsWidthFollowsThePhotos() throws {

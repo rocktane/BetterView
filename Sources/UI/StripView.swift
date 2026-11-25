@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import SwiftUI
 
 struct StripCell {
     enum Mark { case none, current }
@@ -99,13 +100,19 @@ final class StripView: NSView {
     private var hoverTracking: NSTrackingArea?
     /// How far a swipe has carried the photos from their place, in points, right positive.
     private var scrollShift: CGFloat = 0
+    /// Unconsumed scroll at a folder edge. Only a fraction is drawn as elastic travel.
+    private var edgePull: CGFloat = 0
+    private static let maxEdgePull: CGFloat = 48
+    private static let edgeReturnDuration: CFTimeInterval = 0.075
+    private var edgeReturn: (pull: CGFloat, start: CFTimeInterval)?
+    private var momentumHitEdge = false
     /// The photo a scroll step asked for, until the strip is given it.
     private var scrollTarget: PhotoKey?
     private var scrollGestureActive = false
     private var settleTimer: Timer?
     private var lastSettle: CFTimeInterval = 0
     private static let settleTime: CFTimeInterval = 0.045
-    /// The shifts that still move the photos: past them, the row stops at an end of the list.
+    /// The shifts that keep the available row within its scrolling limits.
     private var shiftRange: ClosedRange<CGFloat> = 0...0
 
     /// Space between the first or last photo and the edge, matching the bottom margin.
@@ -312,8 +319,8 @@ final class StripView: NSView {
         if let actionPhoto { onToggleMark(actionPhoto) }
     }
 
-    /// `anchor` stays in the middle, so that moving along slides the strip under a fixed
-    /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
+    /// `anchor` sets the resting position, aiming for the middle within the scrolling limits.
+    /// Without an anchor, the row is centred as a whole. Each group of cells is
     /// outlined as one, and its tip shows when the pointer rests on it.
     func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
         let previous = (cells: self.cells, anchor: self.anchor)
@@ -374,8 +381,6 @@ final class StripView: NSView {
         }
     }
 
-    private func centre(of index: Int) -> CGFloat { centres(of: cells)[index] }
-
     private func width(of cell: StripCell) -> CGFloat { width(of: cell, height: metrics.height) }
 
     private func width(of cell: StripCell, height: CGFloat) -> CGFloat {
@@ -390,17 +395,26 @@ final class StripView: NSView {
         let y = stripBounds.height - metrics.top - metrics.height
         var x = (stripBounds.width - total) / 2
         shiftRange = 0...0
-        // At either end, the first or last photo can reach the centre. A cut end has
-        // more photos beyond those supplied here, so the visible window can keep moving.
+        var rowOriginRange: ClosedRange<CGFloat>?
         if let anchor, cells.indices.contains(anchor),
            let firstWidth = widths.first, let lastWidth = widths.last {
             let before = widths[..<anchor].reduce(0, +) + metrics.gap * CGFloat(anchor)
             let anchorCentre = before + widths[anchor] / 2
-            let lowest = cutAtEnd ? -CGFloat.infinity : anchorCentre - (total - lastWidth / 2)
-            let highest = cutAtStart ? CGFloat.infinity : anchorCentre - firstWidth / 2
-            shiftRange = lowest...highest
+            let centredOrigin = stripBounds.midX - anchorCentre
+            if onScroll != nil {
+                // Keep the row across the viewport while a replacement window of
+                // thumbnails is pending, too. A row that fits stays centred.
+                let leftmost = min(x, stripBounds.width - inset - total)
+                let rightmost = max(x, inset)
+                rowOriginRange = leftmost...rightmost
+                shiftRange = (leftmost - centredOrigin)...(rightmost - centredOrigin)
+            } else {
+                let lowest = cutAtEnd ? -CGFloat.infinity : anchorCentre - (total - lastWidth / 2)
+                let highest = cutAtStart ? CGFloat.infinity : anchorCentre - firstWidth / 2
+                shiftRange = lowest...highest
+            }
             scrollShift = scrollShift.clamped(to: shiftRange)
-            x = stripBounds.midX - anchorCentre + scrollShift
+            x = centredOrigin + scrollShift
         } else {
             scrollShift = 0
         }
@@ -408,6 +422,11 @@ final class StripView: NSView {
         if isHoveringActions, let actionPhoto, let index = cells.firstIndex(where: { $0.photo == actionPhoto }) {
             let before = widths[..<index].reduce(0, +) + metrics.gap * CGFloat(index)
             x = actionTrigger.frame.midX - before - widths[index] / 2
+        }
+        if let rowOriginRange, !isHoveringActions {
+            x = x.clamped(to: rowOriginRange)
+            edgePull = allowedEdgePull(edgePull)
+            x += edgePull / 4
         }
         frames = widths.map { width in
             defer { x += width + metrics.gap }
@@ -538,7 +557,7 @@ final class StripView: NSView {
     // MARK: Scrolling
 
     /// A swipe slides the photos under the fingers; past halfway to a neighbour, that photo
-    /// becomes the current one. A mouse wheel moves one photo per notch.
+    /// becomes the strip's anchor. A mouse wheel moves to the next distinct resting position.
     override func scrollWheel(with event: NSEvent) {
         guard let onScroll, let anchor, cells.indices.contains(anchor) else {
             super.scrollWheel(with: event)
@@ -548,45 +567,106 @@ final class StripView: NSView {
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         let delta = abs(dx) >= abs(dy) ? dx : dy
         guard event.hasPreciseScrollingDeltas else {
-            if delta != 0 { onScroll(delta < 0 ? 1 : -1) }
+            guard delta != 0 else { return }
+            edgeReturn = nil
+            let step = delta < 0 ? 1 : -1
+            let centres = centres(of: cells)
+            var target = anchor + step
+            while cells.indices.contains(target) {
+                let shift = (centres[anchor] - centres[target]).clamped(to: shiftRange)
+                if shift != restingShift {
+                    edgePull = 0
+                    onScroll(target - anchor)
+                    return
+                }
+                target += step
+            }
+            edgePull = allowedEdgePull(delta < 0 ? -32 : 32)
+            redraw()
+            settle()
             return
+        }
+        let isMomentum = event.momentumPhase != []
+        if isMomentum, momentumHitEdge || edgePull != 0 {
+            momentumHitEdge = true
+            settle()
+            return
+        }
+        if !isMomentum {
+            momentumHitEdge = false
+            edgeReturn = nil
         }
         if event.phase == .began || event.momentumPhase == .began {
             settleTimer?.invalidate()
             settleTimer = nil
             scrollGestureActive = true
         }
-        scrollShift = (scrollShift + delta).clamped(to: shiftRange)
-        // Every photo whose centre the swipe passed halfway to, at once; the next asks wait
-        // for the strip to be given the photo asked for.
-        if scrollTarget == nil {
+        let previousShift = scrollShift
+        let proposed = scrollShift + edgePull + delta
+        scrollShift = proposed.clamped(to: shiftRange)
+        edgePull = allowedEdgePull(proposed - scrollShift)
+        // Use reachable resting positions so a partial step can still land at an edge.
+        if scrollTarget == nil, scrollShift != previousShift, scrollShift != restingShift {
+            let step = scrollShift < restingShift ? 1 : -1
+            let positions = centres(of: cells)
             var to = anchor
-            while to < cells.count - 1, -scrollShift > centre(of: to) - centre(of: anchor) + (centre(of: to + 1) - centre(of: to)) / 2 { to += 1 }
-            while to > 0, scrollShift > centre(of: anchor) - centre(of: to) + (centre(of: to) - centre(of: to - 1)) / 2 { to -= 1 }
+            var candidate = anchor + step
+            var closestShift = restingShift
+            var distance = abs(scrollShift - restingShift)
+            while cells.indices.contains(candidate) {
+                let next = (positions[anchor] - positions[candidate]).clamped(to: shiftRange)
+                defer { candidate += step }
+                if next == closestShift, distance != 0 { continue }
+                let nextDistance = abs(scrollShift - next)
+                guard nextDistance < distance || nextDistance == 0 else { break }
+                to = candidate
+                closestShift = next
+                distance = nextDistance
+            }
             if to != anchor {
                 scrollTarget = cells[to].photo
                 onScroll(to - anchor)
             }
         }
         redraw()
+        if isMomentum, edgePull != 0 {
+            momentumHitEdge = true
+            settle()
+            return
+        }
         let ended = event.momentumPhase == .ended || event.momentumPhase == .cancelled
             || (event.momentumPhase == [] && (event.phase == .ended || event.phase == .cancelled))
-        if ended { settle() }
+        if ended || (event.phase == [] && event.momentumPhase == []) {
+            momentumHitEdge = edgePull != 0
+            settle()
+        }
+    }
+
+    private func allowedEdgePull(_ pull: CGFloat) -> CGFloat {
+        if pull < 0, !cutAtEnd, scrollShift == shiftRange.lowerBound {
+            return max(pull, -Self.maxEdgePull)
+        }
+        if pull > 0, !cutAtStart, scrollShift == shiftRange.upperBound {
+            return min(pull, Self.maxEdgePull)
+        }
+        return 0
     }
 
     /// Brings the nearest photo to the middle once the fingers let go. A momentum phase that
     /// follows the release takes over again.
     private func settle() {
         scrollGestureActive = false
-        guard settleTimer == nil, abs(scrollShift - restingShift) >= 0.5 else { return }
+        if edgePull != 0, edgeReturn == nil {
+            edgeReturn = (edgePull, CACurrentMediaTime())
+        }
+        guard settleTimer == nil, abs(scrollShift - restingShift) >= 0.5 || abs(edgePull) >= 0.5 else { return }
         lastSettle = CACurrentMediaTime()
         settleTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.settleStep() }
         }
     }
 
-    /// The current photo rests in the middle.
-    private let restingShift: CGFloat = 0
+    private var restingShift: CGFloat { CGFloat.zero.clamped(to: shiftRange) }
 
     private func settleStep() {
         guard !scrollGestureActive else {
@@ -599,9 +679,20 @@ final class StripView: NSView {
         let elapsed = now - lastSettle
         lastSettle = now
         let rest = restingShift
-        scrollShift = rest + (scrollShift - rest) * CGFloat(exp(-elapsed / Self.settleTime))
+        let decay = CGFloat(exp(-elapsed / Self.settleTime))
+        scrollShift = rest + (scrollShift - rest) * decay
+        if let returning = edgeReturn {
+            let progress = min(1, (now - returning.start) / Self.edgeReturnDuration)
+            edgePull = returning.pull * CGFloat(1 - UnitCurve.easeOut.value(at: progress))
+        }
         if abs(scrollShift - rest) < 0.5 {
             scrollShift = rest
+        }
+        if abs(edgePull) < 0.5 {
+            edgePull = 0
+            edgeReturn = nil
+        }
+        if scrollShift == rest, edgePull == 0 {
             settleTimer?.invalidate()
             settleTimer = nil
         }
