@@ -2,7 +2,7 @@ import AppKit
 import XCTest
 @testable import BetterView
 
-/// Once a photo is checked, every thumbnail shows a ring that checks it with one click.
+/// A checked photo keeps its check; an unchecked one shows a ring only under the pointer.
 @MainActor
 final class StripSelectionRingTests: XCTestCase {
     private var view: StripView!
@@ -17,7 +17,7 @@ final class StripSelectionRingTests: XCTestCase {
 
     private func show(checked: Set<Int>) {
         let cells = photos.enumerated().map { StripCell(photo: $1, mark: $0 == 2 ? .current : .none, selected: checked.contains($0)) }
-        view.update(cells: cells, anchor: 2, selecting: !checked.isEmpty)
+        view.update(cells: cells, anchor: 2)
     }
 
     private func click(_ point: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
@@ -38,15 +38,15 @@ final class StripSelectionRingTests: XCTestCase {
         XCTAssertEqual(view.cornerMarks, Array(repeating: .none, count: 5))
     }
 
-    func testOneCheckedShowsARingOnEveryOther() {
+    func testOneCheckedShowsNoRingOnTheOthers() {
         show(checked: [1])
-        XCTAssertEqual(view.cornerMarks, [.ring, .check, .ring, .ring, .ring])
-        show(checked: [])
-        XCTAssertEqual(view.cornerMarks, Array(repeating: .none, count: 5), "the rings go with the last check")
+        XCTAssertEqual(view.cornerMarks, [.none, .check, .none, .none, .none])
     }
 
     func testClickingARingChecksAndClickingElsewhereShowsThePhoto() {
+        view.showsRingOnHover = true
         show(checked: [1])
+        move(to: ring(3))
         click(ring(3))
         XCTAssertEqual(clicks.last?.0, photos[3])
         XCTAssertEqual(clicks.last?.1, .command, "checks or unchecks, as Command+click")
@@ -59,6 +59,7 @@ final class StripSelectionRingTests: XCTestCase {
     }
 
     func testShiftClickStillSelectsARange() {
+        view.showsRingOnHover = true
         show(checked: [1])
         click(ring(4), modifiers: .shift)
         XCTAssertEqual(clicks.last?.1, .shift)
@@ -105,12 +106,13 @@ final class StripSelectionRingTests: XCTestCase {
         XCTAssertEqual(clicks.last?.1, [], "elsewhere: show the photo")
     }
 
-    func testOnceAPhotoIsCheckedEveryRingStaysWhereverThePointerIs() {
+    func testWithAPhotoCheckedTheRingStillOnlyFollowsThePointer() {
         view.showsRingOnHover = true
         show(checked: [1])
         move(to: middle(3))
+        XCTAssertEqual(view.cornerMarks, [.none, .check, .none, .ring, .none])
         leave()
-        XCTAssertEqual(view.cornerMarks, [.ring, .check, .ring, .ring, .ring])
+        XCTAssertEqual(view.cornerMarks, [.none, .check, .none, .none, .none])
     }
 
     func testTheRingFollowsWhatMovesUnderAStillPointer() async throws {
@@ -133,6 +135,83 @@ final class StripSelectionRingTests: XCTestCase {
         XCTAssertEqual(under, 5, "the new middle photo is under the pointer")
         XCTAssertEqual(view.cornerMarks.firstIndex(of: .ring), under)
         XCTAssertEqual(view.cornerMarks.filter { $0 == .ring }.count, 1)
+    }
+
+    func testPhotoActionsStayUnderThePointerAcrossTwoRotations() throws {
+        view = StripView(metrics: StripPanel.metrics(height: 82), actionOverhang: StripView.floatingActionOverhang)
+        view.frame = CGRect(x: 0, y: 0, width: 600, height: 82 + StripView.floatingActionOverhang)
+        let context = try XCTUnwrap(CGContext(data: nil, width: 90, height: 30, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        let image = try XCTUnwrap(context.makeImage())
+        var cells = photos.map { StripCell(photo: $0, image: image) }
+        view.update(cells: cells, anchor: 2)
+        let originalFrames = view.cellFrames
+        view.showsPhotoActions = true
+
+        let bar = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier() == "stripPhotoActions" })
+        let trigger = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier() == "stripPhotoActionTrigger" })
+        XCTAssertTrue(bar.isHidden)
+        XCTAssertTrue(trigger.isHidden)
+        move(to: middle(1))
+        XCTAssertTrue(bar.isHidden)
+        XCTAssertFalse(trigger.isHidden)
+        XCTAssertEqual(trigger.frame.minY, view.cellFrames[1].maxY)
+        XCTAssertEqual(trigger.frame.maxY, 82)
+        move(to: CGPoint(x: trigger.frame.midX, y: trigger.frame.midY))
+        XCTAssertFalse(bar.isHidden)
+        XCTAssertEqual(view.cellFrames, originalFrames)
+        XCTAssertGreaterThanOrEqual(bar.frame.minY, view.cellFrames[1].maxY)
+        XCTAssertGreaterThan(bar.frame.maxY, view.cellFrames[1].maxY)
+        XCTAssertGreaterThan(bar.frame.maxY, 82)
+        XCTAssertLessThanOrEqual(bar.frame.maxY, view.bounds.maxY)
+
+        let right = try XCTUnwrap(bar.subviews.last as? NSButton)
+        let point = CGPoint(x: bar.frame.minX + right.frame.midX, y: bar.frame.minY + right.frame.midY)
+        move(to: point)
+        XCTAssertIdentical(view.hitTest(point), right)
+        XCTAssertNotNil(right.layer?.backgroundColor)
+        XCTAssertTrue(view.isHoveringActions)
+        let initialFrame = bar.frame
+        var rotated: [PhotoKey] = []
+        view.onRotate = { [self] photo, _ in
+            rotated.append(photo)
+            cells[1].rotation = rotated.count == 1 ? .right : .upsideDown
+            view.update(cells: cells, anchor: 2)
+        }
+        let thumbnailWidth = view.cellFrames[1].width
+        right.performClick(nil)
+        XCTAssertNotEqual(view.cellFrames[1].width, thumbnailWidth)
+        XCTAssertEqual(view.cellFrames[1].midX, trigger.frame.midX, accuracy: 0.5)
+        XCTAssertEqual(bar.frame, initialFrame)
+        XCTAssertIdentical(view.hitTest(point), right)
+        right.performClick(nil)
+        XCTAssertEqual(rotated, [photos[1], photos[1]])
+        XCTAssertEqual(view.cellFrames[1].midX, trigger.frame.midX, accuracy: 0.5)
+        XCTAssertEqual(bar.frame, initialFrame)
+
+        let bookmark = try XCTUnwrap(bar.subviews[1] as? NSButton)
+        let bookmarkPoint = CGPoint(x: bar.frame.minX + bookmark.frame.midX, y: point.y)
+        move(to: bookmarkPoint)
+        XCTAssertIdentical(view.hitTest(bookmarkPoint), bookmark)
+        XCTAssertNil(right.layer?.backgroundColor)
+        XCTAssertNotNil(bookmark.layer?.backgroundColor)
+        view.onToggleMark = { [self] photo in
+            XCTAssertEqual(photo, photos[1])
+            cells[1].marked = true
+            view.update(cells: cells, anchor: 2)
+        }
+        bookmark.performClick(nil)
+        XCTAssertEqual(bookmark.toolTip, "Retirer le marque-page")
+        XCTAssertEqual(bar.frame, initialFrame)
+
+        leave()
+        XCTAssertTrue(trigger.isHidden)
+        XCTAssertTrue(bar.isHidden)
+        XCTAssertNil(bookmark.layer?.backgroundColor)
+        XCTAssertFalse(view.isHoveringActions)
+        view.showsPhotoActions = false
+        move(to: middle(1))
+        XCTAssertTrue(bar.isHidden)
     }
 
     func testWithoutHoverRingsThePointerChangesNothing() {

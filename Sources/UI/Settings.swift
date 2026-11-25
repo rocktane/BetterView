@@ -10,6 +10,7 @@ enum Preferences {
     static let confirmsMultipleDeleteKey = "confirmsMultipleDelete"
     static let keepsZoomAcrossPhotosKey = "keepsZoomAcrossPhotos"
     static let stripVisibleKey = "stripVisible"
+    static let photoActionsVisibleKey = "photoActionsVisible"
     static let openAppKey = "openApp"
     static let stripDimmingKey = "stripOtherOpacity"
     private static let stripPlacementKey = "stripPlacement"
@@ -41,6 +42,9 @@ enum Preferences {
         get { UserDefaults.standard.object(forKey: confirmsMultipleDeleteKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: confirmsMultipleDeleteKey) }
     }
+
+    /// Off by default: rotation and bookmark stay in the context menu and the shortcuts.
+    static var photoActionsVisible: Bool { UserDefaults.standard.bool(forKey: photoActionsVisibleKey) }
 
     static var stripVisible: Bool {
         get { UserDefaults.standard.object(forKey: stripVisibleKey) as? Bool ?? true }
@@ -266,6 +270,7 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.keepsZoomAcrossPhotosKey) private var keepsZoomAcrossPhotos = false
     @AppStorage(Preferences.infoVisibleKey) private var infoVisible = true
     @AppStorage(Preferences.stripVisibleKey) private var stripVisible = true
+    @AppStorage(Preferences.photoActionsVisibleKey) private var photoActionsVisible = false
     @AppStorage(Preferences.stripDimmingKey) private var stripOtherOpacity = 0.7
     @AppStorage(Preferences.stripSizePresetKey) private var stripSizePreset = Preferences.stripSizePreset
     @AppStorage(Preferences.openAppKey) private var openApp = ExternalApps.Choice.automaticValue
@@ -277,6 +282,7 @@ struct GeneralSettingsView: View {
     let onInfoVisibleChange: (Bool) -> Void
     let onStripVisibleChange: (Bool) -> Void
     let onStripOpacityChange: (Double) -> Void
+    var onStripPhotoActionsChange: (Bool) -> Void = { _ in }
     var onStripSizeChange: (StripSizePreset) -> Void = { _ in }
 
     var body: some View {
@@ -284,6 +290,8 @@ struct GeneralSettingsView: View {
             Section("Affichage") {
                 Toggle("Afficher les informations de la photo", isOn: $infoVisible)
                     .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
+                Toggle("Afficher les boutons de rotation et de marque-page au survol dans la pellicule", isOn: $photoActionsVisible)
+                    .onChange(of: photoActionsVisible) { _, value in onStripPhotoActionsChange(value) }
                 Toggle("Afficher la pellicule", isOn: $stripVisible)
                     .onChange(of: stripVisible) { _, value in onStripVisibleChange(value) }
                 // Stretching the filmstrip by hand turns this to custom; picking a size applies it.
@@ -819,6 +827,7 @@ enum SettingsWindow {
             onInfoVisibleChange: { [weak viewer] in viewer?.setInfoVisible($0) },
             onStripVisibleChange: { [weak viewer] in viewer?.setStripVisible($0) },
             onStripOpacityChange: { [weak viewer] in viewer?.setStripOtherOpacity($0) },
+            onStripPhotoActionsChange: { [weak viewer] in viewer?.setStripPhotoActionsVisible($0) },
             onStripSizeChange: { [weak viewer] in viewer?.setStripSizePreset($0) }
         )
         tabs.addTabViewItem(tab("Général", "gearshape", general))

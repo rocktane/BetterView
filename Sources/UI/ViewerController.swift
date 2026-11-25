@@ -133,6 +133,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.viewer = window
         strip.viewerFrame = { [weak self] in self?.stripHolderFrame }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
+        strip.view.onRotate = { [weak self] in self?.rotate($0, toward: $1) }
+        strip.view.onToggleMark = { [weak self] in self?.toggleMark(for: $0) }
         strip.view.onMenu = { [weak self] in self?.stripMenu(for: $0) }
         view.contextMenu = { [weak self] in self?.viewerMenu() }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
@@ -239,10 +241,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
         case .clicked: showOpenPanel()
-        case .rotate(let direction):
-            if let photo = visiblePhoto { rotate(photo, toward: direction) }
-        case .toggleMark:
-            if let photo = visiblePhoto { toggleMark(for: photo) }
         case .zoomChanged:
             if !view.isZoomed { stopFollowingFocus() }
             display()
@@ -495,6 +493,29 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    private func resetRotation(of photos: [PhotoKey]) {
+        guard !photoEditInProgress, window.attachedSheet == nil else { return }
+        photoEditInProgress = true
+        let url = rotationURL
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.photoEditInProgress = false }
+            do {
+                self.rotations = try await Task.detached(priority: .userInitiated) {
+                    try PhotoRotations.read(from: url).resettingRotation(for: photos, to: url)
+                }.value
+                if let current = self.session.list.current, photos.contains(current) {
+                    self.stopFollowingFocus()
+                    self.view.resetZoom()
+                }
+                self.display()
+                self.replan()
+            } catch {
+                self.alert("Rotation impossible", info: error.localizedDescription)
+            }
+        }
+    }
+
     func deleteCurrent() {
         let selected = selection.photos(in: session.list.photos)
         if selected.count > 1 {
@@ -727,7 +748,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             visiblePhoto = nil
             shownTier = nil
             view.showMessage(session.tombstones.isEmpty ? "Aucune photo" : "Aucune photo restante")
-            view.setPhotoActions(available: false, marked: false)
+            view.setMarked(false)
             updateInfo()
             view.setProtected(false)
             onDisplayed?(PhotoKey(path: "", device: 0, inode: 0, size: 0, mtimeSeconds: 0, mtimeNanoseconds: 0), nil)
@@ -752,7 +773,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
         updateProtectionBadge()
         updateInfo()
-        view.setPhotoActions(available: visiblePhoto == current, marked: rotations.isMarked(current))
+        view.setMarked(visiblePhoto == current && rotations.isMarked(current))
         onDisplayed?(current, shownTier)
     }
 
@@ -875,6 +896,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         fullScreenContainer.bottomInset = wanted ? strip.fullScreenHeight(on: screen) : 0
     }
 
+    func setStripPhotoActionsVisible(_ visible: Bool) {
+        strip.view.showsPhotoActions = visible
+    }
+
     private func updateStrip() {
         updateFullScreenRoom()
         guard comparison == nil else {
@@ -905,7 +930,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 mark: at == index ? .current : .none,
                 selected: selected,
                 opacity: at == index || selected ? 1 : stripOtherOpacity,
-                rotation: rotations[photo]
+                rotation: rotations[photo],
+                marked: rotations.isMarked(photo)
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
@@ -933,14 +959,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.view.update(
             cells: cells, anchor: center - shown.lowerBound,
             cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
-            groups: groups, tips: tips, selecting: showsSelectionRings
+            groups: groups, tips: tips
         )
-    }
-
-    /// The rings show while a photo of the folder is checked: a checked photo deleted or gone
-    /// from the folder no longer counts. Nothing to look through when nothing is checked.
-    private var showsSelectionRings: Bool {
-        !selection.isEmpty && session.list.photos.contains(where: selection.contains)
     }
 
     /// Where the strip was swiped to, if the current photo has not moved since.
@@ -1044,6 +1064,18 @@ final class ViewerController: NSObject, NSWindowDelegate {
             let openWith = NSMenuItem(title: "Ouvrir avec", action: nil, keyEquivalent: "")
             openWith.submenu = submenu
             menu.addItem(openWith)
+        }
+
+        menu.addItem(.separator())
+        func symbol(_ name: String) -> NSImage? { NSImage(systemSymbolName: name, accessibilityDescription: nil) }
+        add("Faire pivoter à gauche", image: symbol("rotate.left")) { $0.rotate(clicked, toward: .left) }
+        add("Faire pivoter à droite", image: symbol("rotate.right")) { $0.rotate(clicked, toward: .right) }
+        if rotations[clicked] != .upright {
+            add("Rétablir l’orientation d’origine", image: symbol("arrow.uturn.backward")) { $0.resetRotation(of: [clicked]) }
+        }
+        let marked = rotations.isMarked(clicked)
+        add(marked ? "Retirer le marque-page" : "Marquer à revoir", image: symbol(marked ? "bookmark.slash" : "bookmark")) {
+            $0.toggleMark(for: clicked)
         }
 
         menu.addItem(.separator())
@@ -1312,7 +1344,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 // Nothing is selected in the comparison: no photo is marked as current.
                 mark: .none,
                 opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14),
-                rotation: rotations[photo]
+                rotation: rotations[photo],
+                marked: rotations.isMarked(photo)
             )
         }
         let waiting = model.waiting.count

@@ -329,7 +329,8 @@ final class StripPanel {
     }
 
     let view: StripView = {
-        let view = StripView(metrics: StripPanel.metrics(height: StripSize.standard.height))
+        let view = StripView(metrics: StripPanel.metrics(height: StripSize.standard.height), actionOverhang: StripView.floatingActionOverhang)
+        view.showsPhotoActions = Preferences.photoActionsVisible
         view.showsRingOnHover = true
         return view
     }()
@@ -377,7 +378,7 @@ final class StripPanel {
         self.placement = placement ?? StripPlacement()
         self.size = size ?? .standard
         panel = FloatingStripPanel(
-            contentRect: NSRect(x: 0, y: 0, width: StripSize.standard.width, height: StripSize.standard.height),
+            contentRect: NSRect(x: 0, y: 0, width: StripSize.standard.width, height: StripSize.standard.height + view.actionOverhang),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
@@ -393,12 +394,7 @@ final class StripPanel {
         panel.isExcludedFromWindowsMenu = true
         panel.collectionBehavior = [.ignoresCycle, .fullScreenNone]
         panel.appearance = NSAppearance(named: .darkAqua)
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.94).cgColor
-        view.layer?.cornerRadius = 12
-        view.layer?.masksToBounds = true
-        view.layer?.borderColor = NSColor(white: 1, alpha: 0.1).cgColor
-        view.layer?.borderWidth = 1
+        view.styleFloatingBackground()
         panel.contentView = view
         view.onDrag = { [weak self] in self?.drag($0) }
         view.onResize = { [weak self] in self?.resize($0) }
@@ -406,6 +402,11 @@ final class StripPanel {
         view.onContentChanged = { [weak self] in
             guard let self, self.dragOrigin == nil, self.resizeStart == nil else { return }
             self.fitToScreen()
+        }
+        view.onActionHoverChanged = { [weak self] in
+            guard let self else { return }
+            if !self.view.isHoveringActions { self.fitToScreen() }
+            self.updateChildWindow()
         }
         fitToScreen()
         // A screen of another scale needs thumbnails of another size, at the same strip size.
@@ -435,14 +436,18 @@ final class StripPanel {
     }
 
     var isVisible: Bool { panel.isVisible }
-    var frame: CGRect { panel.frame }
+    var frame: CGRect {
+        var visible = panel.frame
+        visible.size.height -= view.actionOverhang
+        return visible
+    }
 
     /// How many photos to give on each side of the middle one, so that even portrait photos
     /// fill the widest strip this screen allows: stretching it never shows an empty end while
     /// the next update brings more photos.
     var reach: Int {
-        let width = (screen?.visibleFrame).map { StripResize.maxSize(visible: $0).width } ?? panel.frame.width
-        return StripView.reach(width: max(width, panel.frame.width), metrics: view.metrics)
+        let width = (screen?.visibleFrame).map { StripResize.maxSize(visible: $0).width } ?? frame.width
+        return StripView.reach(width: max(width, frame.width), metrics: view.metrics)
     }
 
     /// Full screen across the bottom of `screen`, or back to the strip's own place with nil.
@@ -525,7 +530,7 @@ final class StripPanel {
     /// then carries it along with the window as it is dragged, with no delay. A shape change
     /// still goes through `followViewer`, as the window grows around its centre.
     private func updateChildWindow() {
-        let wanted = panel.isVisible && placement.window != nil && dragOrigin == nil && resizeStart == nil && fullScreenFrame == nil && viewerFrame() != nil
+        let wanted = panel.isVisible && !view.isHoveringActions && placement.window != nil && dragOrigin == nil && resizeStart == nil && fullScreenFrame == nil && viewerFrame() != nil
         let parent = panel.parent
         if wanted, let viewer {
             if parent !== viewer {
@@ -563,6 +568,8 @@ final class StripPanel {
 
     /// Follows the Dock and the screens. They change under the strip without any drag.
     func fitToScreen() {
+        // Keep the panel under the buttons while a rotation reshapes the viewer or thumbnails.
+        guard !view.isHoveringActions else { return }
         if let fullScreenFrame {
             let height = fullScreenHeight(on: fullScreenFrame)
             setFrame(CGRect(x: fullScreenFrame.minX, y: fullScreenFrame.minY, width: fullScreenFrame.width, height: height), display: panel.isVisible)
@@ -578,10 +585,12 @@ final class StripPanel {
     /// The thumbnails' height follows the strip's before the new size is drawn: both change
     /// in the same pass, with nothing stretched in between.
     private func setFrame(_ frame: CGRect, display: Bool) {
-        guard frame != panel.frame else { return }
-        let sizeChanged = frame.size != panel.frame.size
-        if frame.height != panel.frame.height { view.metrics = Self.metrics(height: frame.height) }
-        panel.setFrame(frame, display: display)
+        guard frame != self.frame else { return }
+        let sizeChanged = frame.size != self.frame.size
+        if frame.height != self.frame.height { view.metrics = Self.metrics(height: frame.height) }
+        var windowFrame = frame
+        windowFrame.size.height += view.actionOverhang
+        panel.setFrame(windowFrame, display: display)
         if sizeChanged { onSizeChanged() }
     }
 
@@ -598,7 +607,7 @@ final class StripPanel {
         }
         guard let screen = panel.screen ?? self.screen else { return }
         let start = resizeStart ?? (
-            panel.frame,
+            frame,
             StripResize.anchors(for: placement, sides: pull.sides, screen: screen.frame, visible: screen.visibleFrame),
             screen.visibleFrame
         )
@@ -619,7 +628,7 @@ final class StripPanel {
         // A width narrower than the photos is what the user sees. Pulled past them, the strip
         // shows them all: the chosen maximum is at least that, and a larger one stays.
         if acrossPulled { size.width = pulled.width <= content ? pulled.width : max(size.width, frame.width) }
-        guard frame != panel.frame else { return }
+        guard frame != self.frame else { return }
         placement.origin = frame.origin
         if placement.window != nil, let window = viewerFrame() {
             placement.window?.offset = frame.midX - window.midX
@@ -636,7 +645,7 @@ final class StripPanel {
             updateChildWindow()
             return
         }
-        let start = dragOrigin ?? panel.frame.origin
+        let start = dragOrigin ?? frame.origin
         if dragOrigin == nil {
             dragOrigin = start
             updateChildWindow()

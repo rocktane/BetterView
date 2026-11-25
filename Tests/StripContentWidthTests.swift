@@ -35,8 +35,8 @@ final class StripContentWidthTests: XCTestCase {
         // Three 3:2 placeholders 66 pt tall: 99 pt each, two 6 pt gaps, 8 pt margins.
         let strip = makePanel(3)
         XCTAssertEqual(strip.frame.width, 3 * 99 + 2 * 6 + 2 * 8)
-        XCTAssertEqual(strip.view.cellFrames.first?.minX, 8, "no empty room before the first photo")
-        XCTAssertEqual(strip.view.cellFrames.last?.maxX, strip.frame.width - 8, "nor after the last")
+        XCTAssertEqual(strip.view.cellFrames[0].midX, strip.frame.width / 2, accuracy: 0.5,
+                       "the current photo stays centred at the start of a short list")
     }
 
     func testACentredStripStaysCentredAsItsWidthFollowsThePhotos() throws {

@@ -479,7 +479,7 @@ final class StripLayoutTests: XCTestCase {
         return try XCTUnwrap(context.makeImage())
     }
 
-    private func strip(count: Int, anchor: Int, cut: (Bool, Bool), groups: [ClosedRange<Int>] = []) throws -> StripView {
+    private func strip(count: Int, anchor: Int?, cut: (Bool, Bool), groups: [ClosedRange<Int>] = []) throws -> StripView {
         let view = StripView(metrics: .init(height: 66, gap: 3, top: 7, fadesEdges: true))
         view.frame = CGRect(x: 0, y: 0, width: 820, height: 80)
         let image = try portrait()
@@ -515,13 +515,13 @@ final class StripLayoutTests: XCTestCase {
     }
 
     /// Portrait photos are 44 pt wide: 29 of them overflow 820 pt from either end.
-    func testPortraitsFillTheStripAtBothEnds() throws {
+    func testTheCurrentPhotoIsCentredAtBothEnds() throws {
         let start = try strip(count: 29, anchor: 0, cut: (false, true))
-        XCTAssertEqual(start.cellFrames.first?.minX, 7, "the same space as above the photos")
+        XCTAssertEqual(start.cellFrames[0].midX, 410, accuracy: 0.5)
         XCTAssertGreaterThanOrEqual(start.cellFrames.last?.maxX ?? 0, 820)
 
         let end = try strip(count: 29, anchor: 28, cut: (true, false))
-        XCTAssertEqual(end.cellFrames.last?.maxX, 813)
+        XCTAssertEqual(end.cellFrames[28].midX, 410, accuracy: 0.5)
         XCTAssertLessThanOrEqual(end.cellFrames.first?.minX ?? 1, 0)
     }
 
@@ -532,7 +532,7 @@ final class StripLayoutTests: XCTestCase {
     }
 
     func testAShortListIsCentredWhole() throws {
-        let short = try strip(count: 5, anchor: 0, cut: (false, false))
+        let short = try strip(count: 5, anchor: nil, cut: (false, false))
         let frames = short.cellFrames
         XCTAssertEqual(frames.first!.minX - 0, 820 - frames.last!.maxX, accuracy: 1)
     }

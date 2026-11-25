@@ -9,8 +9,6 @@ enum ViewerCommand {
     /// A click that did not move the window, while `opensOnClick`.
     case clicked
     case zoomChanged
-    case rotate(RotationDirection)
-    case toggleMark
     /// In the comparison: a button of this slot, showing this photo, was pressed.
     case slotAction(ComparisonAction, slot: Int, photo: PhotoKey?)
 }
@@ -56,14 +54,26 @@ final class ViewerView: NSView {
     /// The name's size and weight too, with fixed-width digits.
     private let zoomLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private let infoPanel = ViewerView.panel()
-    private let actionsPanel = ViewerView.panel()
-    private let rotateLeftButton = ViewerView.photoButton("rotate.left", label: "Tourner à gauche", id: "rotateLeft")
-    private let markButton = ViewerView.photoButton("bookmark", label: "Marquer à revoir", id: "photoBookmark")
-    private let rotateRightButton = ViewerView.photoButton("rotate.right", label: "Tourner à droite", id: "rotateRight")
-    private var actionsAboveInfo: NSLayoutConstraint!
-    private var actionsAboveInfoButton: NSLayoutConstraint!
-    private var photoActionsAvailable = false
-    private var isMarked = false
+    /// Always shown on a marked photo, like a ribbon over its top edge.
+    private let bookmarkRibbon: NSImageView = {
+        let image = NSImage(systemSymbolName: "bookmark.fill", accessibilityDescription: "Marquée à revoir")?
+            .withSymbolConfiguration(.init(pointSize: 22, weight: .regular))
+        let view = NSImageView(image: image ?? NSImage())
+        view.contentTintColor = .systemOrange
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        view.toolTip = "Marquée à revoir"
+        view.setAccessibilityIdentifier("photoBookmarkRibbon")
+        view.shadow = {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor(white: 0, alpha: 0.5)
+            shadow.shadowBlurRadius = 3
+            shadow.shadowOffset = NSSize(width: 0, height: -1)
+            return shadow
+        }()
+        return view
+    }()
+    var showsBookmarkRibbon: Bool { !bookmarkRibbon.isHidden }
     private static let overlayFill = NSColor(white: 0, alpha: 0.64)
     /// The name sets the size of the name, the position and the zoom level.
     private static let nameSize: CGFloat = 15
@@ -143,20 +153,6 @@ final class ViewerView: NSView {
         return panel
     }
 
-    private static func photoButton(_ symbol: String, label: String, id: String) -> NSButton {
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
-        let button = NSButton(image: image ?? NSImage(), target: nil, action: nil)
-        button.isBordered = false
-        button.refusesFirstResponder = true
-        button.contentTintColor = NSColor(white: 1, alpha: 0.9)
-        button.toolTip = label
-        button.setAccessibilityLabel(label)
-        button.setAccessibilityIdentifier(id)
-        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return button
-    }
-
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -192,20 +188,8 @@ final class ViewerView: NSView {
         bannerLabel.layer?.cornerRadius = 4
         for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
         addSubview(infoPanel)
-        addSubview(actionsPanel)
-        actionsPanel.setAccessibilityIdentifier("photoActions")
+        addSubview(bookmarkRibbon)
         infoPanel.setAccessibilityIdentifier("photoInformation")
-        let actions = NSStackView(views: [rotateLeftButton, markButton, rotateRightButton])
-        actions.distribution = .fillEqually
-        actions.spacing = 0
-        actions.translatesAutoresizingMaskIntoConstraints = false
-        actionsPanel.addSubview(actions)
-        for (button, action) in [(rotateLeftButton, #selector(rotateLeft)), (markButton, #selector(toggleMark)),
-                                 (rotateRightButton, #selector(rotateRight))] {
-            button.target = self
-            button.action = action
-            button.heightAnchor.constraint(equalTo: actions.heightAnchor).isActive = true
-        }
         infoButton.setAccessibilityIdentifier("photoInfo")
         infoButton.target = self
         infoButton.action = #selector(infoButtonPressed)
@@ -227,22 +211,12 @@ final class ViewerView: NSView {
         }
         let shrinkToText = infoPanel.widthAnchor.constraint(equalToConstant: 0)
         shrinkToText.priority = .defaultLow
-        let actionWidth = actionsPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 116)
-        actionWidth.priority = .defaultHigh
-        actionsAboveInfo = actionsPanel.bottomAnchor.constraint(equalTo: infoPanel.topAnchor, constant: -6)
-        actionsAboveInfoButton = actionsPanel.bottomAnchor.constraint(equalTo: infoButton.topAnchor, constant: -6)
         NSLayoutConstraint.activate([
             shrinkToText,
-            actionWidth, actionsAboveInfoButton,
-            actionsPanel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor),
-            actionsPanel.trailingAnchor.constraint(equalTo: infoPanel.trailingAnchor),
-            actions.leadingAnchor.constraint(equalTo: actionsPanel.leadingAnchor, constant: 4),
-            actions.trailingAnchor.constraint(equalTo: actionsPanel.trailingAnchor, constant: -4),
-            actions.topAnchor.constraint(equalTo: actionsPanel.topAnchor),
-            actions.bottomAnchor.constraint(equalTo: actionsPanel.bottomAnchor),
-            actions.heightAnchor.constraint(equalToConstant: 34),
             messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            bookmarkRibbon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            bookmarkRibbon.topAnchor.constraint(equalTo: topAnchor, constant: 0),
             badges.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             badges.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             bannerLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -335,23 +309,7 @@ final class ViewerView: NSView {
     }
 
     @objc private func infoButtonPressed() { onCommand(.perform(.toggleInfo, repeating: false)) }
-    @objc private func rotateLeft() { onCommand(.rotate(.left)) }
-    @objc private func rotateRight() { onCommand(.rotate(.right)) }
-    @objc private func toggleMark() { onCommand(.toggleMark) }
-
-    func setPhotoActions(available: Bool, marked: Bool) {
-        if available != photoActionsAvailable {
-            photoActionsAvailable = available
-            applyOverlayVisibility()
-        }
-        guard marked != isMarked else { return }
-        isMarked = marked
-        let label = marked ? "Retirer le marque-page" : "Marquer à revoir"
-        markButton.image = NSImage(systemSymbolName: marked ? "bookmark.fill" : "bookmark", accessibilityDescription: label)?
-            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
-        markButton.toolTip = label
-        markButton.setAccessibilityLabel(label)
-    }
+    func setMarked(_ marked: Bool) { bookmarkRibbon.isHidden = !marked }
 
     private func updateInfoButtonTip() {
         let key = shortcuts.keys(for: .toggleInfo).first?.label
@@ -363,12 +321,6 @@ final class ViewerView: NSView {
         infoPanel.fade(visible: showInfo)
         positionPanel.fade(visible: showInfo)
         infoButton.fade(visible: !hasInfo && offersInfo && isHovered)
-        if actionsAboveInfo.isActive != hasInfo {
-            actionsAboveInfo.isActive = false
-            actionsAboveInfoButton.isActive = false
-            (hasInfo ? actionsAboveInfo : actionsAboveInfoButton).isActive = true
-        }
-        actionsPanel.fade(visible: photoActionsAvailable && isHovered)
         updateBadge()
     }
 

@@ -11,6 +11,8 @@ struct StripCell {
     var selected = false
     var opacity: Float = 1
     var rotation = PhotoRotation.upright
+    /// Marked to look at again: a small orange bookmark in the top left corner.
+    var marked = false
 }
 
 /// A strip of thumbnails laid end to end, each as wide as its photo's shape, drawn as layers:
@@ -27,12 +29,13 @@ final class StripView: NSView {
     }
 
     private(set) var cells: [StripCell] = []
-    /// Some photo is checked: every thumbnail shows a ring to check it with one click.
-    private(set) var showsSelectionRings = false
     /// The modifiers held: Shift and Command select rather than go to the photo.
     var onClick: (PhotoKey, NSEvent.ModifierFlags) -> Void = { _, _ in }
     /// The right-click menu for a thumbnail.
     var onMenu: (PhotoKey) -> NSMenu? = { _ in nil }
+    var onRotate: (PhotoKey, RotationDirection) -> Void = { _, _ in }
+    var onToggleMark: (PhotoKey) -> Void = { _ in }
+    var onActionHoverChanged: () -> Void = {}
     var onHoverChanged: () -> Void = {}
     /// Set for a view that scrolls: called with how many photos the swipe carried past the
     /// middle, forward positive. The strip expects to be given them centred.
@@ -54,12 +57,34 @@ final class StripView: NSView {
             needsLayout = true
         }
     }
+    var showsPhotoActions = false {
+        didSet { refreshHover() }
+    }
+    private static let actionBarWidth: CGFloat = 102
+    private static let actionBarHeight: CGFloat = 32
+    static let floatingActionOverhang: CGFloat = actionBarHeight
+    private let actionTrigger = StripActionTrigger()
+    private let actionBar = NSView()
+    private let rotateLeftButton = StripActionButton(symbol: "rotate.left", label: "Faire pivoter à gauche")
+    private let bookmarkButton = StripActionButton(symbol: "bookmark", label: "Marquer à revoir")
+    private let rotateRightButton = StripActionButton(symbol: "rotate.right", label: "Faire pivoter à droite")
+    private var actionPhoto: PhotoKey?
+    private(set) var isHoveringActions = false
+    /// Transparent space in the floating window for controls above the filmstrip.
+    let actionOverhang: CGFloat
+    private var stripBounds: CGRect {
+        CGRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - actionOverhang))
+    }
+
     private let host = NSView()
     private let content = CALayer()
     private let fade = CAGradientLayer()
     private var images: [CALayer] = []
     private var thumbnailLayers: [CALayer] = []
     private var checks: [CALayer] = []
+    private var bookmarks: [CALayer] = []
+    /// For tests: which drawn cells show a bookmark.
+    var bookmarkMarks: [Bool] { bookmarks.prefix(cells.count).map { !$0.isHidden } }
     private var frames: [CGRect] = []
     private let outlines = CAShapeLayer()
     private var anchor: Int?
@@ -83,8 +108,7 @@ final class StripView: NSView {
     /// The shifts that still move the photos: past them, the row stops at an end of the list.
     private var shiftRange: ClosedRange<CGFloat> = 0...0
 
-    /// Space kept between the first or last photo of the list and the edge: the same as above
-    /// and below the photos.
+    /// Space between the first or last photo and the edge, matching the bottom margin.
     private var inset: CGFloat { metrics.top }
     /// More photos exist beyond the first or last cell given: no need to stop at that end.
     private var cutAtStart = false
@@ -184,6 +208,27 @@ final class StripView: NSView {
         return context.makeImage()
     }()
 
+    /// An orange ribbon with a notch at its foot, hanging from the thumbnail's top edge.
+    private static let bookmarkImage: CGImage? = {
+        let width: CGFloat = 10, height: CGFloat = 14
+        guard let context = CGContext(
+            data: nil, width: Int(width * 2), height: Int(height * 2), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.scaleBy(x: 2, y: 2)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: height))
+        path.addLine(to: CGPoint(x: width, y: height))
+        path.addLine(to: CGPoint(x: width, y: 0))
+        path.addLine(to: CGPoint(x: width / 2, y: 3.5))
+        path.addLine(to: CGPoint(x: 0, y: 0))
+        path.closeSubpath()
+        context.addPath(path)
+        context.setFillColor(NSColor.systemOrange.cgColor)
+        context.fillPath()
+        return context.makeImage()
+    }()
+
     /// Where the check or the ring sits in a thumbnail of `size`: inside the white border, in
     /// the top right corner.
     private func discFrame(inCellOf size: CGSize) -> CGRect {
@@ -195,8 +240,9 @@ final class StripView: NSView {
     /// How far around a ring a click still checks: the ring is small.
     private static let ringReach: CGFloat = 5
 
-    init(metrics: Metrics) {
+    init(metrics: Metrics, actionOverhang: CGFloat = 0) {
         self.metrics = metrics
+        self.actionOverhang = actionOverhang
         super.init(frame: .zero)
         wantsLayer = true
         let root = CALayer()
@@ -204,6 +250,23 @@ final class StripView: NSView {
         host.wantsLayer = true
         host.autoresizingMask = [.width, .height]
         addSubview(host)
+        actionTrigger.isHidden = true
+        actionTrigger.setAccessibilityLabel("Actions de la photo")
+        actionTrigger.setAccessibilityIdentifier("stripPhotoActionTrigger")
+        addSubview(actionTrigger)
+        actionBar.isHidden = true
+        actionBar.wantsLayer = true
+        actionBar.layer?.cornerRadius = 6
+        actionBar.layer?.backgroundColor = NSColor(white: 0.1, alpha: 1).cgColor
+        actionBar.setAccessibilityIdentifier("stripPhotoActions")
+        addSubview(actionBar)
+        let buttons = [(rotateLeftButton, #selector(rotateLeft)), (bookmarkButton, #selector(toggleBookmark)),
+                       (rotateRightButton, #selector(rotateRight))]
+        for (button, action) in buttons {
+            button.target = self
+            button.action = action
+            actionBar.addSubview(button)
+        }
         content.actions = ["bounds": NSNull(), "position": NSNull()]
         root.addSublayer(content)
         if metrics.fadesEdges {
@@ -219,18 +282,41 @@ final class StripView: NSView {
         content.addSublayer(outlines)
     }
 
+    func styleFloatingBackground() {
+        host.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.94).cgColor
+        host.layer?.cornerRadius = 12
+        host.layer?.masksToBounds = true
+        host.layer?.borderColor = NSColor(white: 1, alpha: 0.1).cgColor
+        host.layer?.borderWidth = 1
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit is StripActionButton { return hit }
+        return stripBounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    @objc private func rotateLeft() {
+        if let actionPhoto { onRotate(actionPhoto, .left) }
+    }
+
+    @objc private func rotateRight() {
+        if let actionPhoto { onRotate(actionPhoto, .right) }
+    }
+
+    @objc private func toggleBookmark() {
+        if let actionPhoto { onToggleMark(actionPhoto) }
+    }
 
     /// `anchor` stays in the middle, so that moving along slides the strip under a fixed
     /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
     /// outlined as one, and its tip shows when the pointer rests on it.
-    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = [], selecting: Bool = false) {
+    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
         let previous = (cells: self.cells, anchor: self.anchor)
-        showsSelectionRings = selecting
         self.cells = cells
         self.anchor = anchor
         cutAtStart = cut.start
@@ -301,24 +387,27 @@ final class StripView: NSView {
     private func layoutFrames() {
         let widths = cells.map(width(of:))
         let total = widths.reduce(0, +) + metrics.gap * CGFloat(max(cells.count - 1, 0))
-        let y = bounds.height - metrics.top - metrics.height
-        var x = (bounds.width - total) / 2
+        let y = stripBounds.height - metrics.top - metrics.height
+        var x = (stripBounds.width - total) / 2
         shiftRange = 0...0
-        // The anchor stays in the middle, except near the ends of the list, where the strip stops
-        // scrolling rather than leave half of itself empty.
-        if let anchor, cells.indices.contains(anchor), total > bounds.width - 2 * inset {
+        // At either end, the first or last photo can reach the centre. A cut end has
+        // more photos beyond those supplied here, so the visible window can keep moving.
+        if let anchor, cells.indices.contains(anchor),
+           let firstWidth = widths.first, let lastWidth = widths.last {
             let before = widths[..<anchor].reduce(0, +) + metrics.gap * CGFloat(anchor)
-            let centred = bounds.midX - widths[anchor] / 2 - before
-            let first = inset, last = bounds.width - inset - total
-            // A cut list end (more photos beyond the cells given) may scroll past the edge.
-            let lowest = cutAtEnd ? -CGFloat.infinity : last, highest = cutAtStart ? CGFloat.infinity : first
-            shiftRange = (lowest - centred)...(highest - centred)
-            x = min(max(centred + scrollShift, lowest), highest)
-            // Only what shows is kept: nothing gathers past an end, to be undone before the
-            // photos move again.
-            scrollShift = x - centred
+            let anchorCentre = before + widths[anchor] / 2
+            let lowest = cutAtEnd ? -CGFloat.infinity : anchorCentre - (total - lastWidth / 2)
+            let highest = cutAtStart ? CGFloat.infinity : anchorCentre - firstWidth / 2
+            shiftRange = lowest...highest
+            scrollShift = scrollShift.clamped(to: shiftRange)
+            x = stripBounds.midX - anchorCentre + scrollShift
         } else {
             scrollShift = 0
+        }
+        // Keep the rotated thumbnail under its controls while its aspect changes.
+        if isHoveringActions, let actionPhoto, let index = cells.firstIndex(where: { $0.photo == actionPhoto }) {
+            let before = widths[..<index].reduce(0, +) + metrics.gap * CGFloat(index)
+            x = actionTrigger.frame.midX - before - widths[index] / 2
         }
         frames = widths.map { width in
             defer { x += width + metrics.gap }
@@ -336,10 +425,10 @@ final class StripView: NSView {
         content.frame = host.bounds
         if metrics.fadesEdges {
             fade.frame = content.bounds
-            let edge = min(0.12, 28 / max(bounds.width, 1))
+            let edge = min(0.12, 28 / max(stripBounds.width, 1))
             // Only an edge that cuts a thumbnail fades: the first or last photo stays whole.
             let cutLeft = (frames.first?.minX ?? 0) < 0
-            let cutRight = (frames.last?.maxX ?? 0) > bounds.width
+            let cutRight = (frames.last?.maxX ?? 0) > stripBounds.width
             fade.colors = [
                 (cutLeft ? NSColor.clear : NSColor.black).cgColor, NSColor.black.cgColor,
                 NSColor.black.cgColor, (cutRight ? NSColor.clear : NSColor.black).cgColor,
@@ -366,9 +455,16 @@ final class StripView: NSView {
             check.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
             layer.addSublayer(check)
             checks.append(check)
+            let bookmark = CALayer()
+            bookmark.contents = Self.bookmarkImage
+            bookmark.contentsScale = 2
+            bookmark.isHidden = true
+            bookmark.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
+            layer.addSublayer(bookmark)
+            bookmarks.append(bookmark)
         }
         for (position, layer) in images.enumerated() {
-            guard position < cells.count, frames[position].maxX > 0, frames[position].minX < bounds.width else {
+            guard position < cells.count, frames[position].maxX > 0, frames[position].minX < stripBounds.width else {
                 if !layer.isHidden { layer.isHidden = true }
                 continue
             }
@@ -388,6 +484,12 @@ final class StripView: NSView {
                 layer.borderColor = NSColor.white.cgColor
             }
             updateMark(at: position)
+            let bookmark = bookmarks[position]
+            if bookmark.isHidden == cell.marked { bookmark.isHidden = !cell.marked }
+            if cell.marked {
+                let scale = min(1, metrics.height / 60)
+                bookmark.frame = CGRect(x: 5, y: layer.bounds.height - 14 * scale, width: 10 * scale, height: 14 * scale)
+            }
         }
         // One rounded outline around each group, concentric with the thumbnails' corners.
         let path = CGMutablePath()
@@ -398,6 +500,7 @@ final class StripView: NSView {
         outlines.frame = content.bounds
         outlines.path = path
         CATransaction.commit()
+        updatePhotoActions()
     }
 
     /// The span of each group's cells.
@@ -411,7 +514,7 @@ final class StripView: NSView {
     private func updateTips() {
         removeAllToolTips()
         for (rect, tip) in zip(groupRects(), groupTips) {
-            addToolTip(rect.intersection(bounds), owner: tip as NSString, userData: nil)
+            addToolTip(rect.intersection(stripBounds), owner: tip as NSString, userData: nil)
         }
     }
 
@@ -427,7 +530,7 @@ final class StripView: NSView {
         let changed = newSize != frame.size
         super.setFrameSize(newSize)
         guard changed else { return }
-        host.frame = bounds
+        host.frame = stripBounds
         redraw()
         updateTips()
     }
@@ -441,6 +544,7 @@ final class StripView: NSView {
             super.scrollWheel(with: event)
             return
         }
+        if isHoveringActions { clearHover() }
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         let delta = abs(dx) >= abs(dy) ? dx : dy
         guard event.hasPreciseScrollingDeltas else {
@@ -481,8 +585,8 @@ final class StripView: NSView {
         }
     }
 
-    /// The current photo in the middle, or as near as the ends of the list allow.
-    private var restingShift: CGFloat { CGFloat(0).clamped(to: shiftRange) }
+    /// The current photo rests in the middle.
+    private let restingShift: CGFloat = 0
 
     private func settleStep() {
         guard !scrollGestureActive else {
@@ -517,8 +621,8 @@ final class StripView: NSView {
     override func mouseEntered(with event: NSEvent) {
         onHoverChanged()
         let point = convert(event.locationInWindow, from: nil)
-        updateResizeCursor(at: point)
         setHover(screen: screenPoint(point))
+        updateResizeCursor(at: point)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -529,8 +633,8 @@ final class StripView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        updateResizeCursor(at: point)
         setHover(screen: screenPoint(point))
+        updateResizeCursor(at: point)
     }
 
     // MARK: Marks
@@ -556,7 +660,7 @@ final class StripView: NSView {
     private func hoverCell() -> Int? {
         guard showsRingOnHover, !dragging, !resizing, let screen = hoverScreenPoint else { return nil }
         let point = localPoint(screen)
-        return bounds.contains(point) ? cell(at: point) : nil
+        return stripBounds.contains(point) ? cell(at: point) : nil
     }
 
     private func setHover(screen: CGPoint?) {
@@ -567,6 +671,7 @@ final class StripView: NSView {
     /// Only the two thumbnails concerned change, and only when the pointer changes thumbnail.
     /// Also called when the strip moved under a still pointer, which reports nothing.
     func refreshHover() {
+        defer { updatePhotoActions() }
         let now = hoverCell()
         guard now != hoveredCell else { return }
         let before = hoveredCell
@@ -577,23 +682,86 @@ final class StripView: NSView {
         CATransaction.commit()
     }
 
+    private func updatePhotoActions() {
+        let wasHoveringActions = isHoveringActions
+        isHoveringActions = false
+        defer {
+            if !isHoveringActions {
+                actionBar.isHidden = true
+            }
+            let buttonPoint = hoverScreenPoint.map { actionBar.convert(localPoint($0), from: self) }
+            for button in [rotateLeftButton, bookmarkButton, rotateRightButton] {
+                button.setHovered(isHoveringActions && buttonPoint.map(button.frame.contains) == true)
+            }
+            actionTrigger.isHidden = actionPhoto == nil
+            if wasHoveringActions != isHoveringActions {
+                needsLayout = true
+                onActionHoverChanged()
+            }
+        }
+
+        let inset: CGFloat = 5
+        let width = min(Self.actionBarWidth, stripBounds.width - 2 * inset)
+        guard showsPhotoActions, !dragging, !resizing, let screen = hoverScreenPoint, width >= 36 else {
+            actionPhoto = nil
+            return
+        }
+        let point = localPoint(screen)
+        // While using the buttons, the same photo stays targeted even if its width changes.
+        let hovered: StripCell
+        let overTrigger = isOverActionTrigger(point)
+        let overActions = !actionBar.isHidden && actionBar.frame.contains(point)
+        if overTrigger || overActions, let actionPhoto,
+           let target = cells.first(where: { $0.photo == actionPhoto }) {
+            isHoveringActions = true
+            hovered = target
+        } else if stripBounds.contains(point), let at = cell(at: point) {
+            hovered = cells[at]
+            let visible = frames[at].intersection(stripBounds)
+            let x = (visible.midX - width / 2).clamped(to: inset...(stripBounds.width - width - inset))
+            let triggerWidth: CGFloat = 22
+            let triggerHeight = stripBounds.maxY - visible.maxY
+            let triggerX = (visible.midX - triggerWidth / 2).clamped(to: inset...(stripBounds.width - triggerWidth - inset))
+            actionTrigger.frame = CGRect(x: triggerX.rounded(), y: visible.maxY,
+                                         width: triggerWidth, height: triggerHeight)
+            let top = min(bounds.maxY, actionTrigger.frame.maxY + Self.actionBarHeight)
+            actionBar.frame = CGRect(x: x.rounded(), y: top - Self.actionBarHeight,
+                                     width: width, height: Self.actionBarHeight)
+            let buttonWidth = width / 3
+            for (index, button) in actionBar.subviews.enumerated() {
+                button.frame = CGRect(x: CGFloat(index) * buttonWidth, y: 0,
+                                      width: buttonWidth, height: Self.actionBarHeight)
+            }
+        } else {
+            actionPhoto = nil
+            return
+        }
+
+        actionPhoto = hovered.photo
+        let label = hovered.marked ? "Retirer le marque-page" : "Marquer à revoir"
+        if bookmarkButton.toolTip != label {
+            bookmarkButton.setSymbol(hovered.marked ? "bookmark.fill" : "bookmark", label: label)
+            bookmarkButton.contentTintColor = hovered.marked ? .systemOrange : nil
+        }
+        actionBar.isHidden = !isHoveringActions
+    }
+
     /// After a move or a stretch: the pointer as it is now, if it is still over the strip.
     private func hoverAfterGesture() {
         let screen = pointerLocation()
-        setHover(screen: bounds.contains(localPoint(screen)) ? screen : nil)
+        setHover(screen: stripBounds.contains(localPoint(screen)) ? screen : nil)
     }
 
     /// The strip hid under a pointer that will not report leaving it.
     func clearHover() { setHover(screen: nil) }
 
-    /// A check on the photos checked; while any is, an empty ring on the others; and one on the
-    /// thumbnail under the pointer.
+    /// A check on the photos checked, and an empty ring on the thumbnail under the pointer only.
     private func updateMark(at position: Int) {
         guard cells.indices.contains(position), checks.indices.contains(position), frames.indices.contains(position),
               !images[position].isHidden else { return }
         let cell = cells[position]
         let check = checks[position]
-        let marked = cell.selected || showsSelectionRings || position == hoveredCell
+        let marked = cell.selected || position == hoveredCell
         if check.isHidden == marked { check.isHidden = !marked }
         guard marked else { return }
         check.contents = cell.selected ? Self.checkImage : Self.ringImage
@@ -602,20 +770,25 @@ final class StripView: NSView {
         check.frame = disc.insetBy(dx: -margin, dy: -margin)
     }
 
+    private func isOverActionTrigger(_ point: CGPoint) -> Bool {
+        !actionTrigger.isHidden && actionTrigger.frame.contains(point)
+    }
+
     /// The sides whose grips hold `point`: a thin band inside each side, over the faded edges
     /// and the margins around the photos. Near a corner, both sides it joins.
     private func gripSides(at point: CGPoint) -> StripResize.Sides? {
-        guard onResize != nil, bounds.contains(point) || point.x == bounds.maxX || point.y == bounds.maxY else { return nil }
+        guard onResize != nil, !isOverActionTrigger(point),
+              actionBar.isHidden || !actionBar.frame.contains(point), stripBounds.contains(point) || point.x == stripBounds.maxX || point.y == stripBounds.maxY else { return nil }
         let grip = StripResize.grip, corner = Self.cornerGrip
-        let nearX = point.x < grip.width || point.x > bounds.width - grip.width
-        let nearY = point.y < grip.height || point.y > bounds.height - grip.height
+        let nearX = point.x < grip.width || point.x > stripBounds.width - grip.width
+        let nearY = point.y < grip.height || point.y > stripBounds.height - grip.height
         guard nearX || nearY else { return nil }
         var sides: StripResize.Sides = []
-        if nearX || point.x < corner || point.x > bounds.width - corner {
-            sides.insert(point.x < bounds.midX ? .left : .right)
+        if nearX || point.x < corner || point.x > stripBounds.width - corner {
+            sides.insert(point.x < stripBounds.midX ? .left : .right)
         }
-        if nearY || point.y < corner || point.y > bounds.height - corner {
-            sides.insert(point.y < bounds.midY ? .bottom : .top)
+        if nearY || point.y < corner || point.y > stripBounds.height - corner {
+            sides.insert(point.y < stripBounds.midY ? .bottom : .top)
         }
         return sides
     }
@@ -675,7 +848,7 @@ final class StripView: NSView {
     }
 
     private func cell(at point: CGPoint) -> Int? {
-        guard point.x >= 0, point.x <= bounds.width else { return nil }
+        guard point.x >= 0, point.x <= stripBounds.width else { return nil }
         return frames.firstIndex(where: { $0.insetBy(dx: -metrics.gap / 2, dy: 0).contains(point) })
     }
 
@@ -708,7 +881,7 @@ final class StripView: NSView {
     /// Whether `point` falls on the ring or the check of cell `at`, a little around it included.
     private func ringHit(_ at: Int, _ point: CGPoint) -> Bool {
         // A click is under the pointer: with rings on hover, the thumbnail clicked shows one.
-        guard frames.indices.contains(at), showsSelectionRings || cells[at].selected || showsRingOnHover else { return false }
+        guard frames.indices.contains(at), cells[at].selected || showsRingOnHover else { return false }
         let disc = discFrame(inCellOf: frames[at].size).offsetBy(dx: frames[at].minX, dy: frames[at].minY)
         return disc.insetBy(dx: -Self.ringReach, dy: -Self.ringReach).contains(point)
     }
@@ -745,4 +918,43 @@ final class StripView: NSView {
 
 private extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
+}
+
+private final class StripActionTrigger: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.white.setFill()
+        let diameter: CGFloat = 3.5
+        for offset: CGFloat in [-6, 0, 6] {
+            let dot = CGRect(x: bounds.midX + offset - diameter / 2,
+                             y: bounds.midY - diameter / 2, width: diameter, height: diameter)
+            NSBezierPath(ovalIn: dot).fill()
+        }
+    }
+}
+
+/// A compact symbol button using the same neutral tones as the filmstrip.
+private final class StripActionButton: NSButton {
+    init(symbol: String, label: String) {
+        super.init(frame: .zero)
+        isBordered = false
+        refusesFirstResponder = true
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        setSymbol(symbol, label: label)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func setSymbol(_ symbol: String, label: String) {
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: 17, weight: .medium))
+        toolTip = label
+        setAccessibilityLabel(label)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func setHovered(_ hovered: Bool) {
+        layer?.backgroundColor = hovered ? NSColor(white: 1, alpha: 0.23).cgColor : nil
+    }
 }

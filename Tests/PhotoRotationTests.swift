@@ -32,6 +32,23 @@ final class PhotoRotationTests: XCTestCase {
         XCTAssertEqual(afterFailure[replacement], .upright)
     }
 
+    func testResettingTheRotationKeepsTheBookmark() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("rotations.json")
+        let file = folder.appendingPathComponent("a.arw")
+        try Data([1]).write(to: file)
+        let photo = try XCTUnwrap(PhotoKey.read(path: file.path))
+        let state = try PhotoRotations().saving(.left, for: [photo], to: url).togglingMark(for: photo, to: url)
+        let reset = try state.resettingRotation(for: [photo], to: url)
+        XCTAssertEqual(reset[photo], .upright)
+        XCTAssertTrue(reset.isMarked(photo))
+        let reopened = try PhotoRotations.read(from: url)
+        XCTAssertEqual(reopened[photo], .upright)
+        XCTAssertTrue(reopened.isMarked(photo))
+    }
+
     @MainActor
     func testClockwiseRotationKeepsTheLayerAndCameraPointInTheSameGeometry() {
         let layer = CALayer()
