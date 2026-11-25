@@ -1,5 +1,7 @@
 # Aperçu Auto : comportement et mesures
 
+> Archive historique. BetterView 1.1.0 a retiré l’aperçu Auto et son benchmark.
+
 16 novembre 2026. Carte **Amélioration auto** sous les informations en vue simple. Après calcul, un séparateur vertical déplaçable compare l’original (gauche) et Auto (droite), avec zoom et déplacement synchronisés. **Espace** bascule entre les deux versions en plein cadre ; le bouton rétablit le séparateur sans recalcul. S conserve la sélection ; Espace ne sélectionne plus. Développement RAW via `CIRAWFilter`, puis chaîne `CIImage.autoAdjustmentFilters` (yeux rouges exclus), puis rendu Display P3. Aucun export ni enregistrement de recette ou de pixels corrigés. L’aperçu est libéré à la navigation, à l’entrée en comparaison ou sous pression mémoire ; une génération empêche les résultats tardifs de remplacer une autre photo. Un seul calcul Auto simultané par fenêtre.
 
 Le résultat est limité à la taille écran, au maximum 2 560 pixels de côté, même en zoom. Il sert à juger le potentiel tonal/couleur avant Lightroom, pas le détail à 100 %. L’original est conservé par référence pendant la comparaison ; un autre clic sur le bouton revient au séparateur sans recalcul. Pendant Auto, les nouveaux rendus fullres et le remplissage du disque en arrière-plan sont suspendus ; les travaux déjà lancés peuvent finir, et le préchargement écran reste actif. Le calcul Auto tourne hors thread principal et partage le contexte Core Image existant. Il n’est pas interrompu au milieu d’un traitement GPU : annuler invalide son résultat.

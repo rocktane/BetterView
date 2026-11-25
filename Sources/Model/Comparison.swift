@@ -6,23 +6,46 @@ enum PhotoGroups {
     /// EXIF times have a one-second resolution, so this is about one second apart at most.
     static let burstGap: TimeInterval = 2
 
+    private static func linked(_ first: Date?, _ second: Date?) -> Bool {
+        guard let first, let second else { return false }
+        return abs(second.timeIntervalSince(first)) <= burstGap
+    }
+
     /// The runs of at least two consecutive photos taken close together. A photo without a date
     /// breaks the run.
     static func bursts(dates: [Date?]) -> [ClosedRange<Int>] {
         var runs: [ClosedRange<Int>] = []
         var start: Int?
         for index in dates.indices {
-            let linked = index > 0 && {
-                guard let before = dates[index - 1], let date = dates[index] else { return false }
-                return abs(date.timeIntervalSince(before)) <= burstGap
-            }()
-            if !linked {
+            if index == 0 || !linked(dates[index - 1], dates[index]) {
                 if let start, index - 1 > start { runs.append(start...(index - 1)) }
                 start = index
             }
         }
         if let start, dates.count - 1 > start { runs.append(start...(dates.count - 1)) }
         return runs
+    }
+
+    /// Reads only the adjacent dates needed to find both ends, even in a long burst.
+    static func burst(containing index: Int, count: Int, dateAt: (Int) -> Date?) -> ClosedRange<Int> {
+        let date = dateAt(index)
+        var lower = index
+        var upper = index
+        var previous = date
+        while lower > 0 {
+            let next = dateAt(lower - 1)
+            guard linked(previous, next) else { break }
+            lower -= 1
+            previous = next
+        }
+        previous = date
+        while upper + 1 < count {
+            let next = dateAt(upper + 1)
+            guard linked(previous, next) else { break }
+            upper += 1
+            previous = next
+        }
+        return lower...upper
     }
 }
 

@@ -29,6 +29,13 @@ final class PhotoGroupsTests: XCTestCase {
         XCTAssertEqual(PhotoGroups.bursts(dates: []), [])
         XCTAssertEqual(PhotoGroups.bursts(dates: [nil, nil]), [])
     }
+
+    func testLookingUpABurstFindsBothEndsBeyondTheComparisonWindow() {
+        let dates = [nil] + (0..<40).map { date(Double($0)) as Date? } + [date(60)]
+        XCTAssertEqual(PhotoGroups.burst(containing: 20, count: dates.count) { dates[$0] }, 1...40)
+        XCTAssertEqual(PhotoGroups.burst(containing: 0, count: dates.count) { dates[$0] }, 0...0)
+        XCTAssertEqual(PhotoGroups.burst(containing: 41, count: dates.count) { dates[$0] }, 41...41)
+    }
 }
 
 final class ComparisonModelTests: XCTestCase {

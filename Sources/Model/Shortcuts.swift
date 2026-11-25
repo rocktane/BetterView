@@ -8,7 +8,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case extendNext, extendPrevious, toggleSelection
     case delete, undo, revealInFinder
     case toggleZoom, zoomToFocus, zoomIn, zoomOut, zoomFit, toggleInfo, toggleStrip, exit
-    case compare, toggleAutoVersion
+    case compare
 
     /// Groups of the shortcuts settings, in display order.
     enum Group: String, CaseIterable, Sendable {
@@ -39,7 +39,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .last: Spec(title: "Dernière photo", group: .navigation, keys: [.code(119)])
         case .extendNext: Spec(title: "Étendre la sélection vers la suivante", group: .selection, keys: [.code(124, modifiers: .shift), .code(125, modifiers: .shift)], repeats: true)
         case .extendPrevious: Spec(title: "Étendre la sélection vers la précédente", group: .selection, keys: [.code(123, modifiers: .shift), .code(126, modifiers: .shift)], repeats: true)
-        case .toggleSelection: Spec(title: "Sélectionner ou désélectionner la photo", group: .selection, keys: [.character("s")])
+        case .toggleSelection: Spec(title: "Sélectionner ou désélectionner la photo", group: .selection, keys: [.character("s"), .code(49)])
         case .delete: Spec(title: "Mettre à la corbeille", group: .sorting, keys: [.code(51), .code(117), .character("x"), .code(51, modifiers: .command)])
         case .undo: Spec(title: "Annuler la suppression", group: .sorting, keys: [.character("z", modifiers: .command)])
         case .revealInFinder: Spec(title: "Afficher dans le Finder", group: .sorting, keys: [.character("r")])
@@ -52,7 +52,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
         case .toggleInfo: Spec(title: "Informations", group: .display, keys: [.character("i")])
         case .toggleStrip: Spec(title: "Pellicule", group: .display, keys: [.character("b")])
         case .exit: Spec(title: "Quitter le zoom ou la comparaison", group: .display, keys: [.code(53)])
-        case .toggleAutoVersion: Spec(title: "Original / amélioration auto", group: .display, keys: [.code(49)])
         case .compare: Spec(title: "Comparer les photos", group: .comparison, keys: [.character("c")])
         }
     }
@@ -253,11 +252,11 @@ struct ShortcutMap: Equatable, Sendable {
     // MARK: Storage
 
     /// Brings keys saved with older defaults to the current ones, where the user left the old
-    /// default. Version 3: Space compares the original with the Auto preview.
-    mutating func upgrade(from version: Int) {
+    /// default. Version 2: Space checks the photo instead of going to the next one.
+    mutating func upgrade(from version: Int, restoredSpace: Bool) {
         let space = KeyBinding.code(49)
         if version < 2, action(for: space) == .next { assign(space, to: .toggleSelection) }
-        if version < 3, action(for: space) == .toggleSelection { assign(space, to: .toggleAutoVersion) }
+        if version < 4, restoredSpace, action(for: space) == nil { assign(space, to: .toggleSelection) }
     }
 
     func encoded() -> Data? {
@@ -289,7 +288,7 @@ final class ShortcutStore: ObservableObject {
     private static let defaultsKey = "shortcuts"
     /// The version of the defaults the saved keys were last brought to.
     private static let versionKey = "shortcutsVersion"
-    static let version = 3
+    static let version = 4
 
     @Published private(set) var map: ShortcutMap
     var onChange: (ShortcutMap) -> Void = { _ in }
@@ -303,7 +302,11 @@ final class ShortcutStore: ObservableObject {
         // where the old one was left. In memory only: a launch writes nothing, and the version
         // is saved with the user's next change, after which their choices stand.
         let version = defaults.integer(forKey: Self.versionKey)
-        if defaults.data(forKey: Self.defaultsKey) != nil, version < Self.version { map.upgrade(from: version) }
+        if let data = defaults.data(forKey: Self.defaultsKey), version < Self.version {
+            let previous = try? JSONDecoder().decode([String: [KeyBinding]].self, from: data)
+            let restoredSpace = previous?["toggleAutoVersion"]?.contains(.code(49)) == true
+            map.upgrade(from: version, restoredSpace: restoredSpace)
+        }
     }
 
     @discardableResult

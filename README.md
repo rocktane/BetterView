@@ -69,10 +69,6 @@ Architecture, décisions et résultats mesurés : [docs/ARCHITECTURE.md](docs/AR
 
 Présentation Astro et démo interactive : [website/README.md](website/README.md). Lancement avec `pnpm --dir website dev`.
 
-## Aperçu d’amélioration auto
-
-Au survol, la carte « Amélioration auto » sous les informations propose un aperçu temporaire du développement RAW. Une fois prêt, glisser la ligne verticale compare l’original à gauche et Auto à droite, avec un zoom et un déplacement synchronisés. Espace bascule entre l’original et Auto en plein cadre ; cliquer à nouveau sur « Amélioration auto » revient au séparateur sans recalcul. L’aperçu disparaît au changement de photo, sans enregistrer ni modifier le fichier. Sa résolution reste limitée à 2 560 pixels de côté, même en zoom.
-
 ## Licence
 
 Le code original de BetterView et du site est sous **GNU GPL version 3 uniquement** (`GPL-3.0-only`), voir [LICENSE](LICENSE). Les dépendances, photographies, polices et autres contenus tiers conservent leurs licences propres. L’icône générée par IA ne fait pas l’objet d’une garantie de droits exclusifs.

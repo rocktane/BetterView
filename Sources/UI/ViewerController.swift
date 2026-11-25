@@ -36,6 +36,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var titlePending = false
     private let metadata = MetadataStore()
     private let thumbnails = ThumbnailStore()
+    private let rotationURL: URL
+    private var rotations: PhotoRotations
+    private var photoEditInProgress = false
 
     private var stripVisible = Preferences.stripVisible
     private var stripOtherOpacity = Float(Preferences.stripOtherOpacity)
@@ -48,15 +51,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Set while comparing, when the comparison view has the window.
     private var comparison: ComparisonModel?
-    // One transient screen-sized result, never inserted into either cache or exported.
-    private(set) var autoPhoto: PhotoKey?
-    private(set) var autoFrame: Frame?
-    private var autoOriginalFrame: Frame?
-    private var autoGeneration = 0
-    private(set) var autoRunning = false
-    var autoPreviewRenderer: @Sendable (PhotoKey, CGSize) -> Frame? = { photo, target in
-        Decoders.render(photo, tier: .screen, target: target, autoEnhance: true)
-    }
     /// What to give back on leaving: the comparison window has no photo's shape.
     private var preComparisonFrame: CGRect?
     private var preComparisonCenter: CGPoint?
@@ -88,8 +82,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// Benchmark hooks.
     var onDisplayed: ((PhotoKey, Tier?) -> Void)?
 
-    init(session: LibrarySession = LibrarySession(), diskDirectory: URL = DiskCache.defaultDirectory) {
+    init(session: LibrarySession = LibrarySession(), diskDirectory: URL = DiskCache.defaultDirectory,
+         rotationURL: URL = PhotoRotations.defaultURL) {
         self.session = session
+        self.rotationURL = rotationURL
+        rotations = (try? PhotoRotations.read(from: rotationURL)) ?? PhotoRotations()
         let budget = Preferences.diskCacheBytes
         pipeline = Pipeline(
             budgets: .scaled(physicalMemory: ProcessInfo.processInfo.physicalMemory),
@@ -149,10 +146,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         pipeline.onNeedsReplan = { [weak self] in self?.replan() }
         pipeline.onFocus = { [weak self] in self?.focusArrived($0) }
         pipeline.onEvicted = { [weak self] in
-            if let self, self.pipeline.memoryLevel != .normal {
-                self.clearAutoPreview()
-                self.display()
-            }
             if self?.comparison != nil { self?.displayComparison() }
         }
         metadata.onLoaded = { [weak self] photo in
@@ -246,7 +239,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
         case .clicked: showOpenPanel()
-        case .toggleAuto: toggleAutoPreview()
+        case .rotate(let direction):
+            if let photo = visiblePhoto { rotate(photo, toward: direction) }
+        case .toggleMark:
+            if let photo = visiblePhoto { toggleMark(for: photo) }
         case .zoomChanged:
             if !view.isZoomed { stopFollowingFocus() }
             display()
@@ -264,7 +260,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
     /// Whether the command does something where the user is: in the comparison, keeping and
     /// deleting go through the buttons over a photo, and no key picks one. The menu greys the rest.
     func isAvailable(_ action: ShortcutAction) -> Bool {
-        if action == .toggleAutoVersion { return comparison == nil && autoFrame != nil }
         guard comparison != nil else { return true }
         switch action {
         case .undo, .toggleZoom, .zoomToFocus, .exit, .compare: return true
@@ -289,7 +284,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .extendNext: extendSelection(by: 1, repeating: isRepeat)
         case .extendPrevious: extendSelection(by: -1, repeating: isRepeat)
         case .toggleSelection: toggleCurrentSelection()
-        case .toggleAutoVersion: if autoFrame != nil { view.toggleAutoVersion() }
         case .delete: deleteCurrent()
         case .undo: undo()
         case .toggleZoom: toggleZoom()
@@ -391,8 +385,9 @@ final class ViewerController: NSObject, NSWindowDelegate {
         focusAwaited = focus == nil
         let middle = CGPoint(x: 0.5, y: 0.5)
         if case .point(let point) = focus {
-            view.setFocusMarker(point.normalized, note: nil)
-            view.zoom(onNormalized: point.normalized, level: level)
+            let rotated = rotations[current].point(point.normalized)
+            view.setFocusMarker(rotated, note: nil)
+            view.zoom(onNormalized: rotated, level: level)
         } else {
             view.setFocusMarker(nil, note: Self.focusNote(focus))
             view.zoom(onNormalized: middle, level: level)
@@ -429,6 +424,75 @@ final class ViewerController: NSObject, NSWindowDelegate {
             return
         }
         centreOnFocus(level: nil)
+    }
+
+    /// All entry points pass the photo they represented, so navigation during metadata reads
+    /// cannot redirect a rotation to another photo.
+    func rotate(_ photo: PhotoKey, toward direction: RotationDirection) {
+        guard !photoEditInProgress, window.attachedSheet == nil else { return }
+        let photos = session.list.photos
+        guard let index = photos.firstIndex(of: photo) else { return }
+        photoEditInProgress = true
+        Task { [weak self] in
+            let burst = await Task.detached(priority: .userInitiated) {
+                let range = PhotoGroups.burst(containing: index, count: photos.count) {
+                    PhotoMetadata.read(photos[$0]).date
+                }
+                return Array(photos[range])
+            }.value
+            guard let self else { return }
+            defer { self.photoEditInProgress = false }
+            guard self.session.list.photos == photos, self.window.attachedSheet == nil else { return }
+            var targets = [photo]
+            if burst.count > 1 {
+                let prompt = NSAlert()
+                prompt.messageText = "Tourner les photos de la rafale ?"
+                prompt.informativeText = photo.name
+                prompt.addButton(withTitle: "Cette photo")
+                prompt.addButton(withTitle: "Toute la rafale (\(burst.count))")
+                prompt.addButton(withTitle: "Annuler").keyEquivalent = "\u{1b}"
+                switch await prompt.beginSheetModal(for: self.window) {
+                case .alertFirstButtonReturn: break
+                case .alertSecondButtonReturn: targets = burst
+                default: return
+                }
+            }
+            do {
+                let url = self.rotationURL
+                let pending = targets
+                self.rotations = try await Task.detached(priority: .userInitiated) {
+                    try PhotoRotations.read(from: url).saving(direction, for: pending, to: url)
+                }.value
+                if let comparison = self.comparison {
+                    if !Set(comparison.shown).isDisjoint(with: targets) { self.comparisonView.exitZoom() }
+                } else if let current = self.session.list.current, targets.contains(current) {
+                    self.stopFollowingFocus()
+                    self.view.resetZoom()
+                }
+                self.display()
+                self.replan()
+            } catch {
+                self.alert("Rotation impossible", info: error.localizedDescription)
+            }
+        }
+    }
+
+    private func toggleMark(for photo: PhotoKey) {
+        guard !photoEditInProgress, window.attachedSheet == nil else { return }
+        photoEditInProgress = true
+        let url = rotationURL
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.photoEditInProgress = false }
+            do {
+                self.rotations = try await Task.detached(priority: .userInitiated) {
+                    try PhotoRotations.read(from: url).togglingMark(for: photo, to: url)
+                }.value
+                self.display()
+            } catch {
+                self.alert("Impossible d’enregistrer le marque-page", info: error.localizedDescription)
+            }
+        }
     }
 
     func deleteCurrent() {
@@ -630,8 +694,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         input.repeating = repeating
         input.settled = settled
         input.focused = focused
-        input.zoomed = view.isZoomed && autoPhoto == nil
-        input.idle = idle && autoPhoto == nil && Pipeline.canWorkInBackground
+        input.zoomed = view.isZoomed
+        input.idle = idle && Pipeline.canWorkInBackground
         pipeline.applyWindowSizes(to: &input)
         pipeline.plan(photos: session.list.photos, input: input)
     }
@@ -640,14 +704,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
 
     /// Shows the current photo's best frame, or nothing: never another photo's pixels.
     func display() {
-        if autoPhoto != nil && (autoPhoto != session.list.current || comparison != nil) {
-            clearAutoPreview()
-        }
         if comparison != nil {
             displayComparison()
             return
         }
-        view.setAutoPreview(available: session.list.current != nil, active: autoPhoto != nil, busy: autoRunning)
         scheduleTitleUpdate()
         let photoChanged = session.list.current?.path != displayedPath
         displayedPath = session.list.current?.path
@@ -667,17 +727,17 @@ final class ViewerController: NSObject, NSWindowDelegate {
             visiblePhoto = nil
             shownTier = nil
             view.showMessage(session.tombstones.isEmpty ? "Aucune photo" : "Aucune photo restante")
+            view.setPhotoActions(available: false, marked: false)
             updateInfo()
             view.setProtected(false)
             onDisplayed?(PhotoKey(path: "", device: 0, inode: 0, size: 0, mtimeSeconds: 0, mtimeNanoseconds: 0), nil)
             return
         }
-        if autoFrame != nil, autoOriginalFrame == nil {
-            autoOriginalFrame = pipeline.cache.best(current, zoomed: false)
-        }
-        if let frame = autoOriginalFrame ?? pipeline.cache.best(current, zoomed: view.isZoomed) {
-            applyWindowShape(aspect: frame.nativeSize.width / frame.nativeSize.height, approximate: frame.key.tier == .preview)
-            view.show(frame, auto: autoFrame)
+        if let frame = pipeline.cache.best(current, zoomed: view.isZoomed) {
+            let rotation = rotations[current]
+            let size = rotation.size(frame.nativeSize)
+            applyWindowShape(aspect: size.width / size.height, approximate: frame.key.tier == .preview)
+            view.show(frame, rotation: rotation)
             visiblePhoto = current
             shownTier = frame.key.tier
         } else if pipeline.hasFailed(FrameKey(photo: current, tier: .screen)) {
@@ -692,65 +752,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
         updateProtectionBadge()
         updateInfo()
+        view.setPhotoActions(available: visiblePhoto == current, marked: rotations.isMarked(current))
         onDisplayed?(current, shownTier)
-    }
-
-    private func clearAutoPreview() {
-        autoGeneration += 1
-        autoPhoto = nil
-        autoFrame = nil
-        autoOriginalFrame = nil
-    }
-
-    /// Preview only: bounded to 2560 pixels even at 100% zoom. Navigation invalidates it.
-    func toggleAutoPreview() {
-        guard comparison == nil, let photo = session.list.current else { return }
-        if autoFrame != nil {
-            view.restoreAutoSplit()
-            return
-        }
-        if autoPhoto != nil {
-            clearAutoPreview()
-            display()
-            replan()
-            return
-        }
-        guard !autoRunning, pipeline.memoryLevel == .normal else {
-            view.flash("Aperçu indisponible pour le moment")
-            return
-        }
-        autoPhoto = photo
-        autoRunning = true
-        autoGeneration += 1
-        let generation = autoGeneration
-        let size = pipeline.target
-        let scale = min(1, 2560 / max(size.width, size.height, 1))
-        let target = CGSize(width: max(1, size.width * scale), height: max(1, size.height * scale))
-        display()
-        replan()
-        let render = autoPreviewRenderer
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let frame: Frame? = PhotoKey.read(path: photo.path) == photo
-                ? render(photo, target) : nil
-            let unchanged = PhotoKey.read(path: photo.path) == photo
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.autoRunning = false
-                    guard generation == self.autoGeneration, self.session.list.current == photo,
-                          self.comparison == nil else { self.display(); return }
-                    if unchanged, let frame, self.pipeline.memoryLevel == .normal {
-                        self.autoFrame = frame
-                        self.view.flash("Aperçu Auto · non enregistré · résolution écran", duration: 3)
-                    } else {
-                        self.clearAutoPreview()
-                        self.replan()
-                        self.view.flash("Impossible de créer l’aperçu Auto")
-                    }
-                    self.display()
-                }
-            }
-        }
     }
 
     /// After the image commit: one dictionary lookup, no I/O.
@@ -901,7 +904,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 image: thumbnails.image(for: photo),
                 mark: at == index ? .current : .none,
                 selected: selected,
-                opacity: at == index || selected ? 1 : stripOtherOpacity
+                opacity: at == index || selected ? 1 : stripOtherOpacity,
+                rotation: rotations[photo]
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
@@ -1144,7 +1148,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
             NSSound.beep()
             return
         }
-        clearAutoPreview()
         view.exitZoom()
         preComparisonFrame = window.frame
         preComparisonCenter = shapeCenter ?? CGPoint(x: window.frame.midX, y: window.frame.midY)
@@ -1247,10 +1250,11 @@ final class ViewerController: NSObject, NSWindowDelegate {
             }
             let known = metadata.metadata(for: photo)
             let locked = !session.protection(of: photo).isEmpty
+            let rotation = rotations[photo]
             let note: String?
             if followsFocus {
                 let focus = pipeline.cameraFocus(photo)
-                comparisonView.setFocus(focus, photo: photo, slot: slot)
+                comparisonView.setFocus(focus, photo: photo, slot: slot, rotation: rotation)
                 note = Self.focusNote(focus)
             } else {
                 note = nil
@@ -1262,7 +1266,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             }
             comparisonView.setCaption(slot: slot, number: slot + 1, name: photo.name, settings: known?.settingsText ?? "")
             if let frame = pipeline.cache.best(photo, zoomed: zoomed != nil) {
-                comparisonView.showFrame(frame, slot: slot)
+                comparisonView.showFrame(frame, slot: slot, rotation: rotation)
                 comparedVisible.insert(slot)
                 if frame.key.tier == .preview {
                     comparisonView.setBadge(badge("Aperçu", locked: locked), slot: slot)
@@ -1307,7 +1311,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 image: thumbnails.image(for: photo),
                 // Nothing is selected in the comparison: no photo is marked as current.
                 mark: .none,
-                opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14)
+                opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14),
+                rotation: rotations[photo]
             )
         }
         let waiting = model.waiting.count
@@ -1376,7 +1381,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         // picks a photo.
         case .next, .previous, .jumpForward, .jumpBackward, .delete,
              .toggleInfo, .toggleStrip, .first, .last, .extendNext, .extendPrevious,
-             .toggleSelection, .toggleAutoVersion, .zoomIn, .zoomOut, .zoomFit:
+             .toggleSelection, .zoomIn, .zoomOut, .zoomFit:
             break
         }
     }
