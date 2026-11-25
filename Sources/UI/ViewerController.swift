@@ -1068,10 +1068,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         func symbol(_ name: String) -> NSImage? { NSImage(systemSymbolName: name, accessibilityDescription: nil) }
         add("Faire pivoter à gauche", image: symbol("rotate.left")) { $0.rotate(clicked, toward: .left) }
         add("Faire pivoter à droite", image: symbol("rotate.right")) { $0.rotate(clicked, toward: .right) }
-        let rotated = target.photos.filter { rotations[$0] != .upright }
-        if !rotated.isEmpty {
-            add(rotated.count == 1 ? "Rétablir l’orientation d’origine" : "Rétablir l’orientation d’origine (\(rotated.count) photos)",
-                image: symbol("arrow.uturn.backward")) { $0.resetRotation(of: rotated) }
+        if rotations[clicked] != .upright {
+            add("Rétablir l’orientation d’origine", image: symbol("arrow.uturn.backward")) { $0.resetRotation(of: [clicked]) }
         }
         let marked = rotations.isMarked(clicked)
         add(marked ? "Retirer le marque-page" : "Marquer à revoir", image: symbol(marked ? "bookmark.slash" : "bookmark")) {
@@ -1344,7 +1342,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 // Nothing is selected in the comparison: no photo is marked as current.
                 mark: .none,
                 opacity: inSlot ? 1 : (isWaiting ? 0.45 : 0.14),
-                rotation: rotations[photo]
+                rotation: rotations[photo],
+                marked: rotations.isMarked(photo)
             )
         }
         let waiting = model.waiting.count
