@@ -126,14 +126,20 @@ extension Decoders {
                ] as CFDictionary) {
                 return upright(image, orientation: parsed.orientation)
             }
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                      kCGImageSourceCreateThumbnailFromImageAlways: false,
-                      kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
-                      kCGImageSourceThumbnailMaxPixelSize: thumbnailPixels,
-                      kCGImageSourceCreateThumbnailWithTransform: true,
-                  ] as CFDictionary)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
             else { return nil }
+            let image: CGImage?
+            if ImageFormat.rasterExtensions.contains(url.pathExtension.lowercased()) {
+                image = rasterThumbnail(source, index: CGImageSourceGetPrimaryImageIndex(source), maxPixels: thumbnailPixels)
+            } else {
+                image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: false,
+                    kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
+                    kCGImageSourceThumbnailMaxPixelSize: thumbnailPixels,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                ] as CFDictionary)
+            }
+            guard let image else { return nil }
             return upright(image, orientation: 1)
         }
     }

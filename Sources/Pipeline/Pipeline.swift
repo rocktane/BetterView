@@ -272,7 +272,7 @@ final class Pipeline {
 
     private func enqueueEncode(_ frame: Frame) {
         guard memoryLevel != .critical, encodeQueue.count < Self.encodeBacklog else { return }
-        let name = disk.entryName(frame.key.photo, nativeSize: frame.nativeSize)
+        let name = disk.entryName(frame.key.photo, nativeSize: frame.nativeSize, hasAlpha: frame.hasAlpha)
         encodeQueue.append(EncodeJob(frame: frame, entry: .init(fileName: name, nativeSize: frame.nativeSize), generation: disk.generation))
         pumpEncode()
     }

@@ -4,10 +4,10 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Screen-tier frames as JPEG on disk: reading one takes 25 ms against 270 ms for a RAW render.
+/// Screen-tier frames on disk: JPEG for opaque images, PNG for images with alpha.
 ///
 /// The main thread only touches an in-memory index, so a lookup costs no I/O. A file named
-/// `<hash>_<nativeWidth>x<nativeHeight>.jpg` carries the native size without having to read it.
+/// `<hash>_<nativeWidth>x<nativeHeight>.jpg` (or `.png`) carries the native size without reading the image.
 @MainActor
 final class DiskCache {
     struct Entry: Sendable {
@@ -56,7 +56,7 @@ final class DiskCache {
     }
 
     nonisolated private static func parse(_ name: String) -> (String, Entry)? {
-        guard name.hasSuffix(".jpg") else { return nil }
+        guard name.hasSuffix(".jpg") || name.hasSuffix(".png") else { return nil }
         let parts = name.dropLast(4).split(separator: "_")
         guard parts.count == 2 else { return nil }
         let size = parts[1].split(separator: "x")
@@ -116,7 +116,7 @@ final class DiskCache {
             let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys))) ?? []
             var bytes = 0
             var count = 0
-            for url in files where url.pathExtension == "jpg" {
+            for url in files where url.pathExtension == "jpg" || url.pathExtension == "png" {
                 let values = try? url.resourceValues(forKeys: keys)
                 bytes += values?.totalFileAllocatedSize ?? values?.fileSize ?? 0
                 count += 1
@@ -140,8 +140,9 @@ final class DiskCache {
         if writesSinceTrim >= 32 { trim() }
     }
 
-    func entryName(_ photo: PhotoKey, nativeSize: CGSize) -> String {
-        "\(hash(photo))_\(Int(nativeSize.width))x\(Int(nativeSize.height)).jpg"
+    func entryName(_ photo: PhotoKey, nativeSize: CGSize, hasAlpha: Bool = false) -> String {
+        let ext = hasAlpha ? "png" : "jpg"
+        return "\(hash(photo))_\(Int(nativeSize.width))x\(Int(nativeSize.height)).\(ext)"
     }
 
     /// Evicts the least recently used files, off the main thread.
@@ -176,7 +177,7 @@ final class DiskCache {
     }
 }
 
-/// Off-main JPEG encoding and decoding of frames.
+/// Off-main encoding and decoding of frames.
 enum DiskCodec {
     /// Atomic: a crash can never leave a truncated file under a valid name.
     static func write(_ frame: Frame, to url: URL) -> Bool {
@@ -193,8 +194,9 @@ enum DiskCodec {
                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
             else { return false }
             let temp = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
-            guard let destination = CGImageDestinationCreateWithURL(temp as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return false }
-            CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+            let format: UTType = frame.hasAlpha ? .png : .jpeg
+            guard let destination = CGImageDestinationCreateWithURL(temp as CFURL, format.identifier as CFString, 1, nil) else { return false }
+            CGImageDestinationAddImage(destination, image, frame.hasAlpha ? nil : [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
             guard CGImageDestinationFinalize(destination) else {
                 try? FileManager.default.removeItem(at: temp)
                 return false
@@ -215,7 +217,7 @@ enum DiskCodec {
             else { return nil }
             // Marks the file as recently used for eviction.
             utimes(url.path, nil)
-            return Frame(key: key, surface: surface, nativeSize: nativeSize)
+            return Frame(key: key, surface: surface, nativeSize: nativeSize, hasAlpha: url.pathExtension == "png")
         }
     }
 }

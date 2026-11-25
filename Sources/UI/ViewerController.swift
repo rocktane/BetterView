@@ -183,7 +183,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = RawFormat.all.compactMap { UTType($0.uti) } + [.folder]
+        panel.allowedContentTypes = ImageFormat.contentTypes + [.folder]
         showWindow()
         panel.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {

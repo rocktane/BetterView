@@ -83,11 +83,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         historyWindow?.show()
     }
 
-    /// The folder of the most recent item in Open Recent, without touching the disk: a RAW is
+    /// The folder of the most recent item in Open Recent, without touching the disk: a photo is
     /// a file, anything else was opened as a folder.
     private static func lastOpenedFolder() -> String? {
         guard let url = NSDocumentController.shared.recentDocumentURLs.first else { return nil }
-        let isPhoto = RawFormat.extensions.contains(url.pathExtension.lowercased())
+        let isPhoto = ImageFormat.extensions.contains(url.pathExtension.lowercased())
         return (isPhoto ? url.deletingLastPathComponent() : url).standardizedFileURL.path
     }
 

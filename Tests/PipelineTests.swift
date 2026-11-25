@@ -184,6 +184,65 @@ final class PipelineFlowTests: XCTestCase {
         XCTAssertTrue(pipeline.isIdle)
     }
 
+    func testRasterJPEGIsScannedAndRenderedUpright() throws {
+        let url = root.appendingPathComponent("portrait.JPEG")
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 160, height: 80, bitsPerComponent: 8, bytesPerRow: 0,
+            space: PixelFormat.displayP3, bitmapInfo: PixelFormat.bitmapInfo
+        ))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 160, height: 80))
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), [
+            kCGImagePropertyOrientation: 6,
+        ] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let photo = try XCTUnwrap(FolderScanner.scan(folder: root, only: nil).photos.first)
+        XCTAssertEqual(photo.name, url.lastPathComponent)
+
+        let target = CGSize(width: 60, height: 40)
+        let screen = try XCTUnwrap(Decoders.render(photo, tier: .screen, target: target))
+        XCTAssertEqual(screen.nativeSize, CGSize(width: 80, height: 160))
+        XCTAssertEqual(screen.surface.width, 20)
+        XCTAssertEqual(screen.surface.height, 40)
+        let full = try XCTUnwrap(Decoders.render(photo, tier: .full, target: target))
+        XCTAssertEqual(full.surface.width, 80)
+        XCTAssertEqual(full.surface.height, 160)
+        let thumbnail = try XCTUnwrap(Decoders.thumbnail(photo, maxPixels: 24))
+        XCTAssertEqual(thumbnail.width, 12)
+        XCTAssertEqual(thumbnail.height, 24)
+    }
+
+    func testTransparentPNGPreservesAlphaThroughPipelineAndDiskCache() async throws {
+        let url = root.appendingPathComponent("transparent.png")
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 32, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+            space: PixelFormat.displayP3, bitmapInfo: PixelFormat.bitmapInfo
+        ))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 0.5))
+        context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let photo = try XCTUnwrap(PhotoKey.read(path: url.path))
+        let pipeline = makePipeline()
+        var screen: Frame?
+        pipeline.onFrame = { if $0.key.tier == .screen { screen = $0 } }
+        pipeline.plan(photos: [photo], input: PlanInput(count: 1, current: 0))
+        await settle(pipeline)
+
+        let frame = try XCTUnwrap(screen)
+        let entry = try XCTUnwrap(pipeline.disk.entry(photo))
+        XCTAssertTrue(entry.fileName.hasSuffix(".png"))
+        let cached = try XCTUnwrap(DiskCodec.read(pipeline.disk.url(entry), key: frame.key, nativeSize: entry.nativeSize))
+        for surface in [frame.surface, cached.surface] {
+            surface.lock(options: .readOnly, seed: nil)
+            let alpha = surface.baseAddress.load(fromByteOffset: 3, as: UInt8.self)
+            surface.unlock(options: .readOnly, seed: nil)
+            XCTAssertEqual(Int(alpha), 128, accuracy: 1)
+        }
+    }
+
     func testFileWithoutPreviewStillGetsItsFirstPixels() async throws {
         // A tiny image has no preview worth showing (below 640 px), and the disk cache is
         // empty. The screen job must still run: nothing waits on a preview having succeeded.
