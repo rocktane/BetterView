@@ -2,7 +2,7 @@ import AppKit
 import XCTest
 @testable import BetterView
 
-/// Once a photo is checked, every thumbnail shows a ring that checks it with one click.
+/// A checked photo keeps its check; an unchecked one shows a ring only under the pointer.
 @MainActor
 final class StripSelectionRingTests: XCTestCase {
     private var view: StripView!
@@ -17,7 +17,7 @@ final class StripSelectionRingTests: XCTestCase {
 
     private func show(checked: Set<Int>) {
         let cells = photos.enumerated().map { StripCell(photo: $1, mark: $0 == 2 ? .current : .none, selected: checked.contains($0)) }
-        view.update(cells: cells, anchor: 2, selecting: !checked.isEmpty)
+        view.update(cells: cells, anchor: 2)
     }
 
     private func click(_ point: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
@@ -38,15 +38,15 @@ final class StripSelectionRingTests: XCTestCase {
         XCTAssertEqual(view.cornerMarks, Array(repeating: .none, count: 5))
     }
 
-    func testOneCheckedShowsARingOnEveryOther() {
+    func testOneCheckedShowsNoRingOnTheOthers() {
         show(checked: [1])
-        XCTAssertEqual(view.cornerMarks, [.ring, .check, .ring, .ring, .ring])
-        show(checked: [])
-        XCTAssertEqual(view.cornerMarks, Array(repeating: .none, count: 5), "the rings go with the last check")
+        XCTAssertEqual(view.cornerMarks, [.none, .check, .none, .none, .none])
     }
 
     func testClickingARingChecksAndClickingElsewhereShowsThePhoto() {
+        view.showsRingOnHover = true
         show(checked: [1])
+        move(to: ring(3))
         click(ring(3))
         XCTAssertEqual(clicks.last?.0, photos[3])
         XCTAssertEqual(clicks.last?.1, .command, "checks or unchecks, as Command+click")
@@ -59,6 +59,7 @@ final class StripSelectionRingTests: XCTestCase {
     }
 
     func testShiftClickStillSelectsARange() {
+        view.showsRingOnHover = true
         show(checked: [1])
         click(ring(4), modifiers: .shift)
         XCTAssertEqual(clicks.last?.1, .shift)
@@ -105,12 +106,13 @@ final class StripSelectionRingTests: XCTestCase {
         XCTAssertEqual(clicks.last?.1, [], "elsewhere: show the photo")
     }
 
-    func testOnceAPhotoIsCheckedEveryRingStaysWhereverThePointerIs() {
+    func testWithAPhotoCheckedTheRingStillOnlyFollowsThePointer() {
         view.showsRingOnHover = true
         show(checked: [1])
         move(to: middle(3))
+        XCTAssertEqual(view.cornerMarks, [.none, .check, .none, .ring, .none])
         leave()
-        XCTAssertEqual(view.cornerMarks, [.ring, .check, .ring, .ring, .ring])
+        XCTAssertEqual(view.cornerMarks, [.none, .check, .none, .none, .none])
     }
 
     func testTheRingFollowsWhatMovesUnderAStillPointer() async throws {

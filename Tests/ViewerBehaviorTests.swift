@@ -61,6 +61,7 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertGreaterThan(controller.window.contentAspectRatio.width, controller.window.contentAspectRatio.height)
 
         let view = controller.view
+        view.photoActionsEnabled = { true }
         view.pointerMoved(toWindowPoint: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
         view.setInfo(name: photo.name, settings: "", date: "", position: "1 / 6")
         view.layoutSubtreeIfNeeded()
@@ -74,6 +75,7 @@ final class ViewerBehaviorTests: XCTestCase {
         let mark = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "photoBookmark" })
         mark.performClick(nil)
         await spin { mark.toolTip == "Retirer le marque-page" }
+        XCTAssertTrue(view.showsBookmarkRibbon, "a marked photo shows its bookmark")
 
         let right = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "rotateRight" })
         right.performClick(nil)

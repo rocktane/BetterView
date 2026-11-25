@@ -495,6 +495,29 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
     }
 
+    private func resetRotation(of photos: [PhotoKey]) {
+        guard !photoEditInProgress, window.attachedSheet == nil else { return }
+        photoEditInProgress = true
+        let url = rotationURL
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.photoEditInProgress = false }
+            do {
+                self.rotations = try await Task.detached(priority: .userInitiated) {
+                    try PhotoRotations.read(from: url).resettingRotation(for: photos, to: url)
+                }.value
+                if let current = self.session.list.current, photos.contains(current) {
+                    self.stopFollowingFocus()
+                    self.view.resetZoom()
+                }
+                self.display()
+                self.replan()
+            } catch {
+                self.alert("Rotation impossible", info: error.localizedDescription)
+            }
+        }
+    }
+
     func deleteCurrent() {
         let selected = selection.photos(in: session.list.photos)
         if selected.count > 1 {
@@ -905,7 +928,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
                 mark: at == index ? .current : .none,
                 selected: selected,
                 opacity: at == index || selected ? 1 : stripOtherOpacity,
-                rotation: rotations[photo]
+                rotation: rotations[photo],
+                marked: rotations.isMarked(photo)
             )
         }
         // Nearest first, and beyond the edges, so that moving along finds them ready.
@@ -933,14 +957,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.view.update(
             cells: cells, anchor: center - shown.lowerBound,
             cut: (shown.lowerBound > 0, shown.upperBound < photos.count - 1),
-            groups: groups, tips: tips, selecting: showsSelectionRings
+            groups: groups, tips: tips
         )
-    }
-
-    /// The rings show while a photo of the folder is checked: a checked photo deleted or gone
-    /// from the folder no longer counts. Nothing to look through when nothing is checked.
-    private var showsSelectionRings: Bool {
-        !selection.isEmpty && session.list.photos.contains(where: selection.contains)
     }
 
     /// Where the strip was swiped to, if the current photo has not moved since.
@@ -1044,6 +1062,20 @@ final class ViewerController: NSObject, NSWindowDelegate {
             let openWith = NSMenuItem(title: "Ouvrir avec", action: nil, keyEquivalent: "")
             openWith.submenu = submenu
             menu.addItem(openWith)
+        }
+
+        menu.addItem(.separator())
+        func symbol(_ name: String) -> NSImage? { NSImage(systemSymbolName: name, accessibilityDescription: nil) }
+        add("Faire pivoter à gauche", image: symbol("rotate.left")) { $0.rotate(clicked, toward: .left) }
+        add("Faire pivoter à droite", image: symbol("rotate.right")) { $0.rotate(clicked, toward: .right) }
+        let rotated = target.photos.filter { rotations[$0] != .upright }
+        if !rotated.isEmpty {
+            add(rotated.count == 1 ? "Rétablir l’orientation d’origine" : "Rétablir l’orientation d’origine (\(rotated.count) photos)",
+                image: symbol("arrow.uturn.backward")) { $0.resetRotation(of: rotated) }
+        }
+        let marked = rotations.isMarked(clicked)
+        add(marked ? "Retirer le marque-page" : "Marquer à revoir", image: symbol(marked ? "bookmark.slash" : "bookmark")) {
+            $0.toggleMark(for: clicked)
         }
 
         menu.addItem(.separator())

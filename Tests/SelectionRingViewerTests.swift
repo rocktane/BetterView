@@ -52,15 +52,15 @@ final class SelectionRingViewerTests: XCTestCase {
         XCTAssertTrue(condition(), "timed out")
     }
 
-    func testDeletingTheOnlyCheckedPhotoTakesTheRingsAway() async {
+    func testCheckingAPhotoPutsNoRingOnTheOthersAndDeletingItTakesItsCheckAway() async {
         let before = controller.session.list.current
         await spin { self.controller.visiblePhoto == before }
         controller.perform(.toggleSelection)
-        await spin { self.strip.view.cornerMarks.contains(.ring) }
+        await spin { self.strip.view.cornerMarks.contains(.check) }
+        XCTAssertFalse(strip.view.cornerMarks.contains(.ring), "rings only under the pointer")
         controller.deleteCurrent()
         await spin { !self.controller.session.hasPendingIO }
-        await spin { !self.strip.view.cornerMarks.isEmpty && !self.strip.view.cornerMarks.contains(.ring) }
-        XCTAssertFalse(strip.view.cornerMarks.contains(.check))
+        await spin { !self.strip.view.cornerMarks.isEmpty && !self.strip.view.cornerMarks.contains(.check) }
     }
 
     func testSpaceDoesNothingInTheComparison() async throws {

@@ -64,6 +64,28 @@ final class ViewerView: NSView {
     private var actionsAboveInfoButton: NSLayoutConstraint!
     private var photoActionsAvailable = false
     private var isMarked = false
+    /// Read on each hover: the setting can change while the window is open.
+    var photoActionsEnabled: () -> Bool = { Preferences.photoActionsVisible }
+    /// Always shown on a marked photo, like a ribbon over its top edge.
+    private let bookmarkRibbon: NSImageView = {
+        let image = NSImage(systemSymbolName: "bookmark.fill", accessibilityDescription: "Marquée à revoir")?
+            .withSymbolConfiguration(.init(pointSize: 22, weight: .regular))
+        let view = NSImageView(image: image ?? NSImage())
+        view.contentTintColor = .systemOrange
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        view.toolTip = "Marquée à revoir"
+        view.setAccessibilityIdentifier("photoBookmarkRibbon")
+        view.shadow = {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor(white: 0, alpha: 0.5)
+            shadow.shadowBlurRadius = 3
+            shadow.shadowOffset = NSSize(width: 0, height: -1)
+            return shadow
+        }()
+        return view
+    }()
+    var showsBookmarkRibbon: Bool { !bookmarkRibbon.isHidden }
     private static let overlayFill = NSColor(white: 0, alpha: 0.64)
     /// The name sets the size of the name, the position and the zoom level.
     private static let nameSize: CGFloat = 15
@@ -146,7 +168,7 @@ final class ViewerView: NSView {
     private static func photoButton(_ symbol: String, label: String, id: String) -> NSButton {
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
             .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
-        let button = NSButton(image: image ?? NSImage(), target: nil, action: nil)
+        let button = HoverButton(image: image ?? NSImage(), target: nil, action: nil)
         button.isBordered = false
         button.refusesFirstResponder = true
         button.contentTintColor = NSColor(white: 1, alpha: 0.9)
@@ -193,6 +215,7 @@ final class ViewerView: NSView {
         for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
         addSubview(infoPanel)
         addSubview(actionsPanel)
+        addSubview(bookmarkRibbon)
         actionsPanel.setAccessibilityIdentifier("photoActions")
         infoPanel.setAccessibilityIdentifier("photoInformation")
         let actions = NSStackView(views: [rotateLeftButton, markButton, rotateRightButton])
@@ -243,6 +266,8 @@ final class ViewerView: NSView {
             actions.heightAnchor.constraint(equalToConstant: 34),
             messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            bookmarkRibbon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            bookmarkRibbon.topAnchor.constraint(equalTo: topAnchor, constant: 0),
             badges.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             badges.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             bannerLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -344,6 +369,7 @@ final class ViewerView: NSView {
             photoActionsAvailable = available
             applyOverlayVisibility()
         }
+        bookmarkRibbon.isHidden = !(available && marked)
         guard marked != isMarked else { return }
         isMarked = marked
         let label = marked ? "Retirer le marque-page" : "Marquer à revoir"
@@ -368,7 +394,7 @@ final class ViewerView: NSView {
             actionsAboveInfoButton.isActive = false
             (hasInfo ? actionsAboveInfo : actionsAboveInfoButton).isActive = true
         }
-        actionsPanel.fade(visible: photoActionsAvailable && isHovered)
+        actionsPanel.fade(visible: photoActionsAvailable && isHovered && photoActionsEnabled())
         updateBadge()
     }
 
@@ -813,5 +839,32 @@ extension NSView {
                 self.alphaValue = 0
             }
         }
+    }
+}
+
+/// A borderless button that lights up under the pointer.
+final class HoverButton: NSButton {
+    private var tracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { setLit(true) }
+    override func mouseExited(with event: NSEvent) { setLit(false) }
+
+    override var isHidden: Bool {
+        didSet { if isHidden { setLit(false) } }
+    }
+
+    private func setLit(_ lit: Bool) {
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.backgroundColor = lit ? NSColor(white: 1, alpha: 0.18).cgColor : nil
+        contentTintColor = NSColor(white: 1, alpha: lit ? 1 : 0.9)
     }
 }

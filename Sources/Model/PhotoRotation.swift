@@ -64,6 +64,10 @@ struct PhotoRotations: Codable, Sendable {
         try saving(photos, to: url) { photo in (self[photo].turned(direction), isMarked(photo)) }
     }
 
+    func resettingRotation(for photos: [PhotoKey], to url: URL) throws -> Self {
+        try saving(photos, to: url) { photo in (.upright, isMarked(photo)) }
+    }
+
     func togglingMark(for photo: PhotoKey, to url: URL) throws -> Self {
         try saving([photo], to: url) { photo in (self[photo], !isMarked(photo)) }
     }

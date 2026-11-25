@@ -11,6 +11,8 @@ struct StripCell {
     var selected = false
     var opacity: Float = 1
     var rotation = PhotoRotation.upright
+    /// Marked to look at again: a small orange bookmark in the top left corner.
+    var marked = false
 }
 
 /// A strip of thumbnails laid end to end, each as wide as its photo's shape, drawn as layers:
@@ -27,8 +29,6 @@ final class StripView: NSView {
     }
 
     private(set) var cells: [StripCell] = []
-    /// Some photo is checked: every thumbnail shows a ring to check it with one click.
-    private(set) var showsSelectionRings = false
     /// The modifiers held: Shift and Command select rather than go to the photo.
     var onClick: (PhotoKey, NSEvent.ModifierFlags) -> Void = { _, _ in }
     /// The right-click menu for a thumbnail.
@@ -60,6 +60,9 @@ final class StripView: NSView {
     private var images: [CALayer] = []
     private var thumbnailLayers: [CALayer] = []
     private var checks: [CALayer] = []
+    private var bookmarks: [CALayer] = []
+    /// For tests: which drawn cells show a bookmark.
+    var bookmarkMarks: [Bool] { bookmarks.prefix(cells.count).map { !$0.isHidden } }
     private var frames: [CGRect] = []
     private let outlines = CAShapeLayer()
     private var anchor: Int?
@@ -184,6 +187,27 @@ final class StripView: NSView {
         return context.makeImage()
     }()
 
+    /// An orange ribbon with a notch at its foot, hanging from the thumbnail's top edge.
+    private static let bookmarkImage: CGImage? = {
+        let width: CGFloat = 10, height: CGFloat = 14
+        guard let context = CGContext(
+            data: nil, width: Int(width * 2), height: Int(height * 2), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.scaleBy(x: 2, y: 2)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: height))
+        path.addLine(to: CGPoint(x: width, y: height))
+        path.addLine(to: CGPoint(x: width, y: 0))
+        path.addLine(to: CGPoint(x: width / 2, y: 3.5))
+        path.addLine(to: CGPoint(x: 0, y: 0))
+        path.closeSubpath()
+        context.addPath(path)
+        context.setFillColor(NSColor.systemOrange.cgColor)
+        context.fillPath()
+        return context.makeImage()
+    }()
+
     /// Where the check or the ring sits in a thumbnail of `size`: inside the white border, in
     /// the top right corner.
     private func discFrame(inCellOf size: CGSize) -> CGRect {
@@ -228,9 +252,8 @@ final class StripView: NSView {
     /// `anchor` stays in the middle, so that moving along slides the strip under a fixed
     /// highlight. Without one, a row that fits is centred as a whole. Each group of cells is
     /// outlined as one, and its tip shows when the pointer rests on it.
-    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = [], selecting: Bool = false) {
+    func update(cells: [StripCell], anchor: Int? = nil, cut: (start: Bool, end: Bool) = (false, false), groups ranges: [ClosedRange<Int>] = [], tips: [String] = []) {
         let previous = (cells: self.cells, anchor: self.anchor)
-        showsSelectionRings = selecting
         self.cells = cells
         self.anchor = anchor
         cutAtStart = cut.start
@@ -366,6 +389,13 @@ final class StripView: NSView {
             check.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
             layer.addSublayer(check)
             checks.append(check)
+            let bookmark = CALayer()
+            bookmark.contents = Self.bookmarkImage
+            bookmark.contentsScale = 2
+            bookmark.isHidden = true
+            bookmark.actions = ["position": NSNull(), "bounds": NSNull(), "hidden": NSNull()]
+            layer.addSublayer(bookmark)
+            bookmarks.append(bookmark)
         }
         for (position, layer) in images.enumerated() {
             guard position < cells.count, frames[position].maxX > 0, frames[position].minX < bounds.width else {
@@ -388,6 +418,12 @@ final class StripView: NSView {
                 layer.borderColor = NSColor.white.cgColor
             }
             updateMark(at: position)
+            let bookmark = bookmarks[position]
+            if bookmark.isHidden == cell.marked { bookmark.isHidden = !cell.marked }
+            if cell.marked {
+                let scale = min(1, metrics.height / 60)
+                bookmark.frame = CGRect(x: 5, y: layer.bounds.height - 14 * scale, width: 10 * scale, height: 14 * scale)
+            }
         }
         // One rounded outline around each group, concentric with the thumbnails' corners.
         let path = CGMutablePath()
@@ -586,14 +622,13 @@ final class StripView: NSView {
     /// The strip hid under a pointer that will not report leaving it.
     func clearHover() { setHover(screen: nil) }
 
-    /// A check on the photos checked; while any is, an empty ring on the others; and one on the
-    /// thumbnail under the pointer.
+    /// A check on the photos checked, and an empty ring on the thumbnail under the pointer only.
     private func updateMark(at position: Int) {
         guard cells.indices.contains(position), checks.indices.contains(position), frames.indices.contains(position),
               !images[position].isHidden else { return }
         let cell = cells[position]
         let check = checks[position]
-        let marked = cell.selected || showsSelectionRings || position == hoveredCell
+        let marked = cell.selected || position == hoveredCell
         if check.isHidden == marked { check.isHidden = !marked }
         guard marked else { return }
         check.contents = cell.selected ? Self.checkImage : Self.ringImage
@@ -708,7 +743,7 @@ final class StripView: NSView {
     /// Whether `point` falls on the ring or the check of cell `at`, a little around it included.
     private func ringHit(_ at: Int, _ point: CGPoint) -> Bool {
         // A click is under the pointer: with rings on hover, the thumbnail clicked shows one.
-        guard frames.indices.contains(at), showsSelectionRings || cells[at].selected || showsRingOnHover else { return false }
+        guard frames.indices.contains(at), cells[at].selected || showsRingOnHover else { return false }
         let disc = discFrame(inCellOf: frames[at].size).offsetBy(dx: frames[at].minX, dy: frames[at].minY)
         return disc.insetBy(dx: -Self.ringReach, dy: -Self.ringReach).contains(point)
     }
