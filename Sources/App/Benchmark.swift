@@ -231,10 +231,10 @@ final class Benchmark {
 
         // Launch to the first pixels of the requested file.
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path))?
-            .filter { RawFormat.extensions.contains(($0 as NSString).pathExtension.lowercased()) }
+            .filter { ImageFormat.extensions.contains(($0 as NSString).pathExtension.lowercased()) }
             .sorted() ?? []
         guard let firstName = names.first else {
-            print("no RAW files in \(folder.path)")
+            print("no supported images in \(folder.path)")
             exit(1)
         }
         print("photos: \(names.count)")

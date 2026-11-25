@@ -22,9 +22,11 @@ enum Decoders {
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.3) { _ = context }
     }
 
-    /// The JPEG embedded in the RAW, nil when the file has none worth showing, and the AF
-    /// position the camera recorded, read from the same 64 KiB.
+    /// A small raster render or the JPEG embedded in a RAW, with the recorded AF position.
     static func preview(_ photo: PhotoKey) -> (frame: Frame?, focus: CameraFocus) {
+        if ImageFormat.rasterExtensions.contains(photo.url.pathExtension.lowercased()) {
+            return (renderRaster(photo, tier: .preview, target: CGSize(width: 1024, height: 1024)), .absent)
+        }
         let header = ARWPreview.read(photo.url)
         let frame = header?.preview.flatMap { directPreview($0, photo) } ?? imageIOPreview(photo)
         return (frame, header?.focus ?? .absent)
@@ -68,18 +70,22 @@ enum Decoders {
         }
     }
 
-    private static func nativeSize(source: CGImageSource) -> CGSize? {
-        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    private static func nativeSize(source: CGImageSource, index: Int = 0) -> CGSize? {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
               let width = props[kCGImagePropertyPixelWidth] as? Int,
-              let height = props[kCGImagePropertyPixelHeight] as? Int
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0
         else { return nil }
         let orientation = props[kCGImagePropertyOrientation] as? Int ?? 1
         return orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 
-    /// Renders the RAW through Core Image: fitted inside `target`, or at 100 % for `.full`.
+    /// Renders the image fitted inside `target`, or at 100 % for `.full`.
     static func render(_ photo: PhotoKey, tier: Tier, target: CGSize) -> Frame? {
-        autoreleasepool { () -> Frame? in
+        if ImageFormat.rasterExtensions.contains(photo.url.pathExtension.lowercased()) {
+            return renderRaster(photo, tier: tier, target: target)
+        }
+        return autoreleasepool { () -> Frame? in
             guard let filter = CIRAWFilter(imageURL: photo.url), let whole = filter.outputImage else { return nil }
             let native = whole.extent.size
             guard native.width > 0, native.height > 0 else { return nil }
@@ -103,5 +109,30 @@ enum Decoders {
             surface.unlock(options: .readOnly, seed: nil)
             return Frame(key: FrameKey(photo: photo, tier: tier), surface: surface, nativeSize: native)
         }
+    }
+
+    private static func renderRaster(_ photo: PhotoKey, tier: Tier, target: CGSize) -> Frame? {
+        autoreleasepool {
+            guard let source = CGImageSourceCreateWithURL(photo.url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
+            else { return nil }
+            let index = CGImageSourceGetPrimaryImageIndex(source)
+            guard let native = nativeSize(source: source, index: index) else { return nil }
+            let scale = tier == .full ? 1 : min(1, target.width / native.width, target.height / native.height)
+            let maxPixels = max(1, Int((max(native.width, native.height) * scale).rounded()))
+            guard let image = rasterThumbnail(source, index: index, maxPixels: maxPixels),
+                  let surface = PixelFormat.materialize(image)
+            else { return nil }
+            let hasAlpha = [.first, .last, .premultipliedFirst, .premultipliedLast, .alphaOnly].contains(image.alphaInfo)
+            return Frame(key: FrameKey(photo: photo, tier: tier), surface: surface, nativeSize: native, hasAlpha: hasAlpha)
+        }
+    }
+
+    /// Resample the primary image, applying its orientation and bypassing embedded thumbnails.
+    static func rasterThumbnail(_ source: CGImageSource, index: Int, maxPixels: Int) -> CGImage? {
+        CGImageSourceCreateThumbnailAtIndex(source, index, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ] as CFDictionary)
     }
 }

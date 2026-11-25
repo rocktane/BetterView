@@ -51,7 +51,7 @@ struct PhotoMetadata: Equatable, Sendable {
 
     static func readImageIO(_ url: URL) -> PhotoMetadata? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, CGImageSourceGetPrimaryImageIndex(source), nil) as? [CFString: Any],
               let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
         else { return nil }
         return PhotoMetadata(

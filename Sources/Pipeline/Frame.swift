@@ -31,6 +31,7 @@ enum PixelFormat {
             space: displayP3, bitmapInfo: bitmapInfo
         ) else { return nil }
         context.interpolationQuality = .none
+        context.setBlendMode(.copy)
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return surface
     }
@@ -47,11 +48,13 @@ final class Frame: @unchecked Sendable {
     let surface: IOSurface
     /// Oriented size of the whole image at 100 %, whatever the size of this frame.
     let nativeSize: CGSize
+    let hasAlpha: Bool
 
-    init(key: FrameKey, surface: IOSurface, nativeSize: CGSize) {
+    init(key: FrameKey, surface: IOSurface, nativeSize: CGSize, hasAlpha: Bool = false) {
         self.key = key
         self.surface = surface
         self.nativeSize = nativeSize
+        self.hasAlpha = hasAlpha
     }
 
     var byteCost: Int { surface.allocationSize }

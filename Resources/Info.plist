@@ -21,6 +21,24 @@
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
+      <key>CFBundleTypeName</key><string>Image</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.jpeg</string>
+        <string>public.png</string>
+        <string>com.microsoft.bmp</string>
+        <string>public.tiff</string>
+        <string>public.jpeg-2000</string>
+        <string>public.heic</string>
+        <string>public.heif</string>
+        <string>org.webmproject.webp</string>
+        <string>public.avif</string>
+        <string>public.jpeg-xl</string>
+      </array>
+    </dict>
+    <dict>
       <key>CFBundleTypeName</key><string>Sony ARW</string>
       <key>CFBundleTypeRole</key><string>Viewer</string>
       <key>LSHandlerRank</key><string>Alternate</string>

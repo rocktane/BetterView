@@ -373,7 +373,7 @@ struct GeneralSettingsView: View {
             } header: {
                 Text("Cache disque")
             } footer: {
-                Text("Rendus RAW déjà calculés, pour rouvrir un dossier sans attendre. Vider le cache ne touche pas aux photos.")
+                Text("Rendus déjà calculés, pour rouvrir un dossier sans attendre. Vider le cache ne touche pas aux photos.")
                     .settingsFooter()
             }
         }

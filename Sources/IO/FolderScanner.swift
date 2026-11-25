@@ -16,7 +16,7 @@ enum FolderScanner {
         photos.reserveCapacity(names.count)
         for name in names {
             guard !name.hasPrefix("."),
-                  RawFormat.extensions.contains((name as NSString).pathExtension.lowercased())
+                  ImageFormat.extensions.contains((name as NSString).pathExtension.lowercased())
             else { continue }
             let path = folder.appendingPathComponent(name).path
             if let allowed, !allowed.contains(path) { continue }
