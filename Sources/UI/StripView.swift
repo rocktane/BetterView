@@ -10,6 +10,7 @@ struct StripCell {
     /// A blue check in the corner: it shows on the current photo's white border too.
     var selected = false
     var opacity: Float = 1
+    var rotation = PhotoRotation.upright
 }
 
 /// A strip of thumbnails laid end to end, each as wide as its photo's shape, drawn as layers:
@@ -57,6 +58,7 @@ final class StripView: NSView {
     private let content = CALayer()
     private let fade = CAGradientLayer()
     private var images: [CALayer] = []
+    private var thumbnailLayers: [CALayer] = []
     private var checks: [CALayer] = []
     private var frames: [CGRect] = []
     private let outlines = CAShapeLayer()
@@ -292,7 +294,8 @@ final class StripView: NSView {
 
     private func width(of cell: StripCell, height: CGFloat) -> CGFloat {
         guard let image = cell.image, image.width > 0, image.height > 0 else { return (height * Self.defaultAspect).rounded() }
-        return (height * CGFloat(image.width) / CGFloat(image.height)).rounded()
+        let size = cell.rotation.size(CGSize(width: image.width, height: image.height))
+        return (height * size.width / size.height).rounded()
     }
 
     private func layoutFrames() {
@@ -345,13 +348,17 @@ final class StripView: NSView {
         }
         while images.count < cells.count {
             let layer = CALayer()
-            layer.contentsGravity = .resizeAspectFill
             layer.cornerRadius = Self.cornerRadius
             layer.masksToBounds = true
-            layer.minificationFilter = .trilinear
-            layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
+            layer.actions = ["bounds": NSNull(), "position": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
             content.insertSublayer(layer, below: outlines)
             images.append(layer)
+            let thumbnail = CALayer()
+            thumbnail.contentsGravity = .resizeAspectFill
+            thumbnail.minificationFilter = .trilinear
+            thumbnail.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "transform": NSNull()]
+            layer.addSublayer(thumbnail)
+            thumbnailLayers.append(thumbnail)
             let check = CALayer()
             check.contents = Self.checkImage
             check.contentsScale = 2
@@ -368,7 +375,9 @@ final class StripView: NSView {
             let cell = cells[position]
             if layer.isHidden { layer.isHidden = false }
             layer.frame = frames[position]
-            layer.contents = cell.image
+            let thumbnail = thumbnailLayers[position]
+            thumbnail.contents = cell.image
+            thumbnail.placeImage(in: layer.bounds, rotation: cell.rotation)
             layer.backgroundColor = cell.image == nil ? NSColor(white: 0.22, alpha: 1).cgColor : nil
             layer.opacity = cell.opacity
             switch cell.mark {

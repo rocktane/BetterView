@@ -8,12 +8,6 @@ if let at = CommandLine.arguments.firstIndex(of: "--verify-af"), at + 1 < Comman
     Benchmark.verifyFocus(folder: URL(fileURLWithPath: CommandLine.arguments[at + 1]))
     exit(0)
 }
-if let at = CommandLine.arguments.firstIndex(of: "--bench-auto"), at + 1 < CommandLine.arguments.count {
-    let side = CommandLine.arguments.contains("--small") ? 1280 : 2560
-    AutoPreviewBenchmark.run(folder: URL(fileURLWithPath: CommandLine.arguments[at + 1]),
-                             enhanced: !CommandLine.arguments.contains("--original"), side: side)
-    exit(0)
-}
 let appDelegate = AppDelegate()
 let benchmark = Benchmark.fromArguments()
 NSApplication.shared.delegate = appDelegate

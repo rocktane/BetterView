@@ -2,7 +2,7 @@ import Foundation
 
 /// Identifies one revision of a file. Replacing or editing the file changes the key,
 /// so anything derived from the old pixels stops matching on its own.
-struct PhotoKey: Hashable, Sendable {
+struct PhotoKey: Codable, Hashable, Sendable {
     let path: String
     let device: Int64
     let inode: UInt64

@@ -78,7 +78,7 @@ enum Decoders {
     }
 
     /// Renders the RAW through Core Image: fitted inside `target`, or at 100 % for `.full`.
-    static func render(_ photo: PhotoKey, tier: Tier, target: CGSize, autoEnhance: Bool = false) -> Frame? {
+    static func render(_ photo: PhotoKey, tier: Tier, target: CGSize) -> Frame? {
         autoreleasepool { () -> Frame? in
             guard let filter = CIRAWFilter(imageURL: photo.url), let whole = filter.outputImage else { return nil }
             let native = whole.extent.size
@@ -91,17 +91,6 @@ enum Decoders {
                     filter.scaleFactor = Float(scale)
                     guard let scaled = filter.outputImage else { return nil }
                     output = scaled
-                }
-            }
-            if autoEnhance {
-                // Analyze the developed RAW, never the camera's differently toned JPEG.
-                // Global adjustments can be reused at this screen resolution. Avoid spatial
-                // red-eye correction: this is a temporary tonal preview, not a retouch editor.
-                let adjustments = output.autoAdjustmentFilters(options: [.redEye: false])
-                for adjustment in adjustments {
-                    adjustment.setValue(output, forKey: kCIInputImageKey)
-                    guard let adjusted = adjustment.outputImage else { return nil }
-                    output = adjusted
                 }
             }
             let extent = output.extent.integral

@@ -127,6 +127,7 @@ private final class ComparisonSlotView: NSView {
 
     private(set) var photo: PhotoKey?
     private var shownSurface: IOSurface?
+    private var rotation = PhotoRotation.upright
     private(set) var nativeSize: CGSize = .zero
 
     override init(frame: NSRect) {
@@ -191,11 +192,12 @@ private final class ComparisonSlotView: NSView {
         CATransaction.commit()
     }
 
-    func show(_ frame: Frame) {
+    func show(_ frame: Frame, rotation: PhotoRotation) {
         message.isHidden = true
-        guard frame.surface !== shownSurface else { return }
+        guard frame.surface !== shownSurface || rotation != self.rotation else { return }
         shownSurface = frame.surface
-        nativeSize = frame.nativeSize
+        self.rotation = rotation
+        nativeSize = rotation.size(frame.nativeSize)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         imageLayer.contents = frame.surface
@@ -239,7 +241,7 @@ private final class ComparisonSlotView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let frame = ComparisonGeometry.imageFrame(slot: bounds.size, native: nativeSize, zoom: zoom, pointsPerPixel: pointsPerPixel, center: center)
-        imageLayer.frame = frame
+        imageLayer.placeImage(in: frame, rotation: rotation)
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
         if let marker, zoom != nil, frame.width > 0 {
             markerLayer.position = CGPoint(x: frame.minX + marker.x * frame.width, y: frame.minY + marker.y * frame.height)
@@ -423,8 +425,8 @@ final class ComparisonView: NSView {
         refreshHover()
     }
 
-    func showFrame(_ frame: Frame, slot: Int) {
-        slotViews[slot].show(frame)
+    func showFrame(_ frame: Frame, slot: Int, rotation: PhotoRotation = .upright) {
+        slotViews[slot].show(frame, rotation: rotation)
         updateImage(slot)
     }
 
@@ -621,7 +623,7 @@ final class ComparisonView: NSView {
     /// AF mode: what the header of this slot's photo says, nil while it is not read yet. A
     /// new photo in the slot looks at its own position, plus the offset common to all. A
     /// position read late recentres the slot, unless the user moved the photos since.
-    func setFocus(_ focus: CameraFocus?, photo: PhotoKey?, slot: Int) {
+    func setFocus(_ focus: CameraFocus?, photo: PhotoKey?, slot: Int, rotation: PhotoRotation = .upright) {
         guard var anchors = focusAnchors else { return }
         guard let photo else {
             if anchors.removeValue(forKey: slot) != nil { focusAnchors = anchors }
@@ -629,7 +631,8 @@ final class ComparisonView: NSView {
         }
         var point: CGPoint?
         if case .point(let found) = focus {
-            point = CGPoint(x: found.normalized.x, y: 1 - found.normalized.y)
+            let rotated = rotation.point(found.normalized)
+            point = CGPoint(x: rotated.x, y: 1 - rotated.y)
         }
         let middle = CGPoint(x: 0.5, y: 0.5)
         if var anchor = anchors[slot], anchor.photo == photo {

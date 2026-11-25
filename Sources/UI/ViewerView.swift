@@ -8,8 +8,9 @@ enum ViewerCommand {
     case openDropped([URL])
     /// A click that did not move the window, while `opensOnClick`.
     case clicked
-    case toggleAuto
     case zoomChanged
+    case rotate(RotationDirection)
+    case toggleMark
     /// In the comparison: a button of this slot, showing this photo, was pressed.
     case slotAction(ComparisonAction, slot: Int, photo: PhotoKey?)
 }
@@ -36,82 +37,13 @@ final class ViewerView: NSView {
     private var center = CGPoint(x: 0.5, y: 0.5)
     private var nativeSize: CGSize = .zero
     private var shownSurface: IOSurface?
+    private var rotation = PhotoRotation.upright
     /// The user dragged or scrolled since the view was last centred by code.
     private(set) var movedByUser = false
     /// Normalised, y down, nil when hidden.
     private var focusMarker: CGPoint?
     private var focusNote: String?
     private var tierBadge: String?
-
-    enum AutoDisplayMode { case split, original, enhanced }
-    private(set) var autoDisplayMode: AutoDisplayMode = .split
-    private(set) var autoSplitFraction: CGFloat = 0.5
-    private var autoSurface: IOSurface?
-    private let autoClipLayer = CALayer()
-    private let autoImageLayer = CALayer()
-    private let autoPanel = ViewerView.panel()
-    private var autoAvailable = false
-    private var autoBusy = false
-    private let autoDivider = AutoDividerHandle()
-
-    func toggleAutoVersion() {
-        guard autoSurface != nil else { return }
-        autoDisplayMode = autoDisplayMode == .original ? .enhanced : .original
-        refreshAutoGeometry()
-    }
-
-    func restoreAutoSplit() {
-        guard autoSurface != nil else { return }
-        autoDisplayMode = .split
-        refreshAutoGeometry()
-    }
-
-    func moveAutoDivider(to x: CGFloat) {
-        guard autoSurface != nil, bounds.width > 0 else { return }
-        autoSplitFraction = min(max(x / bounds.width, 0), 1)
-        autoDisplayMode = .split
-        refreshAutoGeometry()
-    }
-
-    /// Visible layer geometry in the same coordinates, including the clip translation.
-    var autoComparisonFrames: (original: CGRect, enhanced: CGRect, clip: CGRect) {
-        (imageLayer.frame, autoImageLayer.convert(autoImageLayer.bounds, to: host.layer), autoClipLayer.frame)
-    }
-
-    private func refreshAutoGeometry() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        updateGeometry()
-        CATransaction.commit()
-        updateBadge()
-    }
-
-    private let autoButton: NSButton = {
-        let button = NSButton(title: "Amélioration auto", target: nil, action: nil)
-        button.isBordered = false
-        button.font = .systemFont(ofSize: 13, weight: .medium)
-        button.contentTintColor = NSColor(white: 1, alpha: 0.9)
-        button.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
-        button.imagePosition = .imageTrailing
-        button.refusesFirstResponder = true
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.isHidden = true
-        button.toolTip = "Aperçu automatique temporaire — aucun fichier modifié"
-        button.setAccessibilityIdentifier("autoPreview")
-        return button
-    }()
-
-    func setAutoPreview(available: Bool, active: Bool, busy: Bool) {
-        autoAvailable = available
-        autoBusy = busy
-        autoButton.isHidden = false
-        autoButton.title = busy ? "Amélioration auto…" : "Amélioration auto"
-        autoButton.isEnabled = !busy || active
-        autoButton.toolTip = active ? "Revenir au séparateur original / Auto (Espace : basculer)" : "Aperçu automatique temporaire — aucun fichier modifié"
-        applyOverlayVisibility()
-    }
-
-    @objc private func autoButtonPressed() { onCommand(.toggleAuto) }
 
     private let host = NSView()
     private let imageLayer = CALayer()
@@ -124,6 +56,15 @@ final class ViewerView: NSView {
     /// The name's size and weight too, with fixed-width digits.
     private let zoomLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
     private let infoPanel = ViewerView.panel()
+    private let actionsPanel = ViewerView.panel()
+    private let rotateLeftButton = ViewerView.photoButton("rotate.left", label: "Tourner à gauche", id: "rotateLeft")
+    private let markButton = ViewerView.photoButton("bookmark", label: "Marquer à revoir", id: "photoBookmark")
+    private let rotateRightButton = ViewerView.photoButton("rotate.right", label: "Tourner à droite", id: "rotateRight")
+    private var actionsAboveInfo: NSLayoutConstraint!
+    private var actionsAboveInfoButton: NSLayoutConstraint!
+    private var photoActionsAvailable = false
+    private var isMarked = false
+    private static let overlayFill = NSColor(white: 0, alpha: 0.64)
     /// The name sets the size of the name, the position and the zoom level.
     private static let nameSize: CGFloat = 15
     private let infoNameLabel = ViewerView.label(size: ViewerView.nameSize, weight: .semibold)
@@ -145,6 +86,8 @@ final class ViewerView: NSView {
         button.isBordered = false
         // Layer-backed like the panels: a fade sets its alpha at once and animates the layer.
         button.wantsLayer = true
+        button.layer?.backgroundColor = overlayFill.cgColor
+        button.layer?.cornerRadius = 8
         button.contentTintColor = NSColor(white: 1, alpha: 0.75)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.refusesFirstResponder = true
@@ -194,10 +137,24 @@ final class ViewerView: NSView {
         let panel = NSView()
         panel.translatesAutoresizingMaskIntoConstraints = false
         panel.wantsLayer = true
-        panel.layer?.backgroundColor = NSColor(white: 0, alpha: 0.45).cgColor
+        panel.layer?.backgroundColor = overlayFill.cgColor
         panel.layer?.cornerRadius = 8
         panel.isHidden = true
         return panel
+    }
+
+    private static func photoButton(_ symbol: String, label: String, id: String) -> NSButton {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
+        let button = NSButton(image: image ?? NSImage(), target: nil, action: nil)
+        button.isBordered = false
+        button.refusesFirstResponder = true
+        button.contentTintColor = NSColor(white: 1, alpha: 0.9)
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.setAccessibilityIdentifier(id)
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return button
     }
 
     override init(frame: NSRect) {
@@ -219,19 +176,7 @@ final class ViewerView: NSView {
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.masksToBounds = true
         root.addSublayer(imageLayer)
-        autoClipLayer.actions = ["bounds": NSNull(), "position": NSNull(), "hidden": NSNull()]
-        autoImageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
-        autoClipLayer.masksToBounds = true
-        autoClipLayer.isHidden = true
-        autoImageLayer.contentsGravity = .resize
-        autoImageLayer.minificationFilter = .linear
-        autoClipLayer.addSublayer(autoImageLayer)
-        root.addSublayer(autoClipLayer)
         root.addSublayer(markerLayer)
-        autoDivider.isHidden = true
-        autoDivider.toolTip = "Glisser : original à gauche, Auto à droite · Espace : basculer"
-        autoDivider.onMove = { [weak self] x in self?.moveAutoDivider(to: x) }
-        addSubview(autoDivider)
 
         // Hidden badges drop out of the stack, so the lock and « Aperçu » never overlap.
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: Self.nameSize, weight: .semibold)
@@ -243,14 +188,24 @@ final class ViewerView: NSView {
         badges.translatesAutoresizingMaskIntoConstraints = false
         bannerLabel.wantsLayer = true
         bannerLabel.drawsBackground = true
-        bannerLabel.backgroundColor = NSColor(white: 0, alpha: 0.55)
+        bannerLabel.backgroundColor = Self.overlayFill
         bannerLabel.layer?.cornerRadius = 4
         for view in [messageLabel, badges, bannerLabel] { addSubview(view) }
-        autoButton.target = self
-        autoButton.action = #selector(autoButtonPressed)
-        addSubview(autoPanel)
-        autoPanel.addSubview(autoButton)
         addSubview(infoPanel)
+        addSubview(actionsPanel)
+        actionsPanel.setAccessibilityIdentifier("photoActions")
+        infoPanel.setAccessibilityIdentifier("photoInformation")
+        let actions = NSStackView(views: [rotateLeftButton, markButton, rotateRightButton])
+        actions.distribution = .fillEqually
+        actions.spacing = 0
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        actionsPanel.addSubview(actions)
+        for (button, action) in [(rotateLeftButton, #selector(rotateLeft)), (markButton, #selector(toggleMark)),
+                                 (rotateRightButton, #selector(rotateRight))] {
+            button.target = self
+            button.action = action
+            button.heightAnchor.constraint(equalTo: actions.heightAnchor).isActive = true
+        }
         infoButton.setAccessibilityIdentifier("photoInfo")
         infoButton.target = self
         infoButton.action = #selector(infoButtonPressed)
@@ -272,15 +227,20 @@ final class ViewerView: NSView {
         }
         let shrinkToText = infoPanel.widthAnchor.constraint(equalToConstant: 0)
         shrinkToText.priority = .defaultLow
+        let actionWidth = actionsPanel.widthAnchor.constraint(greaterThanOrEqualToConstant: 116)
+        actionWidth.priority = .defaultHigh
+        actionsAboveInfo = actionsPanel.bottomAnchor.constraint(equalTo: infoPanel.topAnchor, constant: -6)
+        actionsAboveInfoButton = actionsPanel.bottomAnchor.constraint(equalTo: infoButton.topAnchor, constant: -6)
         NSLayoutConstraint.activate([
             shrinkToText,
-            autoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            autoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            autoPanel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
-            autoButton.leadingAnchor.constraint(equalTo: autoPanel.leadingAnchor, constant: 10),
-            autoButton.trailingAnchor.constraint(equalTo: autoPanel.trailingAnchor, constant: -10),
-            autoButton.topAnchor.constraint(equalTo: autoPanel.topAnchor, constant: 7),
-            autoButton.bottomAnchor.constraint(equalTo: autoPanel.bottomAnchor, constant: -7),
+            actionWidth, actionsAboveInfoButton,
+            actionsPanel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor),
+            actionsPanel.trailingAnchor.constraint(equalTo: infoPanel.trailingAnchor),
+            actions.leadingAnchor.constraint(equalTo: actionsPanel.leadingAnchor, constant: 4),
+            actions.trailingAnchor.constraint(equalTo: actionsPanel.trailingAnchor, constant: -4),
+            actions.topAnchor.constraint(equalTo: actionsPanel.topAnchor),
+            actions.bottomAnchor.constraint(equalTo: actionsPanel.bottomAnchor),
+            actions.heightAnchor.constraint(equalToConstant: 34),
             messageLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             badges.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -289,8 +249,10 @@ final class ViewerView: NSView {
             bannerLabel.topAnchor.constraint(equalTo: topAnchor, constant: 44),
             infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             infoButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            infoButton.bottomAnchor.constraint(equalTo: autoPanel.topAnchor, constant: -8),
-            infoPanel.bottomAnchor.constraint(equalTo: autoPanel.topAnchor, constant: -8),
+            infoButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            infoButton.widthAnchor.constraint(equalToConstant: 30),
+            infoButton.heightAnchor.constraint(equalToConstant: 28),
+            infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             infoPanel.trailingAnchor.constraint(lessThanOrEqualTo: positionPanel.leadingAnchor, constant: -8),
             positionPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             positionPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
@@ -324,16 +286,11 @@ final class ViewerView: NSView {
     // MARK: Showing
 
     /// Hands the surface to the layer without copying it, and pushes it out immediately.
-    func show(_ frame: Frame, auto: Frame? = nil) {
-        if auto?.surface !== autoSurface {
-            autoSurface = auto?.surface
-            autoImageLayer.contents = auto?.surface
-            autoDisplayMode = .split
-            autoSplitFraction = 0.5
-        }
-        if frame.surface !== shownSurface {
+    func show(_ frame: Frame, rotation: PhotoRotation = .upright) {
+        if frame.surface !== shownSurface || rotation != self.rotation {
             shownSurface = frame.surface
-            nativeSize = frame.nativeSize
+            self.rotation = rotation
+            nativeSize = rotation.size(frame.nativeSize)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             imageLayer.contents = frame.surface
@@ -341,8 +298,6 @@ final class ViewerView: NSView {
             CATransaction.commit()
             CATransaction.flush()
         }
-        refreshAutoGeometry()
-        applyOverlayVisibility()
         setLabel(messageLabel, nil)
         tierBadge = frame.key.tier == .preview ? "Aperçu" : nil
         updateBadge()
@@ -350,10 +305,6 @@ final class ViewerView: NSView {
 
     /// Shows no pixels at all: a photo must never appear under another photo's name.
     func showMessage(_ text: String?) {
-        autoSurface = nil
-        autoImageLayer.contents = nil
-        autoClipLayer.isHidden = true
-        autoDivider.isHidden = true
         shownSurface = nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -384,6 +335,23 @@ final class ViewerView: NSView {
     }
 
     @objc private func infoButtonPressed() { onCommand(.perform(.toggleInfo, repeating: false)) }
+    @objc private func rotateLeft() { onCommand(.rotate(.left)) }
+    @objc private func rotateRight() { onCommand(.rotate(.right)) }
+    @objc private func toggleMark() { onCommand(.toggleMark) }
+
+    func setPhotoActions(available: Bool, marked: Bool) {
+        if available != photoActionsAvailable {
+            photoActionsAvailable = available
+            applyOverlayVisibility()
+        }
+        guard marked != isMarked else { return }
+        isMarked = marked
+        let label = marked ? "Retirer le marque-page" : "Marquer à revoir"
+        markButton.image = NSImage(systemSymbolName: marked ? "bookmark.fill" : "bookmark", accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
+        markButton.toolTip = label
+        markButton.setAccessibilityLabel(label)
+    }
 
     private func updateInfoButtonTip() {
         let key = shortcuts.keys(for: .toggleInfo).first?.label
@@ -392,10 +360,15 @@ final class ViewerView: NSView {
 
     private func applyOverlayVisibility() {
         let showInfo = hasInfo && isHovered
-        autoPanel.fade(visible: autoAvailable && (isHovered || autoSurface != nil || autoBusy))
         infoPanel.fade(visible: showInfo)
         positionPanel.fade(visible: showInfo)
         infoButton.fade(visible: !hasInfo && offersInfo && isHovered)
+        if actionsAboveInfo.isActive != hasInfo {
+            actionsAboveInfo.isActive = false
+            actionsAboveInfoButton.isActive = false
+            (hasInfo ? actionsAboveInfo : actionsAboveInfoButton).isActive = true
+        }
+        actionsPanel.fade(visible: photoActionsAvailable && isHovered)
         updateBadge()
     }
 
@@ -412,14 +385,8 @@ final class ViewerView: NSView {
     }
 
     private func updateBadge() {
-        let modeNote: String = switch autoDisplayMode {
-        case .split: "Original ← | → Auto · Espace : basculer"
-        case .original: "Original · Espace : Auto"
-        case .enhanced: "Auto · Espace : original"
-        }
-        let autoNote: String? = autoSurface == nil ? nil : modeNote
-        let parts = [tierBadge, focusNote, autoNote].compactMap { $0 }
-        setLabel(badgeLabel, parts.isEmpty || (!isHovered && focusNote == nil && autoNote == nil) ? nil : parts.joined(separator: "  ·  "))
+        let parts = [tierBadge, focusNote].compactMap { $0 }
+        setLabel(badgeLabel, parts.isEmpty || (!isHovered && focusNote == nil) ? nil : parts.joined(separator: "  ·  "))
         lockBadge.fade(visible: isProtected && isHovered)
     }
 
@@ -484,18 +451,8 @@ final class ViewerView: NSView {
             x: (bounds.width / 2 - shown.x * size.width).rounded(),
             y: (bounds.height / 2 - shown.y * size.height).rounded()
         )
-        imageLayer.frame = CGRect(origin: origin, size: size)
+        imageLayer.placeImage(in: CGRect(origin: origin, size: size), rotation: rotation)
         imageLayer.magnificationFilter = (zoom ?? 0) >= 2 ? .nearest : .linear
-        let splitX = bounds.width * autoSplitFraction
-        let clipX: CGFloat = autoDisplayMode == .enhanced ? 0 : splitX
-        autoClipLayer.frame = CGRect(x: clipX, y: 0, width: max(0, bounds.width - clipX), height: bounds.height)
-        // Both images use exactly the same native geometry, including pan and zoom.
-        autoImageLayer.frame = imageLayer.frame.offsetBy(dx: -clipX, dy: 0)
-        autoImageLayer.magnificationFilter = imageLayer.magnificationFilter
-        autoClipLayer.isHidden = autoSurface == nil || autoDisplayMode == .original
-        autoDivider.isHidden = autoSurface == nil || autoDisplayMode != .split
-        autoDivider.frame = CGRect(x: splitX - 12, y: 0, width: 24, height: bounds.height)
-        autoDivider.needsDisplay = true
         if let zoom {
             let text = "\(Int((zoom * 100).rounded())) %"
             if zoomLabel.stringValue != text { zoomLabel.stringValue = text }
@@ -785,6 +742,21 @@ final class ViewerView: NSView {
     }
 }
 
+extension CALayer {
+    /// Sets the displayed rectangle in its parent's coordinates with no surface copy.
+    func placeImage(in rect: CGRect, rotation: PhotoRotation) {
+        bounds = CGRect(origin: .zero, size: rotation.size(rect.size))
+        position = CGPoint(x: rect.midX, y: rect.midY)
+        let transform: CGAffineTransform = switch rotation {
+        case .upright: .identity
+        case .right: CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 0)
+        case .upsideDown: CGAffineTransform(scaleX: -1, y: -1)
+        case .left: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 0, ty: 0)
+        }
+        setAffineTransform(transform)
+    }
+}
+
 /// The last fade asked of each view: an older fade-out that ends late must not hide a view
 /// shown again since, whatever its alpha reads at that moment.
 private nonisolated(unsafe) var fadeGenerationKey: UInt8 = 0
@@ -841,35 +813,5 @@ extension NSView {
                 self.alphaValue = 0
             }
         }
-    }
-}
-
-/// Narrow hit target independent of the image: dragging it never pans or moves the window.
-private final class AutoDividerHandle: NSView {
-    var onMove: (CGFloat) -> Void = { _ in }
-    override var acceptsFirstResponder: Bool { false }
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.4).setFill()
-        NSRect(x: 10, y: 0, width: 4, height: bounds.height).fill()
-        NSColor.white.setFill()
-        NSRect(x: 11.5, y: 0, width: 1, height: bounds.height).fill()
-        let grip = NSRect(x: 1, y: bounds.midY - 18, width: 22, height: 36)
-        NSColor(white: 0.12, alpha: 0.85).setFill()
-        NSBezierPath(roundedRect: grip, xRadius: 8, yRadius: 8).fill()
-        let icon = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: nil)
-        icon?.draw(in: grip.insetBy(dx: 3, dy: 10))
-    }
-
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
-    override func mouseDown(with event: NSEvent) {
-        if let parent = superview { window?.makeFirstResponder(parent) }
-        move(with: event)
-    }
-    override func mouseDragged(with event: NSEvent) { move(with: event) }
-    private func move(with event: NSEvent) {
-        guard let parent = superview else { return }
-        onMove(parent.convert(event.locationInWindow, from: nil).x)
     }
 }

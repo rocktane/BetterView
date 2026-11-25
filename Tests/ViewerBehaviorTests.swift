@@ -1,3 +1,5 @@
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import BetterView
 
@@ -27,7 +29,8 @@ final class ViewerBehaviorTests: XCTestCase {
             restore: { try FileManager.default.moveItem(at: $0, to: $1) },
             deletePermanently: { try FileManager.default.removeItem(at: $0) }
         ))
-        controller = ViewerController(session: session, diskDirectory: root.appendingPathComponent("cache"))
+        controller = ViewerController(session: session, diskDirectory: root.appendingPathComponent("cache"),
+                                      rotationURL: root.appendingPathComponent("rotations.json"))
         // The default, whatever the user chose in the app's settings.
         controller.keepsZoomAcrossPhotos = { false }
         controller.session.open([folder])
@@ -48,72 +51,69 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertTrue(condition(), "timed out")
     }
 
-    func testAutoPreviewIsTemporaryAndRestoresOriginal() async {
-        controller.autoPreviewRenderer = { photo, _ in
-            Frame(key: FrameKey(photo: photo, tier: .screen),
-                  surface: PixelFormat.makeSurface(width: 64, height: 48)!,
-                  nativeSize: CGSize(width: 6000, height: 4000))
-        }
-        let photo = controller.session.list.current!
-        let original = try! Data(contentsOf: photo.url)
+    func testRotatingASinglePhotoSavesTheRotationAndReshapesTheViewer() async throws {
+        let photo = try XCTUnwrap(controller.session.list.current)
+        let surface = try XCTUnwrap(PixelFormat.makeSurface(width: 64, height: 48))
         controller.pipeline.cache.insert(Frame(key: FrameKey(photo: photo, tier: .screen),
-            surface: PixelFormat.makeSurface(width: 64, height: 48)!, nativeSize: CGSize(width: 6000, height: 4000)))
-        controller.toggleAutoPreview()
-        await spin { !self.controller.autoRunning }
-        XCTAssertEqual(controller.autoFrame?.key.photo, photo)
-        XCTAssertEqual(controller.autoPhoto, photo)
-        XCTAssertEqual(try! Data(contentsOf: photo.url), original)
-        XCTAssertEqual(controller.view.autoDisplayMode, .split)
-        controller.perform(.toggleAutoVersion)
-        XCTAssertEqual(controller.view.autoDisplayMode, .original)
-        controller.perform(.toggleAutoVersion)
-        XCTAssertEqual(controller.view.autoDisplayMode, .enhanced)
-        let corrected = controller.autoFrame
-        controller.toggleAutoPreview()
-        XCTAssertEqual(controller.view.autoDisplayMode, .split)
-        XCTAssertTrue(corrected === controller.autoFrame, "returning to the separator needs no render")
-        XCTAssertEqual(try! Data(contentsOf: photo.url), original)
-    }
+                                               surface: surface, nativeSize: CGSize(width: 6000, height: 4000)))
+        controller.showWindow()
+        controller.display()
+        XCTAssertGreaterThan(controller.window.contentAspectRatio.width, controller.window.contentAspectRatio.height)
 
-    func testLateAutoResultCannotAppearOnAnotherPhoto() async {
-        let release = DispatchSemaphore(value: 0)
-        controller.autoPreviewRenderer = { photo, _ in
-            release.wait()
-            return Frame(key: FrameKey(photo: photo, tier: .screen),
-                         surface: PixelFormat.makeSurface(width: 64, height: 48)!,
-                         nativeSize: CGSize(width: 6000, height: 4000))
+        let view = controller.view
+        view.pointerMoved(toWindowPoint: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
+        view.setInfo(name: photo.name, settings: "", date: "", position: "1 / 6")
+        view.layoutSubtreeIfNeeded()
+        let actions = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier() == "photoActions" })
+        let info = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier() == "photoInformation" })
+        XCTAssertEqual(actions.frame.minX, info.frame.minX)
+        XCTAssertEqual(actions.frame.width, info.frame.width)
+        XCTAssertEqual(actions.frame.minY, info.frame.maxY + 6)
+        let buttons = try XCTUnwrap(actions.subviews.first as? NSStackView).arrangedSubviews.compactMap { $0 as? NSButton }
+        XCTAssertEqual(buttons.map { $0.accessibilityIdentifier() }, ["rotateLeft", "photoBookmark", "rotateRight"])
+        let mark = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "photoBookmark" })
+        mark.performClick(nil)
+        await spin { mark.toolTip == "Retirer le marque-page" }
+
+        let right = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "rotateRight" })
+        right.performClick(nil)
+        await spin {
+            let aspect = self.controller.window.contentAspectRatio
+            return aspect.width < aspect.height
         }
-        controller.toggleAutoPreview()
-        controller.step(1)
-        XCTAssertNil(controller.autoPhoto)
-        release.signal()
-        await spin { !self.controller.autoRunning }
-        XCTAssertNil(controller.autoFrame)
-        XCTAssertNil(controller.autoPhoto)
+
+        let saved = try PhotoRotations.read(from: root.appendingPathComponent("rotations.json"))
+        XCTAssertEqual(saved[photo], .right)
+        XCTAssertTrue(saved.isMarked(photo))
     }
 
-    func testCancelAutoWhileRenderingDiscardsTheResult() async {
-        let release = DispatchSemaphore(value: 0)
-        controller.autoPreviewRenderer = { photo, _ in
-            release.wait()
-            return Frame(key: FrameKey(photo: photo, tier: .screen),
-                         surface: PixelFormat.makeSurface(width: 64, height: 48)!,
-                         nativeSize: CGSize(width: 6000, height: 4000))
+    func testRotatingABurstOffersTheWholeGroupAndKeepsTheAdjacentPhoto() async throws {
+        let folder = root.appendingPathComponent("burst")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let context = try XCTUnwrap(CGContext(data: nil, width: 64, height: 48, bitsPerComponent: 8,
+                                             bytesPerRow: 0, space: PixelFormat.displayP3,
+                                             bitmapInfo: PixelFormat.bitmapInfo))
+        let image = try XCTUnwrap(context.makeImage())
+        for (index, seconds) in ["00", "01", "02", "20"].enumerated() {
+            let file = folder.appendingPathComponent("\(index).arw")
+            let writer = try XCTUnwrap(CGImageDestinationCreateWithURL(file as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+            let properties = [kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: "2026:11:25 08:00:\(seconds)"]]
+            CGImageDestinationAddImage(writer, image, properties as CFDictionary)
+            XCTAssertTrue(CGImageDestinationFinalize(writer))
         }
-        controller.toggleAutoPreview()
-        controller.toggleAutoPreview()
-        release.signal()
-        await spin { !self.controller.autoRunning }
-        XCTAssertNil(controller.autoPhoto)
-        XCTAssertNil(controller.autoFrame)
-    }
+        controller.showWindow()
+        controller.session.open([folder])
+        await spin { self.controller.session.list.count == 4 }
+        let photos = controller.session.list.photos
+        controller.rotate(photos[1], toward: .left)
+        await spin { self.controller.window.attachedSheet != nil }
+        let sheet = try XCTUnwrap(controller.window.attachedSheet)
+        controller.window.endSheet(sheet, returnCode: .alertSecondButtonReturn)
 
-    func testFailedAutoPreviewReturnsToOriginal() async {
-        controller.autoPreviewRenderer = { _, _ in nil }
-        controller.toggleAutoPreview()
-        await spin { !self.controller.autoRunning }
-        XCTAssertNil(controller.autoPhoto)
-        XCTAssertNil(controller.autoFrame)
+        let url = root.appendingPathComponent("rotations.json")
+        await spin { FileManager.default.fileExists(atPath: url.path) }
+        let saved = try PhotoRotations.read(from: url)
+        XCTAssertEqual(photos.map { saved[$0] }, [.left, .left, .left, .upright])
     }
 
     // MARK: Zoom across photos
