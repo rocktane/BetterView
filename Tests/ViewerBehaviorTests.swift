@@ -61,24 +61,16 @@ final class ViewerBehaviorTests: XCTestCase {
         XCTAssertGreaterThan(controller.window.contentAspectRatio.width, controller.window.contentAspectRatio.height)
 
         let view = controller.view
-        view.photoActionsEnabled = { true }
-        view.pointerMoved(toWindowPoint: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
-        view.setInfo(name: photo.name, settings: "", date: "", position: "1 / 6")
-        view.layoutSubtreeIfNeeded()
-        let actions = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier() == "photoActions" })
-        let info = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier() == "photoInformation" })
-        XCTAssertEqual(actions.frame.minX, info.frame.minX)
-        XCTAssertEqual(actions.frame.width, info.frame.width)
-        XCTAssertEqual(actions.frame.minY, info.frame.maxY + 6)
-        let buttons = try XCTUnwrap(actions.subviews.first as? NSStackView).arrangedSubviews.compactMap { $0 as? NSButton }
-        XCTAssertEqual(buttons.map { $0.accessibilityIdentifier() }, ["rotateLeft", "photoBookmark", "rotateRight"])
-        let mark = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "photoBookmark" })
-        mark.performClick(nil)
-        await spin { mark.toolTip == "Retirer le marque-page" }
-        XCTAssertTrue(view.showsBookmarkRibbon, "a marked photo shows its bookmark")
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown,
+            location: view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil),
+            modifierFlags: [], timestamp: 0, windowNumber: controller.window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(view.menu(for: event))
+        let mark = try XCTUnwrap(menu.item(withTitle: "Marquer à revoir"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(mark.action), to: mark.target, from: mark))
+        await spin { view.showsBookmarkRibbon }
 
-        let right = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier() == "rotateRight" })
-        right.performClick(nil)
+        controller.rotate(photo, toward: .right)
         await spin {
             let aspect = self.controller.window.contentAspectRatio
             return aspect.width < aspect.height

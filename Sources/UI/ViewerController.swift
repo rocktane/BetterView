@@ -133,6 +133,8 @@ final class ViewerController: NSObject, NSWindowDelegate {
         strip.viewer = window
         strip.viewerFrame = { [weak self] in self?.stripHolderFrame }
         strip.view.onClick = { [weak self] photo, modifiers in self?.stripClicked(photo, modifiers: modifiers) }
+        strip.view.onRotate = { [weak self] in self?.rotate($0, toward: $1) }
+        strip.view.onToggleMark = { [weak self] in self?.toggleMark(for: $0) }
         strip.view.onMenu = { [weak self] in self?.stripMenu(for: $0) }
         view.contextMenu = { [weak self] in self?.viewerMenu() }
         strip.view.onScroll = { [weak self] in self?.stripScrolled($0) }
@@ -239,10 +241,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         case .hoverChanged(let inside): setWindowButtonsVisible(inside)
         case .openDropped(let urls): open(urls)
         case .clicked: showOpenPanel()
-        case .rotate(let direction):
-            if let photo = visiblePhoto { rotate(photo, toward: direction) }
-        case .toggleMark:
-            if let photo = visiblePhoto { toggleMark(for: photo) }
         case .zoomChanged:
             if !view.isZoomed { stopFollowingFocus() }
             display()
@@ -750,7 +748,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
             visiblePhoto = nil
             shownTier = nil
             view.showMessage(session.tombstones.isEmpty ? "Aucune photo" : "Aucune photo restante")
-            view.setPhotoActions(available: false, marked: false)
+            view.setMarked(false)
             updateInfo()
             view.setProtected(false)
             onDisplayed?(PhotoKey(path: "", device: 0, inode: 0, size: 0, mtimeSeconds: 0, mtimeNanoseconds: 0), nil)
@@ -775,7 +773,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
         }
         updateProtectionBadge()
         updateInfo()
-        view.setPhotoActions(available: visiblePhoto == current, marked: rotations.isMarked(current))
+        view.setMarked(visiblePhoto == current && rotations.isMarked(current))
         onDisplayed?(current, shownTier)
     }
 
@@ -896,6 +894,10 @@ final class ViewerController: NSObject, NSWindowDelegate {
         guard let fullScreenContainer, let screen = strip.fullScreenFrame else { return }
         let wanted = comparison == nil && stripVisible && session.list.count > 1 && session.list.index != nil
         fullScreenContainer.bottomInset = wanted ? strip.fullScreenHeight(on: screen) : 0
+    }
+
+    func setStripPhotoActionsVisible(_ visible: Bool) {
+        strip.view.showsPhotoActions = visible
     }
 
     private func updateStrip() {

@@ -282,6 +282,7 @@ struct GeneralSettingsView: View {
     let onInfoVisibleChange: (Bool) -> Void
     let onStripVisibleChange: (Bool) -> Void
     let onStripOpacityChange: (Double) -> Void
+    var onStripPhotoActionsChange: (Bool) -> Void = { _ in }
     var onStripSizeChange: (StripSizePreset) -> Void = { _ in }
 
     var body: some View {
@@ -289,7 +290,8 @@ struct GeneralSettingsView: View {
             Section("Affichage") {
                 Toggle("Afficher les informations de la photo", isOn: $infoVisible)
                     .onChange(of: infoVisible) { _, value in onInfoVisibleChange(value) }
-                Toggle("Afficher les boutons de rotation et de marque-page au survol", isOn: $photoActionsVisible)
+                Toggle("Afficher les boutons de rotation et de marque-page au survol dans la pellicule", isOn: $photoActionsVisible)
+                    .onChange(of: photoActionsVisible) { _, value in onStripPhotoActionsChange(value) }
                 Toggle("Afficher la pellicule", isOn: $stripVisible)
                     .onChange(of: stripVisible) { _, value in onStripVisibleChange(value) }
                 // Stretching the filmstrip by hand turns this to custom; picking a size applies it.
@@ -825,6 +827,7 @@ enum SettingsWindow {
             onInfoVisibleChange: { [weak viewer] in viewer?.setInfoVisible($0) },
             onStripVisibleChange: { [weak viewer] in viewer?.setStripVisible($0) },
             onStripOpacityChange: { [weak viewer] in viewer?.setStripOtherOpacity($0) },
+            onStripPhotoActionsChange: { [weak viewer] in viewer?.setStripPhotoActionsVisible($0) },
             onStripSizeChange: { [weak viewer] in viewer?.setStripSizePreset($0) }
         )
         tabs.addTabViewItem(tab("Général", "gearshape", general))
